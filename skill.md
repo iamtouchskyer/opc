@@ -311,12 +311,11 @@ For findings that pass mechanical checks:
 2. **Challenge severity** — "Is this really 🔴? What's the concrete exploit path?"
 3. **Deduplicate** — multiple agents reporting same issue → keep best-articulated one
 
-### Effort Check (Mode A/B)
+### Effort Check
 
-- Count files agent referenced vs files in assigned scope
-- If scope ≤ 5 files: coverage must be 100%. If scope > 5 files: coverage ≥ 50%.
-- If output is suspiciously thin for scope complexity → RE-DISPATCH with explicit file list
-- Mode C: verify all files in scope were addressed. Mode D: check that key constraints were considered.
+- **Mode A/B:** Count files agent referenced vs files in assigned scope. If scope ≤ 5 files: coverage must be 100%. If scope > 5 files: coverage ≥ 50%. If suspiciously thin → RE-DISPATCH with explicit file list.
+- **Mode C:** Verify all files in scope were addressed in the modification list.
+- **Mode D:** Check that key constraints from the prompt were considered. No file-coverage metric.
 
 ### Coordinator Actions
 
