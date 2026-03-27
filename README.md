@@ -120,10 +120,8 @@ You: /opc review this PR
 2. Roles      → Frontend, Backend, Security (auto-selected from changed files)
 3. Brief      → Coordinator builds context from git log, CLAUDE.md, specs
 4. Dispatch   → 3 agents run in parallel, each with role expertise + context
-5. Round 2    → Coordinator challenges findings:
-                 - "Is this really Critical?"
-                 - "Agent says function X doesn't exist — let me check... it does. Dismissed."
-                 - "Two agents reported the same CORS issue — keeping the better one."
+5. Verify     → Mechanical checks auto-reject incomplete outputs (no file:line, no VERDICT).
+                 Coordinator spot-checks facts, challenges severity, deduplicates.
 6. Report     → Curated findings with severity, file:line references, and fix suggestions
 ```
 

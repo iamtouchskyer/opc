@@ -141,6 +141,7 @@ Before dispatching agents in Mode A, build a Design Context Brief to prevent fal
 3. Check CLAUDE.md for project conventions
 4. Grep for TODOs/FIXMEs — known limitations
 5. Recall conversation context
+6. **Content safety scan** — if this is a public repo, grep for real names, internal project names, internal URLs, API keys, or other PII in ALL files (not just code — include prompts, examples, comments, markdown). Flag anything that looks like a real identifier rather than a generic placeholder.
 
 Write a brief (5-15 lines):
 ```
@@ -148,6 +149,7 @@ Write a brief (5-15 lines):
 1. Key design decisions (DO NOT flag): ...
 2. Known limitations: ...
 3. Project conventions: ...
+4. Content safety: public repo? Any PII/real names/internal refs found?
 ```
 
 For Modes B/C/D, light context gathering (read key files) is sufficient — no formal brief needed.
@@ -161,7 +163,9 @@ Launch agents in parallel. Each agent prompt is assembled from:
 ```
 Mode guidance (from this file, per mode)
 + Role expertise (from roles/<name>.md)
++ Role anti-patterns (from roles/<name>.md ## Anti-Patterns — inject as constraints)
 + Project context (Brief for Mode A, or light context for others)
++ Prior session learnings (from memex recall, if any — inject as constraints)
 + Role-specific context (user answers from interactive mode, or self-inferred in yolo)
 + Task scope (specific files/features)
 ```
@@ -172,6 +176,7 @@ Mode guidance (from this file, per mode)
 You are a {Role} specialist reviewing code for issues in your domain.
 
 {Role expertise from roles/<name>.md}
+{Role anti-patterns from roles/<name>.md — DO NOT exhibit these patterns}
 
 {Design Context Brief — respect these decisions, DO NOT flag them}
 
@@ -195,6 +200,14 @@ For each finding:
 
 If no issues found: "LGTM — no findings in scope." Do NOT invent issues.
 Prioritize: 🔴 first, then 🟡, then 🔵.
+
+## Terminal State (HARD-GATE)
+Your output MUST end with exactly one of:
+- VERDICT: FINDINGS [N] — you found N real issues (must match actual count)
+- VERDICT: LGTM — you found nothing after thorough review
+- VERDICT: BLOCKED [reason] — you cannot complete (missing access, unclear scope)
+
+Output not ending with a VERDICT line will be REJECTED and you will be re-dispatched.
 ```
 
 ### Mode B — Analysis: Agent Instructions
@@ -203,6 +216,7 @@ Prioritize: 🔴 first, then 🟡, then 🔵.
 You are a {Role} specialist analyzing a specific problem.
 
 {Role expertise from roles/<name>.md}
+{Role anti-patterns from roles/<name>.md — DO NOT exhibit these patterns}
 
 ## Task
 {specific question or analysis request}
@@ -214,6 +228,14 @@ You are a {Role} specialist analyzing a specific problem.
 1. Current state — what exists and how it works
 2. Problems/gaps — what's wrong or missing (with file:line references)
 3. Recommendation — concrete steps to fix/improve
+
+## Terminal State (HARD-GATE)
+Your output MUST end with exactly one of:
+- VERDICT: ANALYSIS COMPLETE — findings and recommendations provided
+- VERDICT: INSUFFICIENT DATA [what's missing] — cannot analyze without more info
+- VERDICT: BLOCKED [reason] — cannot complete
+
+Output not ending with a VERDICT line will be REJECTED.
 ```
 
 ### Mode C — Execute: Agent Instructions
@@ -222,6 +244,7 @@ You are a {Role} specialist analyzing a specific problem.
 You are a {Role} specialist implementing changes.
 
 {Role expertise from roles/<name>.md}
+{Role anti-patterns from roles/<name>.md — DO NOT exhibit these patterns}
 
 ## Task
 {what to build/change}
@@ -233,6 +256,23 @@ You are a {Role} specialist implementing changes.
 - Follow existing project conventions
 - Write clean, minimal code — no over-engineering
 - Verify your changes work (run tests, check imports)
+
+## Verification (HARD-GATE)
+After implementation, you MUST:
+1. Run the project's existing test suite (if any). Report pass/fail with output.
+2. If no test suite: write and run a verification command that proves the change works.
+3. List every file you modified and why (1 line each).
+4. State what you did NOT do that the user might expect (explicit scope boundary).
+
+You are NOT done until verification output is shown. Do not claim "done" without evidence.
+
+## Terminal State (HARD-GATE)
+Your output MUST end with exactly one of:
+- VERDICT: IMPLEMENTED — changes made and verification passed
+- VERDICT: PARTIAL [what remains] — some work done, or tests failing (MUST use this if tests fail)
+- VERDICT: BLOCKED [reason] — cannot proceed
+
+Output not ending with a VERDICT line will be REJECTED.
 ```
 
 ### Mode D — Brainstorm: Agent Instructions
@@ -241,6 +281,7 @@ You are a {Role} specialist implementing changes.
 You are a {Role} specialist proposing solutions.
 
 {Role expertise from roles/<name>.md}
+{Role anti-patterns from roles/<name>.md — DO NOT exhibit these patterns}
 
 ## Task
 Propose an approach for: {problem description}
@@ -252,25 +293,53 @@ Propose an approach for: {problem description}
 1. Recommended approach (1-2 paragraphs)
 2. Key trade-offs (pros and cons)
 3. Risks or gotchas from your domain perspective
+
+## Terminal State (HARD-GATE)
+Your output MUST end with exactly one of:
+- VERDICT: OPTIONS [N] — N distinct approaches proposed
+- VERDICT: RECOMMENDATION [approach] — one clear winner identified
+- VERDICT: NEED INPUT [question] — cannot proceed without user decision
+
+Output not ending with a VERDICT line will be REJECTED.
 ```
 
 ---
 
-## Step 6: Coordinator Review (Mode A only)
+## Step 6: Verification Gate
 
-After all agents return in Mode A, the coordinator reviews findings BEFORE presenting to user:
+CRITICAL: Do Not Trust the Agent Reports.
 
-1. **Flag false positives** — findings that contradict the Design Context Brief
-2. **Challenge severity** — "Is this really Critical? What's the concrete exploit?"
-3. **Verify facts** — if an agent claims "function X doesn't exist", spot-check by reading the code
-4. **Deduplicate** — multiple agents reporting the same issue → keep the best-articulated one
+### Mechanical Checks (HARD-GATE — auto-reject, no judgment needed)
+
+For EVERY agent output, reject if:
+1. **No VERDICT line** → REJECT, re-dispatch
+2. **No file:line references** (Mode A/B, engineering + quality roles only) → REJECT finding. For user persona roles (new-user, active-user, churned-user), findings must reference a specific step in the user flow or a specific file (README, docs, UI page).
+3. **VERDICT count mismatch** (Mode A only) — agent says FINDINGS [3] but only 2 findings in body → REJECT, re-dispatch. Use grep/count tool if available; do not rely on mental arithmetic.
+4. **Hedging without evidence** — finding uses "might", "could potentially", "consider" without a concrete scenario → REJECT finding
+5. **Mode C: No verification output** — agent claims IMPLEMENTED but shows no test run or verification results → REJECT, re-dispatch
+
+### Spot-Check (Mode A/B — coordinator reads code to verify)
+
+For findings that pass mechanical checks:
+1. **Verify facts** — if agent claims "function X doesn't exist", open the file and check
+2. **Challenge severity** — "Is this really 🔴? What's the concrete exploit path?"
+3. **Deduplicate** — multiple agents reporting same issue → keep best-articulated one
+
+### Effort Check (Mode A/B)
+
+- Count files agent referenced vs files in assigned scope
+- If scope ≤ 5 files: coverage must be 100%. If scope > 5 files: coverage ≥ 50%.
+- If output is suspiciously thin for scope complexity → RE-DISPATCH with explicit file list
+- Mode C: verify all files in scope were addressed. Mode D: check that key constraints were considered.
+
+### Coordinator Actions
 
 For each questionable finding:
-- **Dismiss** with a one-line reason (if clearly wrong)
+- **Dismiss** with one-line reason (clearly wrong or contradicts Design Context Brief)
 - **Downgrade** severity with explanation
-- **Re-dispatch** for defense (only if genuinely uncertain)
+- **Re-dispatch** for defense (only if genuinely uncertain — use the re-dispatch prompt from below)
 
-Re-dispatch prompt (rare — only when coordinator can't resolve independently):
+Re-dispatch prompt (rare):
 ```
 A finding has been challenged. Review independently.
 
@@ -333,42 +402,13 @@ Recommendation: {coordinator's pick with rationale}
 
 ## Step 8: Retro (if memex available)
 
-After presenting results, save learnings for future sessions. Skip if memex is not installed.
+After presenting results, if `memex` CLI is installed, run `memex retro` to save learnings. Memex handles its own card format and writing logic — do not duplicate it here.
 
-**What to save** (only if surprising or non-obvious):
-
-- **Role effectiveness** — a role produced mostly false positives or was unexpectedly useful
-  - Card: `opc-role-{role}-{project}`, e.g. `opc-role-security-suri-counsel`
-- **False positive patterns** — coordinator dismissed a type of finding repeatedly
-  - Card: `opc-false-positive-{pattern}`, e.g. `opc-false-positive-no-auth-single-user`
-- **User preferences** — user overrode role selection or mode choice
-  - Card: `opc-pref-{user-or-project}`, e.g. `opc-pref-minimal-agents`
-- **Project context** — learned something about the project that isn't in CLAUDE.md
-  - Card: `opc-project-{name}`, e.g. `opc-project-suri-counsel`
-
-**How to save:**
-```bash
-memex write opc-role-security-suri-counsel <<'EOF'
----
-title: Security role high value for suri-counsel
-created: 2026-03-27
-category: opc
----
-
-Security agent found real CORS and limit issues in suri-counsel review.
-Backend agent had 40% overlap with Security on auth checks — consider
-skipping Backend for pure security audits on this project.
-
-Related to [[opc-false-positive-no-auth-single-user]] — single-user apps
-don't need auth findings, but DO need input validation findings.
-EOF
-```
-
-**Rules:**
-- One insight per card (atomic)
-- Link to related cards with `[[slug]]` in context
-- Don't save routine outcomes — only save what would change behavior next time
-- Max 3 cards per session
+**What triggers a retro** (only if surprising or non-obvious):
+- A role produced mostly false positives or was unexpectedly useful
+- Coordinator dismissed a type of finding repeatedly (pattern, not one-off)
+- User overrode role selection or mode choice
+- Learned something about the project that isn't in CLAUDE.md
 
 ---
 

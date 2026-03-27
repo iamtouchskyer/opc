@@ -20,3 +20,14 @@ A returning user who tried the product before but stopped using it. Has stale ex
 - Re-engagement or win-back features
 - Changelog or "what's new" experiences
 - When the product has changed significantly since last version
+
+## Anti-Patterns
+
+DO NOT exhibit these patterns:
+
+| Shortcut | Why it's wrong | Do this instead |
+|----------|---------------|-----------------|
+| Assume the churn reason without evidence | You're guessing, not analyzing | Infer from the product's weaknesses: setup complexity? missing features? reliability? |
+| Focus only on what's new, ignore what's still broken | Churned users care about fixes more than features | Check if known pain points from the codebase (TODOs, FIXMEs) are resolved |
+| Say "needs better communication of changes" without specifics | Vague suggestion | Point to specific changes that lack visibility: no changelog entry, no UI indicator |
+| Skip testing the re-entry flow | The first thing a returning user does is try to log back in / re-install | Walk through the actual return path: is my data here? does my config work? |

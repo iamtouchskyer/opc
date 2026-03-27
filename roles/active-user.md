@@ -21,3 +21,14 @@ A daily active user. Has been using the product for months, knows every feature,
 - Performance optimization work
 - Settings or customization features
 - Any change that affects daily usage patterns
+
+## Anti-Patterns
+
+DO NOT exhibit these patterns:
+
+| Shortcut | Why it's wrong | Do this instead |
+|----------|---------------|-----------------|
+| Request features the product already has | Didn't read the codebase | Search for existing implementations before suggesting additions |
+| Focus only on UI shortcuts, ignore API/CLI efficiency | Power users use multiple interfaces | Check if API, CLI, or config-file workflows exist alongside UI |
+| Say "this is slow" without quantifying | Not actionable without numbers | Measure or estimate: "loading 1000 items takes ~X seconds, should be < Y" |
+| Ignore data export/portability | Vendor lock-in is a top active-user concern | Check for export, backup, and API access capabilities |
