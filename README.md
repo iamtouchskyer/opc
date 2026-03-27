@@ -125,29 +125,18 @@ You: /opc review this PR
 6. Report     → Curated findings with severity, file:line references, and fix suggestions
 ```
 
-## Learning with memex (optional)
+## Works better with memex
 
-OPC integrates with [memex](https://github.com/iamtouchskyer/memex) — a Zettelkasten memory system for AI agents. When memex is installed, OPC:
-
-- **Recalls** past review insights before starting (which roles worked, false positive patterns, project context)
-- **Saves** new learnings after each session (role effectiveness, user preferences, project quirks)
-
-OPC gets smarter over time — it won't repeat the same false positives, and it learns your preferences across sessions.
+OPC works standalone — but pair it with [memex](https://github.com/iamtouchskyer/memex) and it learns across sessions. Memex remembers which roles were useful, which findings were false positives, and your project-specific context. OPC doesn't need to know how memex works — memex drives itself.
 
 ```bash
-# Install memex (optional)
 npm install -g @touchskyer/memex
-
-# OPC auto-detects memex and uses it. No configuration needed.
 ```
-
-Without memex, OPC works fine — it just starts from zero every session.
 
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)
 - That's it. No dependencies, no build step, no MCP server. Just markdown files.
-- Optional: [memex](https://github.com/iamtouchskyer/memex) for cross-session learning
 
 ## License
 
