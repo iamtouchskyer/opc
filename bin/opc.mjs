@@ -45,6 +45,13 @@ switch (command) {
       break;
     }
 
+    // If skillsDir is a symlink, just remove the link itself — don't follow it
+    if (lstatSync(skillsDir).isSymbolicLink()) {
+      rmSync(skillsDir);
+      console.log(`✓ OPC symlink removed: ${skillsDir}`);
+      break;
+    }
+
     // Only remove OPC-managed files, preserve custom roles
     const rolesDir = join(skillsDir, "roles");
     const managedRoles = readdirSync(join(srcDir, "roles"));
@@ -55,12 +62,13 @@ switch (command) {
         const rolePath = join(rolesDir, role);
         if (existsSync(rolePath)) rmSync(rolePath);
       }
-      // Remove roles dir only if empty
       try {
         const remaining = readdirSync(rolesDir);
         if (remaining.length === 0) rmSync(rolesDir);
         else console.log(`  Kept ${remaining.length} custom role(s) in ${rolesDir}`);
-      } catch {}
+      } catch (err) {
+        console.warn(`  ⚠ Could not clean roles dir: ${err.message}`);
+      }
     }
 
     // Remove skill.md
@@ -71,7 +79,9 @@ switch (command) {
     try {
       const remaining = readdirSync(skillsDir);
       if (remaining.length === 0) rmSync(skillsDir);
-    } catch {}
+    } catch (err) {
+      console.warn(`  ⚠ Could not remove skill dir: ${err.message}`);
+    }
 
     console.log(`✓ OPC removed from ${skillsDir}`);
     break;
