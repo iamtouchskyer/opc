@@ -1,12 +1,12 @@
-# Swarm
+# OPC — One Person Company
 
 Adaptive agent orchestrator for [Claude Code](https://claude.ai/code). Dispatches specialist sub-agents for code review, analysis, execution, or brainstorming — matching the process to the problem.
 
 ## What Makes This Different
 
-Most multi-agent orchestrators run a fixed pipeline: split task → dispatch agents → merge results. Swarm does three things differently:
+Most multi-agent orchestrators run a fixed pipeline: split task → dispatch agents → merge results. OPC does three things differently:
 
-1. **Adaptive triage** — not every task needs the same process. Swarm picks from 4 modes (Review, Analysis, Execute, Brainstorm) based on what you're actually asking for.
+1. **Adaptive triage** — not every task needs the same process. OPC picks from 4 modes (Review, Analysis, Execute, Brainstorm) based on what you're actually asking for.
 
 2. **Adversarial quality control** — in Review mode, a coordinator challenges agent findings before presenting them to you. It verifies facts, questions severity, and dismisses false positives. You get a curated report, not a dump of everything agents said.
 
@@ -18,32 +18,32 @@ Most multi-agent orchestrators run a fixed pipeline: split task → dispatch age
 
 ```bash
 # Copy to your skills directory
-cp -r . ~/.claude/skills/swarm/
+cp -r . ~/.claude/skills/opc/
 
 # Or symlink for easy updates
-ln -s $(pwd) ~/.claude/skills/swarm
+ln -s $(pwd) ~/.claude/skills/opc
 ```
 
 ### Use it
 
 ```bash
 # Review a PR
-/swarm review the changes in this PR
+/opc review the changes in this PR
 
 # Analyze an architecture problem
-/swarm analyze why the API is slow
+/opc analyze why the API is slow
 
 # Execute with a plan
-/swarm implement the migration plan in PLAN.md
+/opc implement the migration plan in PLAN.md
 
 # Brainstorm approaches
-/swarm what are our options for auth?
+/opc what are our options for auth?
 
 # Interactive mode — agents ask you questions first
-/swarm -i review the payment flow
+/opc -i review the payment flow
 
 # Explicit roles
-/swarm security compliance
+/opc security compliance
 ```
 
 ## Modes
@@ -108,7 +108,7 @@ If a task needs expertise not covered by any role file, the coordinator creates 
 ## How Review Mode Works
 
 ```
-You: /swarm review this PR
+You: /opc review this PR
 
 1. Triage     → Mode A: Review
 2. Roles      → Frontend, Backend, Security (auto-selected from changed files)

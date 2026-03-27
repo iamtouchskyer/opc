@@ -10,9 +10,9 @@ A full team in a single Claude Code skill. Dispatch specialist agents to review,
 ## Invocation
 
 ```
-/swarm <task>              # yolo mode (default) — agents infer all context themselves
-/swarm -i <task>           # interactive mode — agents ask questions first, then execute
-/swarm <role> [role...]    # explicit roles — skip role selection, dispatch directly
+/opc <task>              # yolo mode (default) — agents infer all context themselves
+/opc -i <task>           # interactive mode — agents ask questions first, then execute
+/opc <role> [role...]    # explicit roles — skip role selection, dispatch directly
 ```
 
 ## Built-in Roles
@@ -273,7 +273,7 @@ Do NOT default to agreeing with the challenger.
 ### Mode A — Review Report
 
 ```
-## Swarm Review — {task summary}
+## OPC Review — {task summary}
 
 ### 🔴 Critical ({count})
 {findings}
