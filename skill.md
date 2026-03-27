@@ -1,6 +1,6 @@
 ---
 name: opc
-description: "OPC — One Person Company. Adaptive agent orchestrator for Claude Code. Dispatches specialist sub-agents for review, analysis, execution, or brainstorming. 11 built-in roles (PM, Designer, 3 User types, Frontend, Backend, DevOps, Security, Tester, Compliance) + dynamic role creation. Supports yolo (zero-interaction) and interactive modes. Optional memex integration for cross-session learning."
+description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
 # OPC — One Person Company
