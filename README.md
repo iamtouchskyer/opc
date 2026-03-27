@@ -57,6 +57,9 @@ ln -s $(pwd)/opc ~/.claude/skills/opc
 
 # Explicit roles
 /opc security compliance
+
+# Open the report viewer
+/opc replay
 ```
 
 ## Modes
@@ -145,6 +148,19 @@ OPC works standalone — but pair it with [memex](https://github.com/iamtouchsky
 ```bash
 npm install -g @touchskyer/memex
 ```
+
+## Visualize reports (optional)
+
+OPC saves structured reports to `~/.opc/reports/` after every run. Install [opc-viewer](https://github.com/iamtouchskyer/opc-viewer) to browse them in a web UI:
+
+```bash
+git clone https://github.com/iamtouchskyer/opc-viewer.git
+cd opc-viewer && npm install && npm run dev
+```
+
+The viewer shows a Slack-like replay of your review team's conversation, plus a filterable summary of findings.
+
+Use `/opc replay` in Claude Code to open the viewer automatically.
 
 ## License
 
