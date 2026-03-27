@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.2.4
+version: 0.2.5
 description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
@@ -299,7 +299,12 @@ You MUST show verification work for EVERY agent before writing the final report.
 
 CRITICAL: Do Not Trust the Agent Reports.
 
-**Re-dispatch limit: max 1 retry per agent.** If an agent fails checks twice, accept its best output and note the quality issue in the report. Do not loop.
+**Re-dispatch is coordinator's call.** After each round of verification, decide:
+- **SATISFIED** — all findings verified or resolved → proceed to Step 7
+- **NEED MORE** — uncertain findings remain → re-dispatch targeted agents for the specific questions
+- **DIMINISHING RETURNS** — new round didn't resolve uncertainty → accept best-effort and note in report
+
+**Safety ceiling: 3 rounds max** (initial dispatch = round 1). If round 3 still has unresolved findings, accept with ⚠️ and move on. This ceiling exists to prevent runaway token consumption, not as a target.
 
 ### Mechanical Checks (auto-reject on first pass, accept-with-warning on retry)
 
