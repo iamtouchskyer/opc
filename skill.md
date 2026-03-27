@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.2.3
+version: 0.2.4
 description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
@@ -293,6 +293,10 @@ Output not ending with a VERDICT line will be REJECTED.
 
 ## Step 6: Verification Gate
 
+**⛔ CHECKPOINT — DO NOT SKIP TO STEP 7.**
+
+You MUST show verification work for EVERY agent before writing the final report. "I reviewed it mentally" is NOT acceptable — show the log.
+
 CRITICAL: Do Not Trust the Agent Reports.
 
 **Re-dispatch limit: max 1 retry per agent.** If an agent fails checks twice, accept its best output and note the quality issue in the report. Do not loop.
@@ -306,12 +310,18 @@ For EVERY agent output, reject if:
 4. **Hedging without evidence** — finding uses "might", "could potentially", "consider" without a concrete scenario → REJECT finding
 5. **Mode C: No verification output** — agent claims IMPLEMENTED but shows no test run or verification results → REJECT, re-dispatch
 
-### Spot-Check (Mode A/B — coordinator reads code to verify)
+### Spot-Check (Mode A/B)
 
-For findings that pass mechanical checks:
-1. **Verify facts** — if agent claims "function X doesn't exist", open the file and check
-2. **Challenge severity** — "Is this really 🔴? What's the concrete exploit path?"
-3. **Deduplicate** — multiple agents reporting same issue → keep best-articulated one
+Two verification methods — use the RIGHT one:
+
+**Quick verify (coordinator reads code):** When fact is binary — "does function X exist?", "is line 42 really an `any` type?" → Open the file yourself, confirm, done.
+
+**Independent verify (re-dispatch agent):** When finding involves JUDGMENT — "is this really a security risk?", "does the error handling actually cover this case?", "is this test gap critical?" → Re-dispatch a focused agent with the specific question. Your own opinion is not sufficient for judgment calls.
+
+Rule of thumb: If you need to trace more than 2 files to verify, or if two agents disagree, re-dispatch.
+
+Also always:
+- **Deduplicate** — multiple agents reporting same issue → keep best-articulated one
 
 ### Effort Check
 
@@ -324,9 +334,9 @@ For findings that pass mechanical checks:
 For each questionable finding:
 - **Dismiss** with one-line reason (clearly wrong or contradicts Design Context Brief)
 - **Downgrade** severity with explanation
-- **Re-dispatch** for defense (only if genuinely uncertain — use the re-dispatch prompt from below)
+- **Re-dispatch** for defense (targeted — expect 1-3 per review session, not rare)
 
-Re-dispatch prompt (rare):
+Re-dispatch prompt:
 ```
 A finding has been challenged. Review independently.
 
@@ -338,6 +348,21 @@ Do NOT default to agreeing with the challenger.
 ```
 
 **Transparency:** If coordinator dismisses > 80% of findings, note it in the report.
+
+### Step 6 Output (MUST appear before Step 7)
+
+Show the verification log as a table:
+
+```
+## Verification Log
+
+| Agent | Mechanical | Effort | Spot-Checks | Re-dispatched? | Action |
+|-------|-----------|--------|-------------|----------------|--------|
+| {role} | ✅/❌ which check | N/M files | What you verified + evidence | Yes/No — reason | N dismissed, M downgraded |
+
+Re-dispatch results (if any):
+- {role}: Finding: {X}. Challenge: {Y}. Agent response: DEFEND/RETRACT/DOWNGRADE. Decision: {Z}.
+```
 
 ---
 
@@ -384,6 +409,86 @@ Synthesize into a comparison table:
 
 Recommendation: {coordinator's pick with rationale}
 ```
+
+---
+
+## Step 8: Save Report
+
+After presenting results, save a structured JSON report for the OPC Viewer.
+
+**Directory:** `~/.opc/reports/` (create if it doesn't exist)
+**Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{mode}_{sanitized-task-summary}.json`
+
+Use the Bash tool to create the directory, then the Write tool to save the JSON file.
+
+### JSON Schema
+
+```json
+{
+  "version": "1.0",
+  "timestamp": "<ISO 8601>",
+  "mode": "<review|analysis|execute|brainstorm>",
+  "task": "<original task description>",
+  "agents": [
+    {
+      "role": "<role name>",
+      "scope": ["<file paths>"],
+      "verdict": "<VERDICT string>",
+      "findings": [
+        {
+          "severity": "<critical|warning|suggestion>",
+          "file": "<file path>",
+          "line": <line number or null>,
+          "issue": "<issue description>",
+          "fix": "<suggested fix>",
+          "reasoning": "<why this matters>",
+          "status": "<accepted|dismissed|downgraded>",
+          "dismissReason": "<reason if dismissed/downgraded, null otherwise>"
+        }
+      ]
+    }
+  ],
+  "coordinator": {
+    "challenged": <number>,
+    "dismissed": <number>,
+    "downgraded": <number>
+  },
+  "summary": {
+    "critical": <count of accepted critical findings>,
+    "warning": <count of accepted warning findings>,
+    "suggestion": <count of accepted suggestion findings>
+  },
+  "timeline": [
+    {
+      "type": "<triage|roles|context|dispatch|agent-output|verification|report>",
+      "role": "<coordinator or agent role name>",
+      "content": "<message content — what happened at this step>"
+    }
+  ]
+}
+```
+
+### Timeline
+
+The `timeline` array records each step of the OPC process as a chat-like message for the Replay view. Build it as you go:
+
+1. **triage** (coordinator): "Mode: REVIEW\nTask: {task}"
+2. **roles** (coordinator): "Dispatching N agents: {role1}, {role2}..."
+3. **context** (coordinator): Brief summary of the Design Context Brief (Mode A only)
+4. **dispatch** (coordinator): "Agents running in parallel..."
+5. **agent-output** (each agent's role): Include their verdict + each finding as "🔴/🟡/🔵 file:line — issue"
+6. **verification** (coordinator): "Verification gate: N challenged, M dismissed..." with details on dismissed/downgraded findings
+7. **report** (coordinator): "Final report: N 🔴 Critical, N 🟡 Warning, N 🔵 Suggestion"
+
+Use `**bold**` for emphasis in content. Each entry is one message in the Replay channel view.
+
+**Rules:**
+- Sanitize the task summary for filename: lowercase, replace spaces with hyphens, remove special chars, truncate to 50 chars
+- Only include agents that were dispatched (not all 11)
+- `summary` counts only `status: "accepted"` findings
+- For Mode B (Analysis), findings may not have severity — use `"suggestion"` as default
+- For Mode C (Execute), there are no findings — save an empty agents array with just the verdict
+- For Mode D (Brainstorm), save the approaches as findings with severity "suggestion"
 
 ---
 
