@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.2.2
+version: 0.2.3
 description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
