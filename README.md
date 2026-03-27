@@ -20,14 +20,19 @@ Most multi-agent orchestrators run a fixed pipeline: split task → dispatch age
 
 ## Quick Start
 
-### Install as a Claude Code skill
+### Install
 
 ```bash
-# Copy to your skills directory
-cp -r . ~/.claude/skills/opc/
+npm install -g @touchskyer/opc
+```
 
-# Or symlink for easy updates
-ln -s $(pwd) ~/.claude/skills/opc
+Skill files are automatically copied to `~/.claude/skills/opc/`. If the postinstall fails, run `opc install` manually.
+
+#### Manual install (no npm)
+
+```bash
+git clone https://github.com/iamtouchskyer/opc.git
+ln -s $(pwd)/opc ~/.claude/skills/opc
 ```
 
 ### Use it

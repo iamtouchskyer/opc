@@ -1,0 +1,32 @@
+{
+  "name": "@touchskyer/opc",
+  "version": "0.2.0",
+  "description": "OPC — One Person Company. A full team in a single Claude Code skill.",
+  "type": "module",
+  "bin": {
+    "opc": "bin/opc.mjs"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "skill.md",
+    "roles"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.mjs"
+  },
+  "keywords": [
+    "claude-code",
+    "ai-agent",
+    "code-review",
+    "one-person-company",
+    "skill"
+  ],
+  "author": "touchskyer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iamtouchskyer/opc.git"
+  },
+  "homepage": "https://github.com/iamtouchskyer/opc"
+}

@@ -1,5 +1,6 @@
 ---
 name: opc
+version: 0.2.0
 description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
@@ -292,12 +293,14 @@ Output not ending with a VERDICT line will be REJECTED.
 
 CRITICAL: Do Not Trust the Agent Reports.
 
-### Mechanical Checks (HARD-GATE — auto-reject, no judgment needed)
+**Re-dispatch limit: max 1 retry per agent.** If an agent fails checks twice, accept its best output and note the quality issue in the report. Do not loop.
+
+### Mechanical Checks (auto-reject on first pass, accept-with-warning on retry)
 
 For EVERY agent output, reject if:
-1. **No VERDICT line** → REJECT, re-dispatch
+1. **No VERDICT line** → REJECT, re-dispatch with explicit reminder
 2. **No file:line references** (Mode A/B, engineering + quality roles only) → REJECT finding. For user persona roles (new-user, active-user, churned-user), findings must reference a specific step in the user flow or a specific file (README, docs, UI page).
-3. **VERDICT count mismatch** (Mode A only) — agent says FINDINGS [3] but only 2 findings in body → REJECT, re-dispatch. Use grep/count tool if available; do not rely on mental arithmetic.
+3. **VERDICT count mismatch** (Mode A only) — agent says FINDINGS [3] but body has different count → flag in report, do not re-dispatch for this alone
 4. **Hedging without evidence** — finding uses "might", "could potentially", "consider" without a concrete scenario → REJECT finding
 5. **Mode C: No verification output** — agent claims IMPLEMENTED but shows no test run or verification results → REJECT, re-dispatch
 
@@ -383,46 +386,10 @@ Recommendation: {coordinator's pick with rationale}
 
 ---
 
-## Step 8: Learning Loop
-
-After presenting results, the coordinator evaluates whether this session produced non-trivial learnings worth persisting.
-
-### Trigger Conditions (skip if none apply)
-
-- A role was surprisingly effective or produced mostly false positives
-- Coordinator dismissed a recurring pattern of findings (not a one-off)
-- User overrode role selection or mode choice
-- Discovered project-specific context not in CLAUDE.md
-
-If no trigger fires, skip this step entirely. Do NOT prompt on routine sessions.
-
-### Flow
-
-1. Run `which memex` to check if memex is installed.
-
-2. **If installed** → run `memex retro` silently. Memex handles its own logic. Done.
-
-3. **If not installed** → show the user what was learned, then offer:
-
-```
-💡 Learning from this session:
-   {1-2 sentence concrete insight, e.g. "Security role found real issues on CORS
-   and input validation — high value for this project. Backend had 60% overlap
-   with Security on auth checks — consider skipping next time."}
-
-   memex can save this across sessions so OPC gets smarter over time.
-   Install? → npm install -g @touchskyer/memex
-```
-
-4. **Yolo mode behavior**: If the learning is strong (coordinator dismissed >50% findings from a role, or a role found all the critical issues), install memex automatically without asking. If borderline, skip — don't nag.
-
-5. **After install**: run `memex retro` to save the current session's learnings immediately.
-
----
-
 ## Notes
 
 - Agents run via the Agent tool with `subagent_type: "general-purpose"`.
+- **Agent prompt = mode template + role file only.** Do NOT inject full skill.md into agents. Each agent gets: its mode-specific instruction block, the role's expertise + anti-patterns, project context, and task scope. The coordinator reads skill.md; agents do not.
 - Agents are READ-ONLY by default. No code changes except in Mode C.
 - Scope each agent to specific files — don't let them scan everything.
 - If scope exceeds 20 files, split across multiple agents of the same role.

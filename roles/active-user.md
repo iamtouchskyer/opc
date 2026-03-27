@@ -28,7 +28,7 @@ DO NOT exhibit these patterns:
 
 | Shortcut | Why it's wrong | Do this instead |
 |----------|---------------|-----------------|
-| Request features the product already has | Didn't read the codebase | Search for existing implementations before suggesting additions |
-| Focus only on UI shortcuts, ignore API/CLI efficiency | Power users use multiple interfaces | Check if API, CLI, or config-file workflows exist alongside UI |
-| Say "this is slow" without quantifying | Not actionable without numbers | Measure or estimate: "loading 1000 items takes ~X seconds, should be < Y" |
-| Ignore data export/portability | Vendor lock-in is a top active-user concern | Check for export, backup, and API access capabilities |
+| Request features the product already has | Didn't read the codebase | Search for existing implementations (grep for keywords) before suggesting additions |
+| Say "this is slow" without measuring | Not actionable without numbers | Run the operation, count steps/time: "adding an item requires 4 clicks, should be 2" or "list loads in ~3s with 100 items" |
+| Review only the happy path workflow | Active users hit edge cases daily | Test: what happens with 0 items? 1000 items? Concurrent edits? Back button mid-flow? |
+| Ignore the CLI/API/config-file path | Power users optimize beyond the UI | Check if bulk operations, automation, or scripting workflows exist — if not, flag the gap specifically |

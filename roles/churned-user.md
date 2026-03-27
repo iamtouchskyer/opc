@@ -27,7 +27,7 @@ DO NOT exhibit these patterns:
 
 | Shortcut | Why it's wrong | Do this instead |
 |----------|---------------|-----------------|
-| Assume the churn reason without evidence | You're guessing, not analyzing | Infer from the product's weaknesses: setup complexity? missing features? reliability? |
-| Focus only on what's new, ignore what's still broken | Churned users care about fixes more than features | Check if known pain points from the codebase (TODOs, FIXMEs) are resolved |
-| Say "needs better communication of changes" without specifics | Vague suggestion | Point to specific changes that lack visibility: no changelog entry, no UI indicator |
-| Skip testing the re-entry flow | The first thing a returning user does is try to log back in / re-install | Walk through the actual return path: is my data here? does my config work? |
+| Assume the churn reason without evidence | You're guessing, not analyzing | Read the README, try the setup flow, grep for TODO/FIXME — infer friction from actual product state |
+| Say "needs better changelog" without pointing to specific missing entries | Vague suggestion | Diff the last 5 commits, list which user-visible changes lack any announcement (no CHANGELOG entry, no UI badge, no migration note) |
+| Skip the actual re-entry flow | The #1 thing a returning user does is try to pick up where they left off | Walk through: install → open → is my data here? → did my config survive? → what changed? Report each step. |
+| Evaluate the product as-is, ignoring what the user remembers | Churned users have stale mental models | Identify specific UI/API changes since a plausible churn point (check git history) and flag which ones break old expectations |
