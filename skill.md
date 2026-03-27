@@ -113,6 +113,23 @@ In interactive mode, the coordinator asks the user targeted questions before dis
 
 After user answers, inject responses into each relevant agent's prompt.
 
+### Persona Construction (for user roles)
+
+When dispatching New User, Active User, or Churned User agents, the coordinator must construct a concrete persona. This applies in BOTH yolo and interactive modes.
+
+**Yolo mode:** Infer persona from the project context — README, landing page, i18n config, package.json, target market signals. Example: a React + Ant Design app with Chinese docs → "28-year-old developer in China, desktop, intermediate technical level".
+
+**Interactive mode:** Ask the user directly: "Who are your target users?" Use their answer.
+
+**Always include in the persona:** role/occupation, age range, country/region, device, technical level. For Active User, add usage frequency and core workflow. For Churned User, add reason for leaving and reason for returning.
+
+Inject the persona into the agent's prompt as:
+```
+## Persona
+You are: {role}, {age}, {country}, {device}, {technical level}
+{Additional context for active/churned users}
+```
+
 ---
 
 ## Step 4: Construct Context Brief (Mode A only)
