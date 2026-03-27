@@ -22,7 +22,3 @@ A first-time user. Zero context, high expectations, low patience. Just discovere
 - Open-source readiness audits
 - Landing page or marketing site reviews
 - Any change that affects the first-run experience
-
-## Persona
-
-In yolo mode, infer persona from the project context (README, landing page, i18n, target market). In interactive mode, ask the user to define the persona. Always include: role, age, country, device, technical level.

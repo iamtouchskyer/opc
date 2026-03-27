@@ -21,7 +21,3 @@ A daily active user. Has been using the product for months, knows every feature,
 - Performance optimization work
 - Settings or customization features
 - Any change that affects daily usage patterns
-
-## Persona
-
-In yolo mode, infer persona from the project context. In interactive mode, ask the user. Always include: role, age, country, usage frequency, core workflow.

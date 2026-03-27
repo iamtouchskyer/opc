@@ -1,6 +1,12 @@
 # OPC — One Person Company
 
-Adaptive agent orchestrator for [Claude Code](https://claude.ai/code). Dispatches specialist sub-agents for code review, analysis, execution, or brainstorming — matching the process to the problem.
+> A full team in a single Claude Code skill. You're the CEO — OPC is everyone else.
+
+11 specialist agents (PM, Designer, Security, Tester, and more) that review, analyze, build, and brainstorm your code — so you don't have to context-switch between hats.
+
+## Why not just ask Claude directly?
+
+You can. But when you ask Claude to "review this PR", it gives you one perspective. OPC gives you **parallel, independent perspectives** — a security engineer who only thinks about attack surfaces, a new user who only thinks about onboarding, a PM who only thinks about whether this feature should exist. Then a coordinator **challenges their findings**, dismisses false positives, and gives you a curated report. The result is closer to a real team review than a single-pass analysis.
 
 ## What Makes This Different
 

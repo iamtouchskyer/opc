@@ -20,7 +20,3 @@ A returning user who tried the product before but stopped using it. Has stale ex
 - Re-engagement or win-back features
 - Changelog or "what's new" experiences
 - When the product has changed significantly since last version
-
-## Persona
-
-In yolo mode, infer persona from project context. In interactive mode, ask the user to define: who they were, why they left, why they're back. Always include: role, age, country, reason for churning.
