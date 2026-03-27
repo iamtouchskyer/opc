@@ -1,11 +1,11 @@
 ---
-name: swarm
-description: "Adaptive agent orchestrator for Claude Code. Dispatches specialist sub-agents for review, analysis, execution, or brainstorming. 11 built-in roles (PM, Designer, 3 User types, Frontend, Backend, DevOps, Security, Tester, Compliance) + dynamic role creation. Supports yolo (zero-interaction) and interactive modes."
+name: opc
+description: "OPC — One Person Company. Adaptive agent orchestrator for Claude Code. Dispatches specialist sub-agents for review, analysis, execution, or brainstorming. 11 built-in roles (PM, Designer, 3 User types, Frontend, Backend, DevOps, Security, Tester, Compliance) + dynamic role creation. Supports yolo (zero-interaction) and interactive modes. Optional memex integration for cross-session learning."
 ---
 
-# Swarm — Adaptive Agent Orchestrator
+# OPC — One Person Company
 
-Dispatch specialist agents to review, analyze, build, or brainstorm — matching the process to the problem.
+A full team in a single Claude Code skill. Dispatch specialist agents to review, analyze, build, or brainstorm — matching the process to the problem.
 
 ## Invocation
 
@@ -27,7 +27,23 @@ Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to crea
 
 ---
 
-## Step 0: Triage — Choose Mode
+## Step 0: Recall (if memex available)
+
+If the `memex` CLI is installed, recall relevant experience before starting:
+
+1. Run `memex search opc` to find prior OPC learnings
+2. Run `memex search <project-name>` to find project-specific insights
+3. Read relevant cards (max 5). Look for:
+   - Role effectiveness patterns ("Backend already covers auth for this project, skip Security")
+   - False positive patterns ("Designer has high false positive rate on Ant Design projects")
+   - User preferences ("this user prefers 2-3 agents max")
+   - Project-specific context ("this codebase has no tests, always include Tester")
+
+Apply recalled insights to triage, role selection, and agent dispatch. If memex is not installed or returns nothing, proceed normally.
+
+---
+
+## Step 1: Triage — Choose Mode
 
 Before anything else, classify the task:
 
@@ -58,7 +74,7 @@ Rationale: {1 sentence}
 
 ---
 
-## Step 1: Select Roles
+## Step 2: Select Roles
 
 Read each `roles/<name>.md` file's `When to Include` section. Match against the current task and project context.
 
@@ -82,7 +98,7 @@ Launching {N} agents...
 
 ---
 
-## Step 2: Interactive Mode (only if `-i`)
+## Step 3: Interactive Mode (only if `-i`)
 
 Skip this step in yolo mode.
 
@@ -99,7 +115,7 @@ After user answers, inject responses into each relevant agent's prompt.
 
 ---
 
-## Step 3: Construct Context Brief (Mode A only)
+## Step 4: Construct Context Brief (Mode A only)
 
 Before dispatching agents in Mode A, build a Design Context Brief to prevent false positives:
 
@@ -121,7 +137,7 @@ For Modes B/C/D, light context gathering (read key files) is sufficient — no f
 
 ---
 
-## Step 4: Dispatch Agents
+## Step 5: Dispatch Agents
 
 Launch agents in parallel. Each agent prompt is assembled from:
 
@@ -223,7 +239,7 @@ Propose an approach for: {problem description}
 
 ---
 
-## Step 5: Coordinator Review (Mode A only)
+## Step 6: Coordinator Review (Mode A only)
 
 After all agents return in Mode A, the coordinator reviews findings BEFORE presenting to user:
 
@@ -252,7 +268,7 @@ Do NOT default to agreeing with the challenger.
 
 ---
 
-## Step 6: Present Results
+## Step 7: Present Results
 
 ### Mode A — Review Report
 
@@ -298,6 +314,47 @@ Recommendation: {coordinator's pick with rationale}
 
 ---
 
+## Step 8: Retro (if memex available)
+
+After presenting results, save learnings for future sessions. Skip if memex is not installed.
+
+**What to save** (only if surprising or non-obvious):
+
+- **Role effectiveness** — a role produced mostly false positives or was unexpectedly useful
+  - Card: `opc-role-{role}-{project}`, e.g. `opc-role-security-suri-counsel`
+- **False positive patterns** — coordinator dismissed a type of finding repeatedly
+  - Card: `opc-false-positive-{pattern}`, e.g. `opc-false-positive-no-auth-single-user`
+- **User preferences** — user overrode role selection or mode choice
+  - Card: `opc-pref-{user-or-project}`, e.g. `opc-pref-minimal-agents`
+- **Project context** — learned something about the project that isn't in CLAUDE.md
+  - Card: `opc-project-{name}`, e.g. `opc-project-suri-counsel`
+
+**How to save:**
+```bash
+memex write opc-role-security-suri-counsel <<'EOF'
+---
+title: Security role high value for suri-counsel
+created: 2026-03-27
+category: opc
+---
+
+Security agent found real CORS and limit issues in suri-counsel review.
+Backend agent had 40% overlap with Security on auth checks — consider
+skipping Backend for pure security audits on this project.
+
+Related to [[opc-false-positive-no-auth-single-user]] — single-user apps
+don't need auth findings, but DO need input validation findings.
+EOF
+```
+
+**Rules:**
+- One insight per card (atomic)
+- Link to related cards with `[[slug]]` in context
+- Don't save routine outcomes — only save what would change behavior next time
+- Max 3 cards per session
+
+---
+
 ## Notes
 
 - Agents run via the Agent tool with `subagent_type: "general-purpose"`.
@@ -306,3 +363,4 @@ Recommendation: {coordinator's pick with rationale}
 - If scope exceeds 20 files, split across multiple agents of the same role.
 - Omit agents with no findings from the report.
 - **Err toward lighter modes.** When uncertain, pick the lighter one.
+- **memex is optional.** OPC works fine without it. With memex, it gets smarter over time.
