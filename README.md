@@ -35,6 +35,8 @@ git clone https://github.com/iamtouchskyer/opc.git
 ln -s $(pwd)/opc ~/.claude/skills/opc
 ```
 
+> **Note:** Symlink tracks the repo — `git pull` updates the skill immediately. Use `cp -r` instead if you want a stable snapshot.
+
 ### Use it
 
 ```bash
@@ -130,18 +132,19 @@ You: /opc review this PR
 6. Report     → Curated findings with severity, file:line references, and fix suggestions
 ```
 
-## Works better with memex
+## Requirements
+
+- [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)
+- Node.js ≥ 18 (for npm install only — not needed if you install manually)
+- That's it. No runtime dependencies, no build step, no MCP server. Just markdown files.
+
+## Works better with memex (optional)
 
 OPC works standalone — but pair it with [memex](https://github.com/iamtouchskyer/memex) and it learns across sessions. Memex remembers which roles were useful, which findings were false positives, and your project-specific context. OPC doesn't need to know how memex works — memex drives itself.
 
 ```bash
 npm install -g @touchskyer/memex
 ```
-
-## Requirements
-
-- [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)
-- That's it. No dependencies, no build step, no MCP server. Just markdown files.
 
 ## License
 

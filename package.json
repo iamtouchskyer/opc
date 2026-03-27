@@ -1,16 +1,21 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "OPC — One Person Company. A full team in a single Claude Code skill.",
   "type": "module",
   "bin": {
     "opc": "bin/opc.mjs"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "files": [
     "bin",
     "scripts",
     "skill.md",
-    "roles"
+    "roles",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs"

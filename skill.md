@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.2.1
+version: 0.2.2
 description: "OPC — One Person Company. A full team in a single skill: 11 specialist agents for review, analysis, execution, and brainstorming. /opc review, /opc -i, or /opc <role>."
 ---
 
@@ -142,6 +142,8 @@ For Modes B/C/D, light context gathering (read key files) is sufficient — no f
 ---
 
 ## Step 5: Dispatch Agents
+
+**Agent prompt = mode template + role file only.** Do NOT inject full skill.md into agents. Each agent gets: its mode-specific instruction block, the role's expertise + anti-patterns, project context, and task scope. The coordinator reads skill.md; agents do not.
 
 Launch agents in parallel. Each agent prompt is assembled from:
 
@@ -388,7 +390,6 @@ Recommendation: {coordinator's pick with rationale}
 ## Notes
 
 - Agents run via the Agent tool with `subagent_type: "general-purpose"`.
-- **Agent prompt = mode template + role file only.** Do NOT inject full skill.md into agents. Each agent gets: its mode-specific instruction block, the role's expertise + anti-patterns, project context, and task scope. The coordinator reads skill.md; agents do not.
 - Agents are READ-ONLY by default. No code changes except in Mode C.
 - Scope each agent to specific files — don't let them scan everything.
 - If scope exceeds 20 files, split across multiple agents of the same role.
