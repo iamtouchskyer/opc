@@ -11,7 +11,7 @@ const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
 const srcDir = join(__dirname, "..");
 
 // Only these files/dirs are managed by OPC — custom roles are left alone
-const MANAGED_ENTRIES = ["skill.md", "roles"];
+const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles"];
 
 const pkg = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
 const command = process.argv[2];

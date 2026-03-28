@@ -1,6 +1,6 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "OPC — One Person Company. A full team in a single Claude Code skill.",
   "type": "module",
   "bin": {
@@ -13,6 +13,7 @@
     "bin",
     "scripts",
     "skill.md",
+    "replay.md",
     "roles",
     "README.md",
     "LICENSE"

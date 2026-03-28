@@ -506,4 +506,23 @@ Use `**bold**` for emphasis in content. Each entry is one message in the Replay 
 - Omit agents with no findings from the report.
 - **Err toward lighter modes.** When uncertain, pick the lighter one.
 
-**Viewer:** Reports can be browsed with `npx @touchskyer/opc-viewer`. Use `/opc replay` to open the viewer automatically. If the viewer isn't available, reports are still saved for later.
+**Viewer:** Reports can be browsed with `npx @touchskyer/opc-viewer`. Use `/opc replay` to open the viewer automatically.
+
+When launching the viewer, always tell the user what's running:
+```
+🖥️ Opening OPC Viewer...
+Running: npx @touchskyer/opc-viewer
+(First run may take a moment to download the package)
+```
+
+If npx fails, show install instructions before falling back to terminal output:
+```
+⚠️ Could not launch OPC Viewer automatically.
+
+To install manually:
+  npm install -g @touchskyer/opc-viewer
+  opc-viewer
+
+Or run without installing:
+  npx @touchskyer/opc-viewer
+```
