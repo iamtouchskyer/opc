@@ -1,0 +1,54 @@
+1/6
+I gave myself an 11-person review team with one slash command.
+
+/opc review — Security Engineer, PM, New User, DevOps, and more review your code in parallel.
+
+Built it as a Claude Code skill. Zero dependencies. Just markdown files.
+
+github.com/iamtouchskyer/opc
+
+2/6
+Honest test: I ran both on the same repo.
+
+Single Claude prompt: 14 bugs found
+OPC (3 agents): 9 bugs found
+
+Claude won on code bugs. Variable shadowing, DRY violations, exit codes — more thorough in a single pass.
+
+So why bother?
+
+3/6
+Because OPC caught 5 things Claude completely missed:
+
+- New user runs "opc review" in terminal, confused it's not a CLI command
+- README symlink breaks silently if you cd into the repo first
+- Claude Code link goes to marketing page, not install docs
+
+Perspective bugs. Not code bugs.
+
+4/6
+How it works:
+
+11 markdown files, each defining a specialist role with anti-patterns ("don't flag missing auth on local tools")
+
+2-5 agents run in parallel with different system prompts
+
+A coordinator verifies facts, questions severity, dismisses false positives
+
+No magic. Structured prompt management.
+
+5/6
+The anti-patterns are the key design choice.
+
+Each role knows what NOT to flag. Security agent won't cry about "no auth" on a CLI tool. New-user agent won't demand tutorials in a dev tool.
+
+This prevents the #1 problem with AI review: generic checklist filling.
+
+6/6
+npm install -g @touchskyer/opc
+
+Then in Claude Code: /opc review
+
+30 seconds. Zero deps. Finds bugs you wouldn't think to look for.
+
+Star it if it catches something Claude alone wouldn't.

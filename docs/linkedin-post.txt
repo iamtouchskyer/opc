@@ -1,0 +1,30 @@
+I built an AI review team that fits in one slash command.
+
+/opc review — and 11 specialists (Security, PM, New User, DevOps...) review your code in parallel.
+
+But here's the honest part:
+
+I tested it against just asking Claude directly. Same codebase, same scope.
+
+Single Claude: 14 code bugs found.
+OPC (3 agents): 9 code bugs found.
+
+Claude won on quantity.
+
+But OPC caught 5 things Claude completely missed:
+
+A new user would type "opc review" in terminal, not realizing it's a Claude Code skill — zero hint in the help text.
+
+The README's symlink command breaks silently if you cd into the repo first (which everyone does).
+
+The Claude Code link goes to a marketing page instead of install docs.
+
+These aren't code bugs. They're perspective bugs.
+
+You only find them when you think like a specific person — a first-time user, a security auditor, a DevOps engineer checking your npm packaging.
+
+OPC doesn't find MORE bugs. It finds DIFFERENT bugs.
+
+Zero dependencies. Pure markdown. 30 seconds to install.
+
+github.com/iamtouchskyer/opc
