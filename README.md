@@ -6,17 +6,24 @@
 
 ## Why not just ask Claude directly?
 
-You can. But when you ask Claude to "review this PR", it gives you one perspective. OPC gives you **parallel, independent perspectives** — a security engineer who only thinks about attack surfaces, a new user who only thinks about onboarding, a PM who only thinks about whether this feature should exist. Then a coordinator **challenges their findings**, dismisses false positives, and gives you a curated report. The result is closer to a real team review than a single-pass analysis.
+You can — and for code-level bugs, a single Claude prompt is often more thorough. We tested both on this repo:
 
-## What Makes This Different
+| | Single Claude | OPC (3 agents) |
+|---|:---:|:---:|
+| Code bugs (variable shadowing, DRY violations, exit codes) | **14 found** | 9 found |
+| UX issues ("new user runs `opc review` in terminal expecting a CLI command") | 0 found | **5 found** |
 
-Most multi-agent orchestrators run a fixed pipeline: split task → dispatch agents → merge results. OPC does three things differently:
+Single Claude found more code issues. OPC found **different types of issues** — things that require thinking from a specific persona's perspective. A security engineer looks for content exposure. A new user tries the install flow and gets confused. A DevOps engineer checks npm packaging. Claude won't switch to these mindsets unless you explicitly ask.
 
-1. **Adaptive triage** — not every task needs the same process. OPC picks from 4 modes (Review, Analysis, Execute, Brainstorm) based on what you're actually asking for.
+**OPC's value isn't finding more bugs. It's finding bugs you wouldn't think to look for.**
 
-2. **Adversarial quality control** — in Review mode, a coordinator challenges agent findings before presenting them to you. It verifies facts, questions severity, and dismisses false positives. You get a curated report, not a dump of everything agents said.
+## How It Works
 
-3. **Yolo + Interactive** — by default, agents infer all context themselves from your codebase (yolo). Add `-i` and agents ask you targeted questions first, then review with precise context.
+1. **Adaptive triage** — OPC picks from 4 modes (Review, Analysis, Execute, Brainstorm) based on what you're asking for.
+
+2. **Parallel specialists** — 2-5 agents run in parallel, each with domain-specific expertise and anti-patterns (what NOT to flag). They don't see each other's output.
+
+3. **Coordinator verification** — a coordinator checks agent findings: verifies facts, questions severity, dismisses false positives. You get a curated report, not a dump.
 
 ## Quick Start
 
