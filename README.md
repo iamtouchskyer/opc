@@ -151,16 +151,15 @@ npm install -g @touchskyer/memex
 
 ## Visualize reports (optional)
 
-OPC saves structured reports to `~/.opc/reports/` after every run. Install [opc-viewer](https://github.com/iamtouchskyer/opc-viewer) to browse them in a web UI:
+OPC saves structured reports to `~/.opc/reports/` after every run. Browse them in a web UI:
 
 ```bash
-git clone https://github.com/iamtouchskyer/opc-viewer.git
-cd opc-viewer && npm install && npm run dev
+npx @touchskyer/opc-viewer
 ```
 
-The viewer shows a Slack-like replay of your review team's conversation, plus a filterable summary of findings.
+Or use `/opc replay` in Claude Code to open the viewer automatically.
 
-Use `/opc replay` in Claude Code to open the viewer automatically.
+The viewer shows a Slack-like replay of your review team's conversation, plus a filterable summary of findings by severity.
 
 ## License
 

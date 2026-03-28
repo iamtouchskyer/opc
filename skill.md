@@ -506,4 +506,4 @@ Use `**bold**` for emphasis in content. Each entry is one message in the Replay 
 - Omit agents with no findings from the report.
 - **Err toward lighter modes.** When uncertain, pick the lighter one.
 
-**Viewer:** Reports are consumed by [opc-viewer](https://github.com/iamtouchskyer/opc-viewer). Use `/opc replay` to open the viewer. If the viewer isn't installed, reports are still saved for later.
+**Viewer:** Reports can be browsed with `npx @touchskyer/opc-viewer`. Use `/opc replay` to open the viewer automatically. If the viewer isn't available, reports are still saved for later.
