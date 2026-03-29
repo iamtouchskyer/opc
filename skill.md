@@ -152,10 +152,8 @@ Check if any agent's analysis depends on another's output:
 | Agent A constrains Agent B | DevOps reveals infra limits → Backend reviews against them |
 | Agent A scopes Agent B | PM clarifies requirements → all others review against them |
 
-- **If dependencies exist:** dispatch the upstream agent first, feed its relevant output into the dependent agent's prompt.
-- **If no dependencies:** dispatch all agents in parallel.
-
-Most reviews have no dependencies — flat-parallel dispatch is the common case.
+- **If no dependencies (common case):** dispatch all agents in parallel.
+- **If dependencies exist:** dispatch the upstream agent first (foreground, not parallel). When it returns, extract the specific outputs the downstream agent needs — usually 3-5 key lines, not the full report. Inject as: `Upstream context from {Role A}: {extracted points}.` Then dispatch the downstream agent.
 
 ### Mode C: Isolation
 
@@ -172,7 +170,7 @@ You are a {{Role}} specialist.
 
 {{Role expertise from roles/<name>.md}}
 
-## Constraints (from your role's anti-patterns)
+## Anti-Patterns (behaviors to avoid)
 {{Role anti-patterns from roles/<name>.md}}
 
 ## Quality Gate (applies to all roles)
@@ -376,20 +374,19 @@ Assess: DEFEND (with your own code references) / RETRACT / DOWNGRADE
 
 ---
 
-## Step 6b: Synthesis Round (optional)
+## Step 6b: Synthesis Round (conditional)
 
-After verification, evaluate whether findings from different agents interact:
+After verification, check for cross-cutting signals:
 
-**Cross-cutting signals:**
 - Agent A found X, which changes the context for Agent B's domain → dispatch B with A's finding as input
 - Two agents produced contradictory recommendations → dispatch a focused arbitrator
 - Round 1 revealed a domain not covered by any dispatched agent → dispatch new role
 
-**Decision:** Run a synthesis round only when findings genuinely interact and the answer matters. Do not synthesize for completeness.
+**Decision:** Run synthesis only when findings genuinely interact and the answer matters. Do not synthesize for completeness. If no signals exist, proceed to Step 7.
 
-Synthesis agents receive: the specific finding from another agent + the targeted question. They do not receive all findings (noise reduction).
+Synthesis agents receive: the specific finding from another agent + the targeted question. Not all findings (noise reduction).
 
-If no cross-cutting signals exist, proceed directly to Step 7.
+**Synthesis outputs must pass Tier 1 mechanical checks** (VERDICT present, dedup, hedging). Skip Tier 2/3 — synthesis agents are focused follow-ups, not broad reviews.
 
 ---
 
@@ -467,7 +464,7 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
         {
           "severity": "<critical|warning|suggestion>",
           "file": "<file path>",
-          "line": "<line number or null>",
+          "line": null,
           "issue": "<issue description>",
           "fix": "<suggested fix>",
           "reasoning": "<why this matters>",
@@ -478,14 +475,14 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
     }
   ],
   "coordinator": {
-    "challenged": "<number>",
-    "dismissed": "<number>",
-    "downgraded": "<number>"
+    "challenged": 0,
+    "dismissed": 0,
+    "downgraded": 0
   },
   "summary": {
-    "critical": "<count of accepted critical findings>",
-    "warning": "<count of accepted warning findings>",
-    "suggestion": "<count of accepted suggestion findings>"
+    "critical": 0,
+    "warning": 0,
+    "suggestion": 0
   },
   "timeline": [
     {
@@ -511,7 +508,7 @@ The `timeline` array records each step as a message for the Replay view:
 8. **report** (coordinator): "Final: N 🔴, N 🟡, N 🔵"
 
 **Rules:**
-- Sanitize task summary for filename: lowercase, hyphens, no special chars, max 50 chars
+- Sanitize task summary for filename: lowercase, hyphens for spaces, keep CJK characters, strip only punctuation and control chars, max 50 chars
 - Only include dispatched agents
 - `summary` counts only `status: "accepted"` findings
 - Mode B: findings without severity default to `"suggestion"`
