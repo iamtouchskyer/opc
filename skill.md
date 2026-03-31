@@ -485,7 +485,7 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
 {
   "version": "1.0",
   "timestamp": "<ISO 8601>",
-  "mode": "<review|analysis|execute|brainstorm>",
+  "mode": "<review|analysis|execute|brainstorm|harness>",
   "task": "<original task description>",
   "agents": [
     {
@@ -548,6 +548,7 @@ The `timeline` array records each step as a message for the Replay view:
 - Mode B: findings without severity default to `"suggestion"`
 - Mode C: empty findings array, just the verdict
 - Mode D: approaches as findings with severity `"suggestion"`
+- Mode E: see `harness/mode-e.md` for additional `harness` object, `acceptanceCriteria`, `iterationHistory`, and timeline types (`build`, `implementer-output`, `evaluation-synthesis`, `iteration`)
 
 ---
 
