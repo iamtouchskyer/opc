@@ -136,7 +136,7 @@ Write a brief (5-15 lines):
 
 ### Dispatch Rules
 
-- Agents run via the Agent tool with `subagent_type: "general-purpose"`.
+- Agents run via the Agent tool with `subagent_type: "general-purpose"`. **Save each agent's agentId** — you need it for deep-dive follow-ups in Step 6a.
 - Agents receive only their mode template + role file content. The coordinator reads skill.md; agents do not.
 - Agents are READ-ONLY by default. Only Mode C agents make code changes.
 - Scope each agent to specific files — broad "scan everything" scopes produce shallow results.
@@ -218,6 +218,9 @@ For each finding:
 If no issues found: "LGTM — no findings in scope."
 Prioritize: 🔴 first, then 🟡, then 🔵.
 
+## Threads
+After your findings, list 0-3 areas you noticed but couldn't fully resolve in this pass — things that need deeper tracing across files, or where you're uncertain about root cause. The coordinator may ask you to go deeper on these via follow-up.
+
 ## VERDICT (pick one)
 - VERDICT: FINDINGS [N] — N real issues (must match actual count)
 - VERDICT: LGTM — nothing found after thorough review
@@ -238,6 +241,9 @@ Prioritize: 🔴 first, then 🟡, then 🔵.
 2. Root cause analysis — WHY is it this way? What constraints led here?
 3. Problems/gaps — what's wrong or missing (with file:line references)
 4. Recommendation — concrete steps, with trade-offs acknowledged
+
+## Threads
+List 0-3 areas worth deeper investigation that you couldn't fully resolve.
 
 ## VERDICT (pick one)
 - VERDICT: ANALYSIS COMPLETE — findings and recommendations provided
@@ -374,9 +380,32 @@ Assess: DEFEND (with your own code references) / RETRACT / DOWNGRADE
 
 ---
 
+## Step 6a: Deep Dive (Mode A/B only)
+
+After verification, review each agent's **Threads** section. For threads worth pursuing:
+
+Use **SendMessage(agentId)** to resume the original agent — it keeps its full context (files read, reasoning, findings). Do not re-spawn.
+
+```
+The coordinator reviewed your findings and threads.
+
+Go deeper on: {{specific thread}}
+Trace the root cause across files. Update your findings if this changes severity or adds new issues.
+```
+
+**When to deep-dive:** Thread describes a cross-file dependency, uncertain root cause, or a finding whose severity depends on tracing further.
+
+**When to skip:** Agent returned LGTM with no threads, or threads are minor. If no agent has threads worth pursuing, proceed to Step 6b.
+
+**Ceiling:** Follow up with at most 3 agents. Deep-dive is for depth on the most interesting threads, not completeness.
+
+Deep-dive responses inherit the agent's original VERDICT format. Apply Tier 1 mechanical checks to updated output.
+
+---
+
 ## Step 6b: Synthesis Round (conditional)
 
-After verification, check for cross-cutting signals:
+After deep dive (or after verification if no deep dive), check for cross-cutting signals:
 
 - Agent A found X, which changes the context for Agent B's domain → dispatch B with A's finding as input
 - Two agents produced contradictory recommendations → dispatch a focused arbitrator
@@ -486,7 +515,7 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
   },
   "timeline": [
     {
-      "type": "<triage|roles|context|dispatch|agent-output|verification|synthesis|report>",
+      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report>",
       "role": "<coordinator or agent role name>",
       "content": "<message content>"
     }
@@ -504,8 +533,10 @@ The `timeline` array records each step as a message for the Replay view:
 4. **dispatch** (coordinator): "Agents running..."
 5. **agent-output** (each role): verdict + findings as "🔴/🟡/🔵 file:line — issue"
 6. **verification** (coordinator): "N challenged, M dismissed..." with details
-7. **synthesis** (coordinator): Cross-cutting findings if any (Step 6b)
-8. **report** (coordinator): "Final: N 🔴, N 🟡, N 🔵"
+7. **deep-dive** (coordinator): "Following up with N agents on threads..." (Step 6a)
+8. **deep-dive-response** (each followed-up role): Updated/new findings from deeper investigation
+9. **synthesis** (coordinator): Cross-cutting findings if any (Step 6b)
+10. **report** (coordinator): "Final: N 🔴, N 🟡, N 🔵"
 
 **Rules:**
 - Sanitize task summary for filename: lowercase, hyphens for spaces, keep CJK characters, strip only punctuation and control chars, max 50 chars
