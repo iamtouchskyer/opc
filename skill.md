@@ -40,17 +40,18 @@ Classify the task using this lookup:
 | B | Analysis | Deep dive from one angle — understand root causes | "analyze", "分析", "diagnose", "what's wrong with", "evaluate" |
 | C | Execute | Direction is set, implement it | clear plan in prompt, "帮我实现", "execute", "重构成..." |
 | D | Brainstorm | Explore options and trade-offs | "how could we", "what are the options", "brainstorm", "有什么方案" |
+| E | Harness | Build with multi-role verification — implement, then evaluate from multiple specialist angles | "harness", "build and verify", "implement and review", "harness build", "做完帮我查" |
 
-Rule of thumb: **Review = multiple angles; Analysis = one angle deep.** When uncertain between modes, pick the lighter one.
+Rule of thumb: **Review = multiple angles; Analysis = one angle deep; Harness = build + multi-angle verify.** When uncertain between modes, pick the lighter one.
 
 Show triage result:
 ```
-📌 Mode: {A/B/C/D} — {name}
+📌 Mode: {A/B/C/D/E} — {name}
 ⚡ Interaction: auto / interactive
 Rationale: {1 sentence}
 ```
 
-**Override:** If user explicitly names a mode, respect that. Users can reply `mode:A/B/C/D` to override after seeing triage.
+**Override:** If user explicitly names a mode, respect that. Users can reply `mode:A/B/C/D/E` to override after seeing triage.
 
 ---
 
@@ -64,6 +65,8 @@ Read each `roles/<name>.md` file's `When to Include` section. Match against the 
 - If user specified roles explicitly, use those. Add supplementary roles only if clearly needed.
 
 **Dynamic Role Creation:** If the task requires expertise not covered by any built-in role, create one on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Max 1 dynamic role per invocation — prefer adjusting an existing role's scope over creating a new one.
+
+**Mode E role selection:** Select roles as you would for Mode A (multiple distinct angles), but choose roles relevant to *evaluating the implementation* — not just reviewing existing code. For example, if the task is a backend API, select `backend` + `security` + `tester`. The implementer runs first (it is not a role agent); the selected roles run as evaluators after implementation completes. On re-evaluation rounds, narrow to roles whose domain had findings plus one regression-check role. Re-run all roles only if findings spanned 3+ domains.
 
 Show role selection:
 ```
@@ -307,6 +310,87 @@ For each approach:
 - VERDICT: NEED INPUT [question] — cannot proceed without user decision
 ```
 
+### Mode E: Harness Dispatch
+
+Mode E runs in two phases. The core principle: **the agent that builds the code never evaluates it.**
+
+**Phase 1 — Build:**
+
+1. Extract concrete acceptance criteria from the task (3-7 bullet points, each a specific verifiable behavior).
+2. Write acceptance criteria and task description to `.harness/wave-N-plan.md`.
+3. Spawn an implementer agent using `prompts/implementer-prompt.md` in Build mode. The implementer builds the code and reports what it did.
+4. Write `.harness/handoff-wave-N.md` using `prompts/handoff-template.md` as the structure. Be thorough — the evaluator roles' entire understanding comes from this file.
+5. Update `.harness/progress.md` with what was completed.
+
+**Phase 2 — Multi-Role Evaluation:**
+
+6. Dispatch OPC role agents as evaluators using the Mode E evaluator template below. Each role evaluates from its specialist angle.
+7. Agents are dispatched in parallel (same dependency-check rules as Mode A).
+8. Each agent returns per-criterion PASS/FAIL results, domain findings, and a VERDICT.
+9. The coordinator synthesizes all role verdicts into a single PASS/ITERATE/FAIL — see Step 6 Mode E Verdict Synthesis.
+
+**On Fix/Iterate rounds:** re-dispatch the implementer in Fix or Polish mode (pointing to `.harness/evaluation-wave-N.md`), then re-run Phase 2 with fresh evaluator agents.
+
+### Mode E — Harness Evaluator (insert into template)
+
+```
+## Implementation Under Review
+
+An independent implementer has built code for this task. You did NOT write this code. Your job is to evaluate it from your {{Role}} specialist perspective.
+
+Read the handoff: {{absolute path to .harness/handoff-wave-N.md}}
+Progress log: {{absolute path to .harness/progress.md}}
+Working directory: {{absolute path to working directory}}
+
+## Task
+{{task description}}
+
+## Acceptance Criteria
+{{paste acceptance criteria from wave plan}}
+
+## Scope
+{{specific files the implementer changed — extract from handoff}}
+
+## Your Evaluation Approach
+
+**Test end-to-end from your specialist perspective.** Do not just read code — run it, interact with it, verify it works. Reading code is not testing.
+
+1. Read the handoff file to understand what was built
+2. Review the implementation through your {{Role}} lens
+3. For each acceptance criterion: does it hold up from your angle? PASS or FAIL with evidence.
+4. Identify issues specific to your domain
+
+## Severity Calibration
+- 🔴 Critical: Blocks acceptance. Exploitable vulnerability, data loss, broken core functionality, or acceptance criterion failure.
+- 🟡 Warning: Does not block acceptance but degrades quality. Real code smell, missing edge case, reliability risk.
+- 🔵 Suggestion: Improvement opportunity. Nice-to-have.
+When in doubt, downgrade.
+
+## Output Format
+
+### Acceptance Criteria Results
+For each criterion:
+- [PASS/FAIL] {criterion} — {evidence from actual testing}
+
+### Domain Findings
+For each finding:
+[SEVERITY] file:line — Issue description
+  → Suggested fix
+  reasoning: Why this matters from your {{Role}} perspective
+
+### Quality Assessment
+If relevant to your domain, score applicable quality dimensions 1-5 with reasoning.
+
+## Threads
+After your evaluation, list 0-3 areas you noticed but couldn't fully resolve — things that need deeper tracing or where you're uncertain. The coordinator may follow up.
+
+## VERDICT (pick one)
+- VERDICT: PASS — all criteria hold from {{Role}} perspective, no critical issues
+- VERDICT: ITERATE — criteria pass but quality needs improvement (list what)
+- VERDICT: FAIL [reasons] — criteria failures or critical issues found
+- VERDICT: BLOCKED [reason] — cannot evaluate
+```
+
 ---
 
 ## Step 6: Verification Gate
@@ -340,6 +424,25 @@ For every agent output:
 
 Only for reviews with ≥ 5 agents or ≥ 10 files in scope:
 - Count files each agent referenced vs assigned scope. If suspiciously thin, re-dispatch with explicit file list.
+
+### Mode E: Verdict Synthesis
+
+After all role-based evaluators return, the coordinator synthesizes a single verdict:
+
+1. **Apply Tier 1 + Tier 2 checks** to each evaluator's output (same as Mode A).
+2. **Collect** all role verdicts, accepted findings, and quality scores.
+3. **Synthesize** the combined verdict:
+   - Any role returns FAIL with validated critical findings → **FAIL**
+   - All roles pass criteria but any role returns ITERATE or has quality gaps → **ITERATE**
+   - All roles return PASS → **PASS**
+4. **Write** `.harness/evaluation-wave-N.md` with the synthesized verdict, per-role breakdown, and accepted findings. Prefix each finding with `[Role]` so the implementer knows the domain context.
+5. **Handle the verdict:**
+   - **PASS:** Commit the work. Present the Mode E report. Save the OPC report.
+   - **ITERATE:** Dispatch implementer in Polish mode with the evaluation file. Re-run Phase 2 with fresh evaluator agents.
+   - **FAIL:** Show user what failed. Dispatch implementer in Fix mode with the evaluation file. Re-run Phase 2 with fresh evaluator agents.
+   - **Cap at 10 rounds** (FAIL + ITERATE combined). If still not passing, surface to user with full iteration history.
+
+Deep dive (Step 6a) and synthesis (Step 6b) apply to Mode E evaluator outputs the same way as Mode A.
 
 ### Coordinator Actions
 
@@ -463,6 +566,43 @@ Synthesize into a comparison table:
 Recommendation: {coordinator's pick with rationale}
 ```
 
+### Mode E — Harness Report
+
+```
+## OPC Harness — {task summary}
+
+### Implementation
+Wave {N} — {what was built, 2-3 sentences}
+
+### Evaluation (Round {R})
+
+#### Per-Role Results
+| Role | Verdict | 🔴 | 🟡 | 🔵 |
+|------|---------|-----|-----|-----|
+| {role} | {PASS/ITERATE/FAIL} | {count} | {count} | {count} |
+
+#### 🔴 Critical ({count})
+[{Role}] {findings}
+
+#### 🟡 Warning ({count})
+[{Role}] {findings}
+
+#### 🔵 Suggestion ({count})
+[{Role}] {findings}
+
+#### Dismissed ({count})
+{findings removed with brief reason}
+
+### Iteration History
+{If multiple rounds: Round 1 → FAIL (security: XSS in form handler) → Round 2 → ITERATE (tester: edge case) → Round 3 → PASS}
+
+---
+Verdict: {PASS/ITERATE/FAIL}
+Agents: implementer + {evaluator roles list}
+Rounds: {N}
+Coordinator: {N challenged, M dismissed, K downgraded}
+```
+
 **Viewer:** Past reports can be browsed with `npx @touchskyer/opc-viewer` — see Step 8.
 
 ---
@@ -482,7 +622,7 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
 {
   "version": "1.0",
   "timestamp": "<ISO 8601>",
-  "mode": "<review|analysis|execute|brainstorm>",
+  "mode": "<review|analysis|execute|brainstorm|harness>",
   "task": "<original task description>",
   "agents": [
     {
@@ -513,9 +653,29 @@ Use the Bash tool to create the directory, then the Write tool to save the JSON 
     "warning": 0,
     "suggestion": 0
   },
+  "harness": {
+    "wave": 1,
+    "round": 1,
+    "finalVerdict": "<PASS|ITERATE|FAIL>",
+    "iterationHistory": [
+      {
+        "round": 1,
+        "verdict": "<PASS|ITERATE|FAIL>",
+        "reason": "<summary of why>",
+        "implementerMode": "<Build|Fix|Polish>"
+      }
+    ],
+    "acceptanceCriteria": [
+      {
+        "criterion": "<description>",
+        "status": "<pass|fail>",
+        "evidence": "<how it was tested>"
+      }
+    ]
+  },
   "timeline": [
     {
-      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report>",
+      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report|build|implementer-output|evaluation-synthesis|iteration>",
       "role": "<coordinator or agent role name>",
       "content": "<message content>"
     }
@@ -537,6 +697,10 @@ The `timeline` array records each step as a message for the Replay view:
 8. **deep-dive-response** (each followed-up role): Updated/new findings from deeper investigation
 9. **synthesis** (coordinator): Cross-cutting findings if any (Step 6b)
 10. **report** (coordinator): "Final: N 🔴, N 🟡, N 🔵"
+11. **build** (coordinator): "Dispatching implementer for Wave N..." (Mode E only)
+12. **implementer-output** (implementer): What was built, verification results (Mode E only)
+13. **evaluation-synthesis** (coordinator): "Synthesized verdict: PASS/ITERATE/FAIL — N critical, M warning from K roles" (Mode E only)
+14. **iteration** (coordinator): "Round R: re-dispatching implementer in Fix/Polish mode" (Mode E only)
 
 **Rules:**
 - Sanitize task summary for filename: lowercase, hyphens for spaces, keep CJK characters, strip only punctuation and control chars, max 50 chars
@@ -545,6 +709,7 @@ The `timeline` array records each step as a message for the Replay view:
 - Mode B: findings without severity default to `"suggestion"`
 - Mode C: empty findings array, just the verdict
 - Mode D: approaches as findings with severity `"suggestion"`
+- Mode E: `harness` object is always present (null for modes A-D); each round's role evaluations become `agent-output` entries; `iterationHistory` records all rounds
 
 ---
 
@@ -553,6 +718,8 @@ The `timeline` array records each step as a message for the Replay view:
 - If scope exceeds 20 files, split across multiple agents of the same role.
 - Omit agents with no findings from the report.
 - Err toward lighter modes when uncertain.
+- Mode E uses `.harness/` directory for build state (wave plans, handoffs, evaluations). These files persist alongside the OPC JSON report in `~/.opc/reports/`.
+- Mode E implementer uses `prompts/implementer-prompt.md`; role agents use the Mode E evaluator template in skill.md.
 
 **Viewer:** Reports can be browsed with `npx @touchskyer/opc-viewer`. Use `/opc replay` to open the viewer automatically.
 
