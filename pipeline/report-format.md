@@ -78,7 +78,7 @@ Present the decomposed plan with acceptance criteria per wave/group. Include dep
 After presenting results, save a structured JSON report.
 
 **Directory:** `~/.opc/reports/` (create if it doesn't exist)
-**Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{task-type}_{sanitized-task-summary}.json`
+**Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{mode}_{sanitized-task-summary}.json`
 
 ### JSON Schema
 
@@ -86,7 +86,7 @@ After presenting results, save a structured JSON report.
 {
   "version": "1.0",
   "timestamp": "<ISO 8601>",
-  "taskType": "<review|analysis|build|brainstorm|plan>",
+  "mode": "<review|analysis|execute|brainstorm>",
   "task": "<original task description>",
   "agents": [
     {
@@ -117,20 +117,9 @@ After presenting results, save a structured JSON report.
     "warning": 0,
     "suggestion": 0
   },
-  "build": {
-    "wave": 1,
-    "round": 1,
-    "finalVerdict": "<PASS|ITERATE|FAIL>",
-    "iterationHistory": [
-      { "round": 1, "verdict": "<verdict>", "reason": "<summary>", "implementerMode": "<Build|Fix|Polish>" }
-    ],
-    "acceptanceCriteria": [
-      { "criterion": "<description>", "status": "<pass|fail>", "evidence": "<how tested>" }
-    ]
-  },
   "timeline": [
     {
-      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report|build|implementer-output|evaluation-synthesis|iteration>",
+      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report>",
       "role": "<coordinator or agent role name>",
       "content": "<message content>"
     }
@@ -138,18 +127,25 @@ After presenting results, save a structured JSON report.
 }
 ```
 
+### Mode Mapping
+
+Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
+- review → `"review"`
+- analysis → `"analysis"`
+- build, plan, full pipeline → `"execute"`
+- brainstorm → `"brainstorm"`
+
 ### Rules
 
 - Sanitize task summary for filename: lowercase, hyphens for spaces, keep CJK characters, strip punctuation and control chars, max 50 chars
 - Only include dispatched agents
 - `summary` counts only `status: "accepted"` findings
 - Analysis: findings without severity default to `"suggestion"`
-- Build: include `build` object with wave/round/iterationHistory/acceptanceCriteria
+- Build: iteration history goes in `timeline` as `verification` entries (content includes round, verdict, reason, implementer mode). Acceptance criteria go in the evaluator agent's `findings` array. Final verdict goes in the `report` timeline entry.
 - Brainstorm: approaches as findings with severity `"suggestion"`
-- `build` object is `null` for non-build tasks
 
 ---
 
 ## Replay
 
-Browse past reports with `/opc replay`. See `./replay.md` for the full replay skill.
+Browse past reports with `/opc replay`. See `../replay.md` for the full replay skill.

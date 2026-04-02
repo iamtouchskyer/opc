@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 1.0.0
+version: 0.4.0
 description: "OPC — One Person Company. Task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with 11 specialist agents. Every task ends with evaluation. /opc <task>, /opc -i <task>, /opc <role> [role...]"
 ---
 
@@ -24,14 +24,14 @@ The pipeline reads the task and decides what to do. Every path ends with evaluat
 
 | Task says... | Phases to run |
 |---|---|
-| "review", "audit", "check", "before we merge" | Context Brief → Evaluate (multi-role) |
-| "analyze", "diagnose", "what's wrong with" | Context Brief → Evaluate (single deep role) |
-| "build", "implement", "create", "fix bug" | Build → Evaluate |
-| "brainstorm", "explore options", "what are the approaches" | Design (with role perspectives) → Evaluate |
+| "review", "audit", "check", "before we merge", "找问题", "开源前看看" | Context Brief → Evaluate (multi-role) |
+| "analyze", "diagnose", "what's wrong with", "分析" | Context Brief → Evaluate (single deep role) |
+| "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | Build → Evaluate |
+| "brainstorm", "explore options", "what are the approaches", "有什么方案" | Design (with role perspectives) → Evaluate |
 | "plan", "decompose", "break this down" | Plan → Evaluate |
 | Complex or vague request | Design → Plan → Build → Evaluate → Deliver |
 
-No mode letters. No triage table. Just read the task and act.
+**Legacy mode override:** Users can still use `mode:A/B/C/D` — map A→review, B→analysis, C→build, D→brainstorm.
 
 Show triage result:
 ```
@@ -154,12 +154,12 @@ Run this phase once per wave.
 
 1. **Write wave plan** to `.harness/wave-N-plan.md` — tasks, acceptance criteria, context from previous waves.
 
-2. **Spawn implementer** using `./implementer-prompt.md` in Build mode.
+2. **Spawn implementer** using `./pipeline/implementer-prompt.md` in Build mode.
 
    **With superpowers:** Invoke `superpowers:subagent-driven-development` pointing to the wave plan.
    **Without:** Dispatch an implementer agent with the wave plan.
 
-3. **Write handoff** to `.harness/handoff-wave-N.md` using `./handoff-template.md`.
+3. **Write handoff** to `.harness/handoff-wave-N.md` using `./pipeline/handoff-template.md`.
 
 4. **Update progress** in `.harness/progress.md`.
 
@@ -180,11 +180,11 @@ Every task type goes through evaluation. Two paths: **single evaluator** (defaul
 
 ### Context Brief (review/analysis tasks only)
 
-Before dispatching evaluators for review or analysis tasks, build a context brief. Read `./context-brief.md` for the procedure.
+Before dispatching evaluators for review or analysis tasks, build a context brief. Read `./pipeline/context-brief.md` for the procedure.
 
 ### Single Evaluator
 
-Dispatch one evaluator using `./evaluator-prompt.md`. Fill in wave number, acceptance criteria, handoff path, progress path, working directory, and project context.
+Dispatch one evaluator using `./pipeline/evaluator-prompt.md`. Fill in wave number, acceptance criteria, handoff path, progress path, working directory, and project context.
 
 The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL.
 
@@ -196,9 +196,9 @@ The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL
    - If no dependencies (common case): dispatch all agents in parallel.
    - If dependencies exist (e.g., backend maps auth flow → security audits it): dispatch upstream agent first, extract 3-5 key lines, inject as upstream context, then dispatch downstream.
 
-3. **Dispatch role evaluators** in parallel using `./role-evaluator-prompt.md`. **Save each agent's agentId** — needed for deep-dive follow-ups. Scope each agent to specific files. If scope exceeds 20 files, split across multiple agents of the same role.
+3. **Dispatch role evaluators** in parallel using `./pipeline/role-evaluator-prompt.md`. **Save each agent's agentId** — needed for deep-dive follow-ups. Scope each agent to specific files. If scope exceeds 20 files, split across multiple agents of the same role.
 
-4. **Verification gate.** After all role evaluators return, follow `./verification-gate.md` — mechanical checks, spot-checks, deep-dive on threads, synthesis of cross-cutting signals.
+4. **Verification gate.** After all role evaluators return, follow `./pipeline/verification-gate.md` — mechanical checks, spot-checks, deep-dive on threads, synthesis of cross-cutting signals.
 
 5. **Synthesize verdict** into `.harness/evaluation-wave-N.md`:
    - Any role has validated 🔴 Critical findings → **FAIL**
@@ -213,7 +213,7 @@ The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL
 - **With superpowers:** Invoke `superpowers:finishing-a-development-branch` via the Skill tool.
 - **Without:** Commit all work, present a summary, ask how to integrate.
 
-Present results using the appropriate format from `./report-format.md`. Save the JSON report.
+Present results using the appropriate format from `./pipeline/report-format.md`. Save the JSON report.
 
 ---
 
@@ -223,9 +223,9 @@ Sanity-check every verdict: it must be clear PASS, ITERATE, or FAIL with evidenc
 
 **PASS:** Commit the work. Show the assessment. Move to next wave or Phase 5.
 
-**ITERATE:** Quality gaps but criteria pass. Show rubric/findings. Dispatch implementer in Polish mode using `./implementer-prompt.md`. Re-run evaluation.
+**ITERATE:** Quality gaps but criteria pass. Show rubric/findings. Dispatch implementer in Polish mode using `./pipeline/implementer-prompt.md`. Re-run evaluation.
 
-**FAIL:** Criteria failures or critical issues. Show what failed. Dispatch implementer in Fix mode using `./implementer-prompt.md`. Re-run evaluation.
+**FAIL:** Criteria failures or critical issues. Show what failed. Dispatch implementer in Fix mode using `./pipeline/implementer-prompt.md`. Re-run evaluation.
 
 **Cap at 10 rounds** (FAIL + ITERATE combined). Surface to user if not resolved.
 
@@ -249,13 +249,15 @@ Even for single-wave tasks, use `.harness/` files.
 
 ## Prompt Templates
 
-- `./evaluator-prompt.md` — Single generic evaluator
-- `./role-evaluator-prompt.md` — Role-specific evaluator (review, analysis, brainstorm outputs)
-- `./implementer-prompt.md` — Implementer (Build / Fix / Polish modes)
-- `./handoff-template.md` — Handoff file structure
-- `./context-brief.md` — Design context brief procedure
-- `./verification-gate.md` — 3-tier verification + deep-dive + synthesis
-- `./report-format.md` — Presentation templates + JSON schema + replay
+All templates live in `./pipeline/`:
+
+- `evaluator-prompt.md` — Single generic evaluator
+- `role-evaluator-prompt.md` — Role-specific evaluator (review, analysis, brainstorm outputs)
+- `implementer-prompt.md` — Implementer (Build / Fix / Polish modes)
+- `handoff-template.md` — Handoff file structure
+- `context-brief.md` — Design context brief procedure
+- `verification-gate.md` — 3-tier verification + deep-dive + synthesis
+- `report-format.md` — Presentation templates + JSON schema + replay
 
 ---
 
