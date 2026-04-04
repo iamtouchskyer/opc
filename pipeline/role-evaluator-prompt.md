@@ -30,6 +30,9 @@ You are a {role_name} specialist.
 - If you reviewed the scope and found 0 issues: say LGTM. Do not manufacture findings to appear thorough.
 - If >50% of your findings are 🔴 Critical, re-calibrate — you are almost certainly severity-inflating.
 
+## Design Context Brief (if provided)
+{Design Context Brief — if provided, respect these decisions, do not flag them}
+
 {SELECTED_OUTPUT_FORMAT}
 
 ## Write Evaluation
@@ -41,8 +44,6 @@ Write your evaluation to: {absolute path to .harness/evaluation-wave-N-{role_nam
 The following are the three output format options. The orchestrator selects one and pastes it above.
 
 ### Review Output Format (for review and build tasks)
-
-{Design Context Brief — if provided, respect these decisions, do not flag them}
 
 ## Process
 Before listing findings:

@@ -52,34 +52,38 @@ switch (command) {
       break;
     }
 
-    // Only remove OPC-managed files, preserve custom roles
-    const rolesDir = join(skillsDir, "roles");
-    const managedRoles = readdirSync(join(srcDir, "roles"));
+    // Only remove OPC-managed entries, preserve custom roles
+    for (const entry of MANAGED_ENTRIES) {
+      const targetPath = join(skillsDir, entry);
+      if (!existsSync(targetPath)) continue;
 
-    // Remove managed role files
-    if (existsSync(rolesDir)) {
-      for (const role of managedRoles) {
-        const rolePath = join(rolesDir, role);
-        if (existsSync(rolePath)) rmSync(rolePath);
-      }
-      try {
-        const remaining = readdirSync(rolesDir);
-        if (remaining.length === 0) rmSync(rolesDir);
-        else console.log(`  Kept ${remaining.length} custom role(s) in ${rolesDir}`);
-      } catch (err) {
-        console.warn(`  ⚠ Could not clean roles dir: ${err.message}`);
+      if (entry === "roles") {
+        // Selective deletion — preserve custom roles
+        let managedRoles;
+        try {
+          managedRoles = readdirSync(join(srcDir, "roles"));
+        } catch (err) {
+          console.warn(`  ⚠ Could not read source roles dir: ${err.message}. Removing entire roles dir.`);
+          rmSync(targetPath, { recursive: true });
+          continue;
+        }
+        for (const role of managedRoles) {
+          const rolePath = join(targetPath, role);
+          if (existsSync(rolePath)) rmSync(rolePath);
+        }
+        try {
+          const remaining = readdirSync(targetPath);
+          if (remaining.length === 0) rmSync(targetPath);
+          else console.log(`  Kept ${remaining.length} custom role(s) in ${targetPath}`);
+        } catch (err) {
+          console.warn(`  ⚠ Could not clean roles dir: ${err.message}`);
+        }
+      } else if (lstatSync(targetPath).isDirectory()) {
+        rmSync(targetPath, { recursive: true });
+      } else {
+        rmSync(targetPath);
       }
     }
-
-    // Remove skill.md and replay.md
-    for (const f of ["skill.md", "replay.md"]) {
-      const p = join(skillsDir, f);
-      if (existsSync(p)) rmSync(p);
-    }
-
-    // Remove pipeline directory
-    const pipelineDir = join(skillsDir, "pipeline");
-    if (existsSync(pipelineDir)) rmSync(pipelineDir, { recursive: true });
 
     // Remove dir only if empty
     try {

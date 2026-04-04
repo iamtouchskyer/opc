@@ -133,7 +133,7 @@ After presenting results, save a structured JSON report.
 {
   "version": "1.0",
   "timestamp": "<ISO 8601>",
-  "mode": "<review|analysis|execute|brainstorm>",
+  "mode": "<review|analysis|execute|plan|brainstorm>",
   "task": "<original task description>",
   "agents": [
     {
@@ -179,7 +179,8 @@ After presenting results, save a structured JSON report.
 Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
 - review → `"review"`
 - analysis → `"analysis"`
-- build, plan, full pipeline → `"execute"`
+- build, full pipeline → `"execute"`
+- plan → `"plan"`
 - brainstorm → `"brainstorm"`
 
 ### Rules

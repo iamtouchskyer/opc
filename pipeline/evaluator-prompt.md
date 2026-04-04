@@ -43,13 +43,13 @@ This is Round {R} of evaluation for Wave {N}.
 
 {SELECT THE MATCHING APPROACH SECTION BELOW — delete the others before dispatch}
 
-### For Build Tasks (code was written)
+### For Build / Review Tasks (code inspection or verification)
 
 **Test end-to-end, the way a user would.** For web apps, that means launching the frontend, performing the actual user actions, and verifying the outcomes. For APIs, hit the real endpoints. For CLIs, run the real commands. Reading code is not testing.
 
 You have access to Bash, Read, Grep, Glob, and browser automation tools (Chrome DevTools MCP if available). Use whatever approach gets you to real end-to-end verification.
 
-**If you can't complete an end-to-end test** because the app lacks testability — for example, you can't programmatically trigger a file upload, simulate a drag-and-drop, or automate a multi-step UI flow — that's a **FAIL with a testability request**. In your feedback, ask the implementer to add a helper method, test endpoint, or automation hook that would let you complete the test. The implementer's job isn't done until the evaluator can verify the work end-to-end.
+**If you can't complete an end-to-end test** because the app lacks testability — for example, you can't programmatically trigger a file upload, simulate a drag-and-drop, or automate a multi-step UI flow — that's a **FAIL with a testability request**. In your feedback, ask the implementer to add a helper method, test endpoint, or automation hook that would let you complete the test. The implementer's job isn't done until the evaluator can verify the work end-to-end. For review-only tasks (no new code was written): focus on code inspection and existing test suites. The testability FAIL applies only when evaluating new build output.
 
 **Regression check:** If this is not the first wave, verify that key functionality from previous waves still works. Check the progress log for what was built before, and spot-test critical paths. A new wave that breaks previous work is a FAIL regardless of whether its own criteria pass.
 

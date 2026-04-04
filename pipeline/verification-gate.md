@@ -70,7 +70,7 @@ Assess: DEFEND (with your own code references) / RETRACT / DOWNGRADE
 
 After verification, review each agent's **Threads** section. For threads worth pursuing:
 
-Use **SendMessage(agentId)** to resume the original agent — it keeps its full context. Do not re-spawn.
+Use the **Agent tool** with `to: agentId` (SendMessage) to resume the original agent — it keeps its full context. Do not re-spawn.
 
 ```
 The coordinator reviewed your findings and threads.
