@@ -1,7 +1,7 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.3.1",
-  "description": "OPC — One Person Company. A full team in a single Claude Code skill.",
+  "version": "0.4.0",
+  "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
   "type": "module",
   "bin": {
     "opc": "bin/opc.mjs"
@@ -15,6 +15,7 @@
     "skill.md",
     "replay.md",
     "roles",
+    "pipeline",
     "README.md",
     "LICENSE"
   ],

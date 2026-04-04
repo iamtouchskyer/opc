@@ -11,7 +11,7 @@ const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
 const srcDir = join(__dirname, "..");
 
 // Only these files/dirs are managed by OPC — custom roles are left alone
-const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles"];
+const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles", "pipeline"];
 
 const pkg = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
 const command = process.argv[2];
@@ -71,9 +71,15 @@ switch (command) {
       }
     }
 
-    // Remove skill.md
-    const skillFile = join(skillsDir, "skill.md");
-    if (existsSync(skillFile)) rmSync(skillFile);
+    // Remove skill.md and replay.md
+    for (const f of ["skill.md", "replay.md"]) {
+      const p = join(skillsDir, f);
+      if (existsSync(p)) rmSync(p);
+    }
+
+    // Remove pipeline directory
+    const pipelineDir = join(skillsDir, "pipeline");
+    if (existsSync(pipelineDir)) rmSync(pipelineDir, { recursive: true });
 
     // Remove dir only if empty
     try {
