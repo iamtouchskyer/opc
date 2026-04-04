@@ -51,7 +51,7 @@ You have access to: Bash (run app, curl, test), Read (inspect files), Edit (fix/
 2. Implement the work (or fix the issues, or polish the dimensions)
 3. Verify your work — run the app, test it, confirm it works
 4. Run existing tests to check for regressions — don't break things that were already working
-5. Update the handoff file ({absolute path to .harness/handoff-wave-N.md}) with what you built/changed, how to run/test it, and known issues
+5. Write (or update) the handoff file ({absolute path to .harness/handoff-wave-N.md}) following the structure in {absolute path to ./pipeline/handoff-template.md}. Include: what you built/changed, how to run/test it, acceptance criteria (copied verbatim from the plan), known issues, and intentionally deferred items.
 
 Do NOT commit your changes — the orchestrator handles commits.
 

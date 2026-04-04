@@ -1,6 +1,6 @@
 # Handoff Template
 
-The orchestrator writes this file after all tasks in a wave complete. The evaluator's entire understanding of what was built comes from this file, so be thorough and accurate.
+The implementer writes this file as part of its build/fix/polish job. The orchestrator validates it exists and is complete after the implementer returns. The evaluator's entire understanding of what was built comes from this file, so be thorough and accurate.
 
 Write to `.harness/handoff-wave-N.md` using this structure:
 

@@ -6,10 +6,14 @@ Read this section, fill in the `{placeholders}` in the subagent prompt below, th
 
 For each role evaluator, paste the full content of the role's `.md` file into the Identity/Expertise and Anti-Patterns placeholders.
 
-**Choose the right output format** based on the task type:
-- Review/Build tasks → use the **Review** output format (severity findings)
-- Analysis tasks → use the **Analysis** output format (narrative)
-- Brainstorm tasks → use the **Brainstorm** output format (approaches)
+**IMPORTANT — Select and strip the output format:**
+1. Choose the right output format based on the task type:
+   - Review/Build tasks → keep **only** the "Review Output Format" section
+   - Analysis tasks → keep **only** the "Analysis Output Format" section
+   - Brainstorm tasks → keep **only** the "Brainstorm Output Format" section
+2. Delete the other two output format sections entirely
+3. Replace the `{SELECTED_OUTPUT_FORMAT}` placeholder below with the chosen section's content
+4. The subagent should see exactly one output format, not all three
 
 ---
 
@@ -26,9 +30,15 @@ You are a {role_name} specialist.
 - If you reviewed the scope and found 0 issues: say LGTM. Do not manufacture findings to appear thorough.
 - If >50% of your findings are 🔴 Critical, re-calibrate — you are almost certainly severity-inflating.
 
-{INSERT ONE OF THE FOLLOWING TASK-TYPE SECTIONS}
+{SELECTED_OUTPUT_FORMAT}
+
+## Write Evaluation
+
+Write your evaluation to: {absolute path to .harness/evaluation-wave-N-{role_name}.md}
 
 ---
+
+The following are the three output format options. The orchestrator selects one and pastes it above.
 
 ### Review Output Format (for review and build tasks)
 

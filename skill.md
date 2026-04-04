@@ -28,16 +28,20 @@ The pipeline reads the task and decides what to do. Every path ends with evaluat
 | "analyze", "diagnose", "what's wrong with", "分析" | Context Brief → Evaluate (single deep role) |
 | "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | Build → Evaluate |
 | "brainstorm", "explore options", "what are the approaches", "有什么方案" | Design (with role perspectives) → Evaluate |
-| "plan", "decompose", "break this down" | Plan → Evaluate |
-| Complex or vague request | Design → Plan → Build → Evaluate → Deliver |
+| "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | Plan → Evaluate |
+| `mode:A` / `mode:B` / `mode:C` / `mode:D` | Legacy override — A→review, B→analysis, C→build, D→brainstorm |
+| Complex, vague, or multi-keyword request | Design → Plan → Build → Evaluate → Deliver |
 
-**Legacy mode override:** Users can still use `mode:A/B/C/D` — map A→review, B→analysis, C→build, D→brainstorm.
+**Priority rules:**
+- If user includes `mode:A/B/C/D`, that wins — skip inference.
+- If task matches multiple rows (e.g., "review and fix the auth bug"), prefer the row that includes Build — code changes must precede review. When ambiguous, use the full pipeline (last row).
+- `/opc <role> [role...]` without a task description = review of the current codebase using the named roles. Enters Context Brief → Evaluate (multi-role).
+- `/opc` with no arguments = prompt user to describe their task.
 
 Show triage result:
 ```
 📌 Task type: {review|analysis|build|brainstorm|plan|full pipeline}
 ⚡ Interaction: auto / interactive
-📋 Phases: {which phases will run}
 Rationale: {1 sentence}
 ```
 
@@ -55,6 +59,10 @@ Rationale: {1 sentence}
 **Default to 1 wave.** Only use multiple waves when genuinely needed.
 
 ## Getting Started
+
+**Before task inference**, check if `.harness/orchestrator-state.md` exists. If so, resume from the recorded state — show user what was saved and confirm before continuing.
+
+Task Inference (above) determines WHICH phases run. The table below determines WHERE to enter if the user provides more or less context than the task verb implies. This table overrides Task Inference's default entry point:
 
 | User has... | Start at... |
 |---|---|
@@ -152,14 +160,14 @@ The plan must include: task decomposition, acceptance criteria per wave, and dep
 
 Run this phase once per wave.
 
-1. **Write wave plan** to `.harness/wave-N-plan.md` — tasks, acceptance criteria, context from previous waves.
+1. **Read (or write, if Phase 2 was skipped) wave plan** at `.harness/wave-N-plan.md` — tasks, acceptance criteria, context from previous waves.
 
 2. **Spawn implementer** using `./pipeline/implementer-prompt.md` in Build mode.
 
    **With superpowers:** Invoke `superpowers:subagent-driven-development` pointing to the wave plan.
    **Without:** Dispatch an implementer agent with the wave plan.
 
-3. **Write handoff** to `.harness/handoff-wave-N.md` using `./pipeline/handoff-template.md`.
+3. **Validate handoff.** The implementer writes `.harness/handoff-wave-N.md` as part of its job (see implementer-prompt.md step 5). After the implementer returns, verify the handoff file exists and follows the structure in `./pipeline/handoff-template.md`. Fill in any gaps the implementer missed.
 
 4. **Update progress** in `.harness/progress.md`.
 
@@ -175,8 +183,8 @@ Every task type goes through evaluation. Two paths: **single evaluator** (defaul
 
 ### Choosing the Evaluation Path
 
-- **Single evaluator:** Use when no `roles/` directory exists, or the task is straightforward and one evaluator suffices.
-- **Multi-role:** Use when the task benefits from multiple specialist perspectives — user requests it, review/audit tasks, security-sensitive builds, or any task where distinct specialist angles add value.
+- **Single evaluator:** Use for straightforward tasks: bug fixes touching ≤3 files, config changes, single-concern refactors, or when user explicitly asks for quick evaluation.
+- **Multi-role:** Use when the task benefits from multiple specialist perspectives — user requests it, review/audit tasks, security-sensitive builds, tasks touching ≥5 files across multiple concerns, or any task where distinct specialist angles add value.
 
 ### Context Brief (review/analysis tasks only)
 
@@ -196,13 +204,13 @@ The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL
    - If no dependencies (common case): dispatch all agents in parallel.
    - If dependencies exist (e.g., backend maps auth flow → security audits it): dispatch upstream agent first, extract 3-5 key lines, inject as upstream context, then dispatch downstream.
 
-3. **Dispatch role evaluators** in parallel using `./pipeline/role-evaluator-prompt.md`. **Save each agent's agentId** — needed for deep-dive follow-ups. Scope each agent to specific files. If scope exceeds 20 files, split across multiple agents of the same role.
+3. **Dispatch role evaluators** in parallel using `./pipeline/role-evaluator-prompt.md`. For each agent: select the matching output format section (Review/Analysis/Brainstorm), delete the other two, and paste into the `{SELECTED_OUTPUT_FORMAT}` placeholder. **Save each agent's agentId** — needed for deep-dive follow-ups. Scope each agent to specific files. If scope exceeds 20 files, split across multiple agents of the same role.
 
 4. **Verification gate.** After all role evaluators return, follow `./pipeline/verification-gate.md` — mechanical checks, spot-checks, deep-dive on threads, synthesis of cross-cutting signals.
 
 5. **Synthesize verdict** into `.harness/evaluation-wave-N.md`:
    - Any role has validated 🔴 Critical findings → **FAIL**
-   - All criteria pass but roles have 🟡 Warning findings affecting quality → **ITERATE**
+   - Any role has validated 🟡 Warning findings → **ITERATE**
    - All roles return LGTM or only 🔵 Suggestions → **PASS**
    - Tag each finding with `[Role]` in the merged evaluation.
 
@@ -227,7 +235,7 @@ Sanity-check every verdict: it must be clear PASS, ITERATE, or FAIL with evidenc
 
 **FAIL:** Criteria failures or critical issues. Show what failed. Dispatch implementer in Fix mode using `./pipeline/implementer-prompt.md`. Re-run evaluation.
 
-**Cap at 10 rounds** (FAIL + ITERATE combined). Surface to user if not resolved.
+**Cap at 10 rounds** (FAIL + ITERATE combined). **Early exit:** If the verdict oscillates (FAIL→ITERATE→FAIL, or the same findings recur across 2 consecutive rounds), surface to user after 3 rounds instead of burning through all 10.
 
 ---
 
