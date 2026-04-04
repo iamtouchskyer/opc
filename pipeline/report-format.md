@@ -26,7 +26,24 @@ Coordinator: {N challenged, M dismissed, K downgraded}
 
 ### Analysis
 
-Present a single coherent analysis. Merge agent output with coordinator's own perspective. Conversational tone, no severity ceremony unless warranted.
+```
+## OPC Analysis — {task summary}
+
+### Current State
+{What exists and how it works — 2-5 sentences with file:line references}
+
+### Root Cause
+{WHY is it this way? What constraints led here?}
+
+### Findings
+{Problems/gaps with file:line references. Use severity markers only if warranted — not required for analysis.}
+
+### Recommendation
+{Concrete steps with trade-offs acknowledged}
+
+---
+Agents: {list}
+```
 
 ### Build (with evaluation)
 
@@ -69,7 +86,37 @@ Recommendation: {coordinator's pick with rationale}
 
 ### Plan
 
-Present the decomposed plan with acceptance criteria per wave/group. Include dependency analysis and risk areas.
+```
+## OPC Plan — {task summary}
+
+### Overview
+{1-2 sentences: what this plan covers and the approach}
+
+### Task Decomposition
+
+#### Wave 1: {wave theme}
+| # | Task | Files | Depends on |
+|---|------|-------|------------|
+| 1 | {task description} | {key files} | — |
+| 2 | {task description} | {key files} | 1 |
+
+**Acceptance criteria:**
+- [ ] {criterion 1}
+- [ ] {criterion 2}
+
+#### Wave 2: {wave theme} (if multi-wave)
+...
+
+### Dependencies & Risks
+- {dependency or risk with mitigation}
+
+### Evaluation
+{Evaluator's assessment: completeness, feasibility, criteria quality}
+Verdict: {PASS/ITERATE/FAIL}
+
+---
+Agents: {list}
+```
 
 ---
 
@@ -140,8 +187,9 @@ Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
 - Sanitize task summary for filename: lowercase, hyphens for spaces, keep CJK characters, strip punctuation and control chars, max 50 chars
 - Only include dispatched agents
 - `summary` counts only `status: "accepted"` findings
-- Analysis: findings without severity default to `"suggestion"`
+- Analysis: findings without severity default to `"suggestion"`. Root cause and recommendation go in the `report` timeline entry content.
 - Build: iteration history goes in `timeline` as `verification` entries (content includes round, verdict, reason, implementer mode). Acceptance criteria go in the evaluator agent's `findings` array. Final verdict goes in the `report` timeline entry.
+- Plan: task decomposition goes in the `report` timeline entry content. Evaluator's assessment of plan quality goes in the evaluator agent's `findings` array (severity `"suggestion"` for plan gaps, `"warning"` for missing dependencies or untestable criteria).
 - Brainstorm: approaches as findings with severity `"suggestion"`
 
 ---

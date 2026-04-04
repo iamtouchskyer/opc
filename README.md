@@ -19,11 +19,15 @@ Single Claude found more code issues. OPC found **different types of issues** �
 
 ## How It Works
 
-1. **Adaptive triage** — OPC picks from 4 modes (Review, Analysis, Execute, Brainstorm) based on what you're asking for.
+One principle: **the agent that does the work never evaluates it.**
 
-2. **Parallel specialists** — 2-5 agents run in parallel, each with domain-specific expertise and anti-patterns (what NOT to flag). They don't see each other's output.
+1. **Task inference** — OPC reads your request and picks the right pipeline: review, analysis, build, brainstorm, plan, or full pipeline. Every path ends with independent evaluation.
 
-3. **Coordinator verification** — a coordinator checks agent findings: verifies facts, questions severity, dismisses false positives. You get a curated report, not a dump.
+2. **Parallel specialists** — 2-5 role-specific agents run in parallel, each with domain expertise and anti-patterns (what NOT to flag). They don't see each other's output.
+
+3. **Verification gate** — the orchestrator checks agent findings: verifies facts, challenges severity, dismisses false positives, and synthesizes a verdict (PASS / ITERATE / FAIL).
+
+4. **Iteration loop** — if the verdict is FAIL or ITERATE, the implementer fixes or polishes, and the evaluator re-tests. Up to 10 rounds, with early exit on oscillation.
 
 ## Quick Start
 
@@ -69,14 +73,16 @@ ln -s $(pwd)/opc ~/.claude/skills/opc
 /opc replay
 ```
 
-## Modes
+## Task Types
 
-| Mode | When | Process |
-|------|------|---------|
-| **Review** | PR review, audit, pre-launch | Full pipeline: role selection → context brief → parallel agents → adversarial Round 2 → synthesized report |
-| **Analysis** | Architecture, performance, diagnosis | 1-2 focused experts → coordinator synthesis |
-| **Execute** | Direction is set, just do it | Explore → plan → implement → verify |
-| **Brainstorm** | Options, trade-offs, alternatives | Multiple perspectives → comparison table → recommendation |
+| Task type | When | Pipeline |
+|-----------|------|----------|
+| **Review** | PR review, audit, pre-launch | Context brief → multi-role evaluation → verification gate → report |
+| **Analysis** | Architecture, performance, diagnosis | Context brief → single deep-role evaluation → report |
+| **Build** | Direction is set, implement it | Plan → build → independent evaluation → iterate until PASS |
+| **Brainstorm** | Options, trade-offs, alternatives | Role perspectives → comparison table → evaluation → recommendation |
+| **Plan** | Scope, decompose, estimate | Task decomposition → evaluation → report |
+| **Full pipeline** | Complex or vague request | Design → Plan → Build → Evaluate → Deliver |
 
 ## Built-in Roles
 
@@ -128,17 +134,17 @@ The coordinator reads `When to Include` to decide whether to dispatch your role.
 
 If a task needs expertise not covered by any role file, the coordinator creates a temporary role on-the-fly.
 
-## How Review Mode Works
+## How Review Works
 
 ```
 You: /opc review this PR
 
-1. Triage     → Mode A: Review
+1. Triage     → Task type: review
 2. Roles      → Frontend, Backend, Security (auto-selected from changed files)
-3. Brief      → Coordinator builds context from git log, CLAUDE.md, specs
-4. Dispatch   → 3 agents run in parallel, each with role expertise + context
+3. Brief      → Orchestrator builds context from git log, CLAUDE.md, specs
+4. Dispatch   → 3 role evaluators run in parallel, each with role expertise + context
 5. Verify     → Mechanical checks auto-reject incomplete outputs (no file:line, no VERDICT).
-                 Coordinator spot-checks facts, challenges severity, deduplicates.
+                 Orchestrator spot-checks facts, challenges severity, deduplicates.
 6. Report     → Curated findings with severity, file:line references, and fix suggestions
 ```
 
