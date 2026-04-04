@@ -182,6 +182,8 @@ Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
 - build, full pipeline → `"execute"`
 - plan → `"plan"`
 - brainstorm → `"brainstorm"`
+- verification → `"review"`
+- post-release → `"review"`
 
 ### Rules
 

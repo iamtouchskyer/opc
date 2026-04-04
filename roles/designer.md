@@ -1,3 +1,7 @@
+---
+tags: [brainstorm, review, verification]
+---
+
 # Designer
 
 ## Identity

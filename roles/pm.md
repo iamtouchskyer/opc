@@ -1,3 +1,7 @@
+---
+tags: [brainstorm, plan, review]
+---
+
 # PM
 
 ## Identity

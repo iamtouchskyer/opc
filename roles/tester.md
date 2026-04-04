@@ -1,3 +1,7 @@
+---
+tags: [review, verification, post-release]
+---
+
 # Tester
 
 ## Identity

@@ -30,6 +30,8 @@ The pipeline reads the task and decides what to do. Every path ends with evaluat
 | "brainstorm", "explore options", "what are the approaches", "有什么方案" | Design (with role perspectives) → Evaluate |
 | "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | Plan → Evaluate |
 | `mode:A` / `mode:B` / `mode:C` / `mode:D` | Legacy override — A→review, B→analysis, C→build, D→brainstorm |
+| "verify", "test", "QA", "check before release", "发布前验收" | Context Brief → Evaluate (multi-role, verification tags) |
+| "post-release", "user test", "onboarding check", "用户验收" | Context Brief → Evaluate (multi-role, post-release tags) |
 | Complex, vague, or multi-keyword request | Design → Plan → Build → Evaluate → Deliver |
 
 **Priority rules:**
@@ -40,7 +42,7 @@ The pipeline reads the task and decides what to do. Every path ends with evaluat
 
 Show triage result:
 ```
-📌 Task type: {review|analysis|build|brainstorm|plan|full pipeline}
+📌 Task type: {review|analysis|build|brainstorm|plan|verification|post-release|full pipeline}
 ⚡ Interaction: auto / interactive
 Rationale: {1 sentence}
 ```
@@ -110,13 +112,27 @@ Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to crea
 
 ### Role Selection
 
-Read each `roles/<name>.md` file's "When to Include" section. Match against the task and project context.
+1. **Tag filter** — from Task Inference, you know the task type. Map to stage tags:
+
+| Task type | Stage tags |
+|-----------|-----------|
+| review, analysis | review |
+| build | build |
+| brainstorm | brainstorm |
+| plan | plan |
+| verification | verification |
+| post-release | post-release |
+| full pipeline | all tags |
+
+   Read the `tags:` front matter from each `roles/<name>.md`. Keep only roles whose tags include at least one matching stage tag. This narrows the candidate pool from 11 to typically 3-6.
+
+2. **Select from filtered pool** — from the filtered candidates, pick 2-5 roles with distinct angles for this specific task. Read each candidate's "When to Include" section to decide relevance.
 
 - Each dispatched agent must have a DISTINCT angle. If two would produce 80%+ overlapping output, pick one.
-- Not every task needs every role. A CSS fix doesn't need Security. A DB migration doesn't need Designer.
-- If user specified roles explicitly, use those. Add supplementary roles only if clearly needed.
+- Not every task needs every role in the pool. A CSS fix doesn't need Security even if Security is in the verification pool.
+- If user specified roles explicitly, use those — skip tag filtering entirely.
 
-**Dynamic Role Creation:** If the task requires expertise not covered by any built-in role, create one on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Max 1 dynamic role per invocation.
+**Dynamic Role Creation:** If the task requires expertise not covered by any candidate in the filtered pool, create one on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Max 1 dynamic role per invocation.
 
 Show role selection:
 ```
