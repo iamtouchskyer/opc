@@ -1,5 +1,5 @@
 ---
-tags: [post-release]
+tags: [brainstorm, post-release]
 ---
 
 # Churned User

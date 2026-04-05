@@ -103,7 +103,8 @@ If `superpowers` skills are available, use them: brainstorming for design, plan 
 ## Built-in Roles
 
 ```
-Product:     pm, designer, new-user, active-user, churned-user
+Product:     pm, designer
+User Lens:   new-user, active-user, churned-user
 Engineering: frontend, backend, devops
 Quality:     security, tester, compliance
 ```
@@ -232,6 +233,8 @@ The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL
 
    The output JSON contains the definitive verdict (PASS/ITERATE/FAIL/BLOCKED) based on hardcoded rules: any 🔴 → FAIL, any 🟡 → ITERATE, all LGTM/🔵 → PASS, any BLOCKED → BLOCKED. **Use this verdict. Do not override it with your own judgment.**
 
+   > **Note:** `synthesize` assumes findings are bugs/issues (review use case). For brainstorm/analysis tasks where findings are context markers rather than defects, use the single evaluator path instead.
+
    Write the verdict and per-role summary into `.harness/evaluation-wave-N.md`. Tag each finding with `[Role]` in the merged evaluation.
 
 ---
@@ -255,7 +258,13 @@ Sanity-check every verdict: it must be clear PASS, ITERATE, or FAIL with evidenc
 
 **FAIL:** Criteria failures or critical issues. Show what failed. Dispatch implementer in Fix mode using `./pipeline/implementer-prompt.md`. Re-run evaluation.
 
-**Cap at 10 rounds** (FAIL + ITERATE combined). **Early exit:** detect oscillation programmatically:
+**Cap at 10 rounds** (FAIL + ITERATE combined). **Early exit:** detect oscillation programmatically.
+
+Before re-evaluation (FAIL or ITERATE):
+1. Rename `.harness/evaluation-wave-N.md` → `.harness/evaluation-wave-N-round{R}.md` (where R is the current round number)
+2. Dispatch implementer (Fix or Polish mode)
+3. Dispatch evaluator (writes new `.harness/evaluation-wave-N.md`)
+4. If R ≥ 2, run oscillation detection:
 
 ```bash
 opc-harness diff .harness/evaluation-wave-N-round{R-1}.md .harness/evaluation-wave-N-round{R}.md
@@ -273,6 +282,8 @@ If `oscillation: true`, surface to user after 3 rounds instead of burning throug
   wave-1-plan.md                    # Tasks and acceptance criteria
   handoff-wave-1.md                 # What was built, how to run it
   evaluation-wave-1.md              # Final verdict (single or merged multi-role)
+  evaluation-wave-1-round1.md       # Round 1 evaluation (created on re-evaluation)
+  evaluation-wave-1-round2.md       # Round 2 evaluation (created on re-evaluation)
   evaluation-wave-1-security.md     # Per-role evaluation (multi-role only)
   evaluation-wave-1-tester.md       # Per-role evaluation (multi-role only)
 ```

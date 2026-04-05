@@ -18,6 +18,7 @@ const VERDICT_RE = /VERDICT:\s*(.+)/i;
 const FINDINGS_N_RE = /FINDINGS\s*\[(\d+)\]/i;
 
 function parseEvaluation(text) {
+  text = text.replace(/\r\n/g, "\n");
   const lines = text.split("\n");
 
   let verdictPresent = false;
@@ -46,9 +47,9 @@ function parseEvaluation(text) {
       hasFileRefs = true;
     }
 
-    // Severity / finding detection
+    // Severity / finding detection (skip markdown headings — they contain severity emoji as section labels, not findings)
     const sevMatch = trimmed.match(SEVERITY_RE);
-    if (sevMatch) {
+    if (sevMatch && !trimmed.startsWith("#")) {
       const severity = SEVERITY_MAP[sevMatch[1]];
       severityCounts[severity]++;
 
@@ -121,8 +122,8 @@ function parseEvaluation(text) {
   if (fnMatch) {
     verdictCountMatch = parseInt(fnMatch[1], 10) === findingsCount;
   } else if (findingsCount > 0) {
-    // Non-FINDINGS verdict but there are findings → mismatch
-    verdictCountMatch = false;
+    // Non-FINDINGS verdict (e.g. "ANALYSIS COMPLETE", "OPTIONS [3]") — count check not applicable
+    verdictCountMatch = null;
   }
 
   return {
@@ -148,7 +149,17 @@ function cmdVerify(args) {
     process.exit(1);
   }
 
-  const text = readFileSync(file, "utf8");
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      console.error(`File not found: ${file}`);
+    } else {
+      console.error(`Cannot read ${file}: ${err.message}`);
+    }
+    process.exit(1);
+  }
   const result = parseEvaluation(text);
 
   // Strip internal-only fields
@@ -156,6 +167,8 @@ function cmdVerify(args) {
   console.log(JSON.stringify(output, null, 2));
 }
 
+// Note: synthesize assumes findings are bugs/issues (review use case). For brainstorm/analysis
+// tasks, findings are context markers, not defects — use single evaluator path (skip synthesize).
 function cmdSynthesize(args) {
   const dir = args[0];
   const waveIdx = args.indexOf("--wave");
@@ -253,6 +266,7 @@ function cmdReport(args) {
 
   const harnessDir = join(dir, ".harness");
   const ROLE_FILE_RE = /^evaluation-wave-\d+-(?!round\d)(.+)\.md$/;
+  const SINGLE_EVAL_RE = /^evaluation-wave-(\d+)\.md$/;
   let roleFiles;
   try {
     roleFiles = readdirSync(harnessDir).filter((f) => ROLE_FILE_RE.test(f));
@@ -261,9 +275,20 @@ function cmdReport(args) {
     process.exit(1);
   }
 
+  // Fallback: if no role-suffixed files found, use single-evaluator files (evaluation-wave-N.md)
+  let singleEvalFiles = [];
+  if (roleFiles.length === 0) {
+    try {
+      singleEvalFiles = readdirSync(harnessDir).filter((f) => SINGLE_EVAL_RE.test(f));
+    } catch {
+      // already handled above
+    }
+  }
+
   const agents = [];
   const summary = { critical: 0, warning: 0, suggestion: 0 };
 
+  // Process role-suffixed files
   for (const f of roleFiles) {
     const roleMatch = f.match(/^evaluation-wave-\d+-(.+)\.md$/);
     if (!roleMatch) continue;
@@ -293,6 +318,38 @@ function cmdReport(args) {
     });
 
     // Only count accepted findings
+    for (const fd of parsed.findings) {
+      if (fd.status === "accepted") {
+        summary[fd.severity]++;
+      }
+    }
+  }
+
+  // Process single-evaluator files (fallback when no role-suffixed files exist)
+  for (const f of singleEvalFiles) {
+    const text = readFileSync(join(harnessDir, f), "utf8");
+    const parsed = parseEvaluation(text);
+
+    const scope = [
+      ...new Set(parsed.findings.map((fd) => fd.file).filter(Boolean)),
+    ];
+
+    agents.push({
+      role: "evaluator",
+      scope,
+      verdict: parsed.verdict,
+      findings: parsed.findings.map((fd) => ({
+        severity: fd.severity,
+        file: fd.file,
+        line: fd.line,
+        issue: fd.issue,
+        fix: fd.fix,
+        reasoning: fd.reasoning,
+        status: fd.status,
+        dismissReason: fd.dismissReason,
+      })),
+    });
+
     for (const fd of parsed.findings) {
       if (fd.status === "accepted") {
         summary[fd.severity]++;

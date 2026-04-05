@@ -1,5 +1,5 @@
 ---
-tags: [verification]
+tags: [review, verification]
 ---
 
 # Compliance

@@ -17,6 +17,9 @@ Product designer. Owns interaction logic, information architecture, and visual e
 - **Accessibility** — WCAG AA contrast, focus indicators, screen reader flow, keyboard navigation, reduced-motion
 - **Motion & feedback** — purposeful transitions, loading states, progress indicators, micro-interactions
 - **Empty & error states** — what users see when there's no data, when something fails, when they're new
+- **Design-to-implementation fidelity** — does the built UI match design intent? Spacing, alignment, component usage, visual hierarchy
+- **Visual regression** — layout breaks, spacing inconsistencies, responsive breakpoints, overflow issues
+- **Cross-browser/device rendering** — consistent appearance across browsers, devices, and OS-level settings (font rendering, scrollbar behavior)
 
 ## When to Include
 

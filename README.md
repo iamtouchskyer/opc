@@ -82,6 +82,8 @@ ln -s $(pwd)/opc ~/.claude/skills/opc
 | **Build** | Direction is set, implement it | Plan → build → independent evaluation → iterate until PASS |
 | **Brainstorm** | Options, trade-offs, alternatives | Role perspectives → comparison table → evaluation → recommendation |
 | **Plan** | Scope, decompose, estimate | Task decomposition → evaluation → report |
+| **Verification** | QA, test, pre-release check | Context brief → multi-role evaluation (verification tags) → report |
+| **Post-release** | User test, onboarding check | Context brief → multi-role evaluation (post-release tags) → report |
 | **Full pipeline** | Complex or vague request | Design → Plan → Build → Evaluate → Deliver |
 
 ## Built-in Roles
@@ -91,6 +93,10 @@ ln -s $(pwd)/opc ~/.claude/skills/opc
 |------|-------|
 | **PM** | Requirements, user value, scope, prioritization |
 | **Designer** | Interaction design, information architecture, visual system, accessibility |
+
+### User Lens
+| Role | Focus |
+|------|-------|
 | **New User** | First impression, onboarding, setup friction, trust signals |
 | **Active User** | Workflow efficiency, power features, scale behavior, customization |
 | **Churned User** | Re-entry experience, change communication, win-back signals |
