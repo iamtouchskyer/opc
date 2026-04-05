@@ -169,10 +169,11 @@ function cmdSynthesize(args) {
   const mergedName = `evaluation-wave-${wave}.md`;
   const harnessDir = join(dir, ".harness");
 
+  const ROUND_RE = /^evaluation-wave-\d+-round\d+/;
   let files;
   try {
     files = readdirSync(harnessDir).filter(
-      (f) => f.startsWith(prefix) && f.endsWith(".md") && f !== mergedName
+      (f) => f.startsWith(prefix) && f.endsWith(".md") && f !== mergedName && !ROUND_RE.test(f)
     );
   } catch (err) {
     console.error(`Cannot read ${harnessDir}: ${err.message}`);
@@ -251,21 +252,14 @@ function cmdReport(args) {
   const downgraded = parseInt(getArg("downgraded", "0"), 10);
 
   const harnessDir = join(dir, ".harness");
-  let files;
+  const ROLE_FILE_RE = /^evaluation-wave-\d+-(?!round\d)(.+)\.md$/;
+  let roleFiles;
   try {
-    files = readdirSync(harnessDir).filter(
-      (f) => f.startsWith("evaluation-wave-") && f.endsWith(".md") && f.includes("-", "evaluation-wave-".length)
-    );
+    roleFiles = readdirSync(harnessDir).filter((f) => ROLE_FILE_RE.test(f));
   } catch (err) {
     console.error(`Cannot read ${harnessDir}: ${err.message}`);
     process.exit(1);
   }
-
-  // Filter out merged files (evaluation-wave-N.md without role suffix)
-  const roleFiles = files.filter((f) => {
-    const withoutPrefix = f.replace(/^evaluation-wave-\d+-/, "");
-    return withoutPrefix.length > 0 && withoutPrefix !== ".md" && !f.match(/^evaluation-wave-\d+\.md$/);
-  });
 
   const agents = [];
   const summary = { critical: 0, warning: 0, suggestion: 0 };
