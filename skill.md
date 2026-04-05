@@ -224,12 +224,15 @@ The evaluator writes `.harness/evaluation-wave-N.md` with PASS, ITERATE, or FAIL
 
 4. **Verification gate.** After all role evaluators return, follow `./pipeline/verification-gate.md` — mechanical checks, spot-checks, deep-dive on threads, synthesis of cross-cutting signals.
 
-5. **Synthesize verdict** into `.harness/evaluation-wave-N.md`:
-   - Any role has validated 🔴 Critical findings → **FAIL**
-   - Any role has validated 🟡 Warning findings → **ITERATE**
-   - All roles return LGTM or only 🔵 Suggestions → **PASS**
-   - Any role returns BLOCKED or INSUFFICIENT DATA → surface to user with the reason. Do not synthesize a verdict.
-   - Tag each finding with `[Role]` in the merged evaluation.
+5. **Synthesize verdict** using the harness tool:
+
+   ```bash
+   opc-harness synthesize . --wave N
+   ```
+
+   The output JSON contains the definitive verdict (PASS/ITERATE/FAIL/BLOCKED) based on hardcoded rules: any 🔴 → FAIL, any 🟡 → ITERATE, all LGTM/🔵 → PASS, any BLOCKED → BLOCKED. **Use this verdict. Do not override it with your own judgment.**
+
+   Write the verdict and per-role summary into `.harness/evaluation-wave-N.md`. Tag each finding with `[Role]` in the merged evaluation.
 
 ---
 
@@ -252,7 +255,13 @@ Sanity-check every verdict: it must be clear PASS, ITERATE, or FAIL with evidenc
 
 **FAIL:** Criteria failures or critical issues. Show what failed. Dispatch implementer in Fix mode using `./pipeline/implementer-prompt.md`. Re-run evaluation.
 
-**Cap at 10 rounds** (FAIL + ITERATE combined). **Early exit:** If the verdict oscillates (FAIL→ITERATE→FAIL, or the same findings recur across 2 consecutive rounds), surface to user after 3 rounds instead of burning through all 10. Maintain a verdict history list across rounds. 'Same findings' = same file + same issue (fuzzy match).
+**Cap at 10 rounds** (FAIL + ITERATE combined). **Early exit:** detect oscillation programmatically:
+
+```bash
+opc-harness diff .harness/evaluation-wave-N-round{R-1}.md .harness/evaluation-wave-N-round{R}.md
+```
+
+If `oscillation: true`, surface to user after 3 rounds instead of burning through all 10.
 
 ---
 

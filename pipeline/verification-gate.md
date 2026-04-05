@@ -4,10 +4,19 @@ Verify agent outputs before reporting. Scale verification effort to the task.
 
 ## Tier 1: Mechanical Checks (always, all task types)
 
-For every agent output:
-1. **VERDICT present?** — if missing, re-dispatch with explicit reminder.
-2. **Dedup** — multiple agents reporting same issue → keep best-articulated one.
-3. **Hedging without evidence** — finding uses "might", "could potentially", "consider" without a concrete scenario → reject the finding.
+For every agent output, run the harness verifier:
+
+```bash
+opc-harness verify .harness/evaluation-wave-N-{role}.md
+```
+
+Check the JSON output:
+1. **`verdict_present` = false** → re-dispatch with explicit reminder.
+2. **`verdict_count_match` = false** → challenge the agent's finding count.
+3. **`hedging_detected` non-empty** → review each line; reject findings without a concrete scenario.
+4. **`has_file_refs` = false** → re-dispatch with explicit reminder to include file:line references.
+
+Then manually **dedup** — multiple agents reporting same issue → keep best-articulated one.
 
 ## Tier 2: Spot-Check (review/analysis tasks, scale by severity)
 

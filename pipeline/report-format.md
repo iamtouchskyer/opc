@@ -122,9 +122,16 @@ Agents: {list}
 
 ## Save Report (JSON)
 
-After presenting results, save a structured JSON report.
+After presenting results, generate the JSON report using the harness tool:
 
-**Directory:** `~/.opc/reports/` (create if it doesn't exist)
+```bash
+mkdir -p ~/.opc/reports
+opc-harness report . --mode {mode} --task "{task}" --challenged N --dismissed M --downgraded K > ~/.opc/reports/{filename}.json
+```
+
+The tool reads `.harness/evaluation-wave-*-{role}.md` files and outputs a complete JSON report to stdout. The orchestrator only needs to provide mode, task description, and coordinator action counts.
+
+**Directory:** `~/.opc/reports/`
 **Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{mode}_{sanitized-task-summary}.json`
 
 ### JSON Schema

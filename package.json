@@ -1,10 +1,11 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
   "type": "module",
   "bin": {
-    "opc": "bin/opc.mjs"
+    "opc": "bin/opc.mjs",
+    "opc-harness": "bin/opc-harness.mjs"
   },
   "engines": {
     "node": ">=18"
