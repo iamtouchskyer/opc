@@ -1,16 +1,18 @@
 ---
 name: opc-replay
-description: "Browse past OPC reports. Opens web viewer via npx, falls back to terminal. Usage: /opc replay [list]"
+description: "Browse past OPC runs. Opens HTML viewer for flow replay or report. Usage: /opc replay [list|flow]"
 ---
 
 # OPC Replay
 
-Browse structured reports from past `/opc` runs.
+Browse past `/opc` runs — flow replay animation or structured report viewer.
 
 ## Usage
 
-- `/opc replay` — Open the most recent report
+- `/opc replay` — Open flow replay if `.harness/` exists, otherwise open latest report
+- `/opc replay flow` — Open flow replay for current `.harness/` directory
 - `/opc replay list` — List all saved reports
+- `/opc replay report` — Open latest report in viewer
 
 ## Steps
 
@@ -28,7 +30,35 @@ Browse structured reports from past `/opc` runs.
 
 4. Ask: "Which report? (number or 'latest')"
 
-### Default (no argument):
+### If "flow" argument (or default with .harness/ present):
+
+1. Check if `.harness/flow-state.json` exists in current directory.
+2. If not found: "No flow state found in `.harness/`. Run `/opc <task>` first." → stop.
+3. Print one-line summary from flow-state.json:
+   ```
+   🎬 Flow: {template} — {totalSteps} transitions — entry: {entryNode} → current: {currentNode}
+   ```
+
+4. Open HTML flow replay viewer:
+   ```
+   🖥️ Opening Flow Replay...
+   ```
+   ```bash
+   npx @touchskyer/opc-viewer --flow=.harness
+   ```
+   This will:
+   - Start the viewer server on :5177 (or reuse existing)
+   - Open browser to `?flow=.harness` which shows the animated flow graph
+   - Playback controls: ▶ Play, ⏸ Pause, ◀/▶▶ step, scrubber, keyboard (Space/→/←/P/R)
+
+5. If npx fails, show install instructions:
+   ```
+   ⚠️ Could not launch viewer.
+   npm install -g @touchskyer/opc-viewer
+   opc-viewer --flow=.harness
+   ```
+
+### If "report" argument (or default without .harness/):
 
 1. Find most recent report: `ls -t ~/.opc/reports/*.json 2>/dev/null | head -1`
 2. If none found: "No OPC reports found. Run `/opc review` or `/opc analyze` first." → stop.
@@ -37,36 +67,15 @@ Browse structured reports from past `/opc` runs.
    📊 {mode} — {task} — {critical} 🔴 {warning} 🟡 {suggestion} 🔵
    ```
 
-4. Tell the user what's about to happen, then open viewer:
+4. Open viewer:
    ```
    🖥️ Opening OPC Viewer...
-   Running: npx @touchskyer/opc-viewer --report=<filepath>
-   (First run may take a moment to download the viewer package)
    ```
    ```bash
    npx @touchskyer/opc-viewer --report=<filepath>
    ```
-   This will:
-   - If viewer is already running on :5177 → just open browser to the existing instance
-   - If not running → start server + open browser
-   - Zero install needed — npx handles everything
 
-5. If npx fails (no network, npm down, permission error), show install instructions AND fall back to terminal:
-
-   ```
-   ⚠️ Could not launch OPC Viewer automatically.
-
-   To install manually:
-     npm install -g @touchskyer/opc-viewer
-     opc-viewer --report=<filepath>
-
-   Or run without installing:
-     npx @touchskyer/opc-viewer --report=<filepath>
-
-   Falling back to terminal view...
-   ```
-
-   Then show the terminal report:
+5. If npx fails, fall back to terminal display:
 
    ```
    📊 OPC Report — {mode} — {timestamp}

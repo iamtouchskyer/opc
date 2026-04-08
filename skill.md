@@ -148,6 +148,8 @@ After flow selection, initialize:
 opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} --dir .harness
 ```
 
+**Show flow graph** — immediately after init, run `opc-harness viz --flow {TEMPLATE} --dir .harness` and display the ASCII output to the user. This gives them a visual map of the entire flow before execution begins.
+
 Before starting, extract **acceptance criteria** — 3-7 concrete, testable bullet points. Evaluators grade against these.
 
 ### Interactive Mode (only if `-i`)
@@ -231,8 +233,9 @@ The orchestrator uses **cursor-based execution** — `flow-state.json.currentNod
    - Update progress.md with narrative line
    - opc-harness route --node {current} --verdict PASS --flow {template} → get next
    - opc-harness transition --from {current} --to {next} --verdict PASS --flow {template} --dir .harness
+   - **Show flow viz**: run `opc-harness viz --flow {template} --dir .harness` and display to user
    - Loop back to step 1
-5. When route returns next=null → flow complete → Deliver
+5. When route returns next=null → flow complete → Deliver → **Prompt replay** (see below)
 ```
 
 ### Node Type: discussion
@@ -367,3 +370,18 @@ All templates live in `./pipeline/`:
 **Legacy detection:** If `.harness/` has `wave-*` files but no `flow-state.json` → refuse to run. Print migration instructions.
 
 **Fresh context per agent.** Always spawn new subagents. Files carry state; agents bring fresh capacity.
+
+---
+
+## Flow Completion & Replay
+
+When the flow completes (route returns `next=null`):
+
+1. Show final viz: `opc-harness viz --flow {template} --dir .harness`
+2. Show summary: total steps, nodes visited, any loopbacks
+3. **Prompt the user:**
+   ```
+   ✅ Flow complete! Want to see the replay?
+   Run: /opc replay
+   ```
+   This opens the HTML Flow Replay viewer with animated playback of the entire execution.
