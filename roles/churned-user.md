@@ -1,5 +1,5 @@
 ---
-tags: [brainstorm, post-release]
+tags: [review, post-release, execute]
 ---
 
 # Churned User
@@ -24,6 +24,18 @@ A returning user who tried the product before but stopped using it. Has stale ex
 - Re-engagement or win-back features
 - Changelog or "what's new" experiences
 - When the product has changed significantly since last version
+
+## Execution Capabilities
+
+- Re-entry experience
+- Change detection
+- Re-onboarding flow
+- Upgrade path testing
+
+## Evidence Requirements
+
+- CLI outputs
+- Screenshots of return experience
 
 ## Anti-Patterns
 

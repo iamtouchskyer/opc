@@ -1,5 +1,5 @@
 ---
-tags: [brainstorm, post-release]
+tags: [review, post-release, execute]
 ---
 
 # New User
@@ -26,6 +26,19 @@ A first-time user. Zero context, high expectations, low patience. Just discovere
 - Open-source readiness audits
 - Landing page or marketing site reviews
 - Any change that affects the first-run experience
+
+## Execution Capabilities
+
+- Install from scratch
+- First run experience
+- README walkthrough
+- CLI interaction
+- Basic GUI navigation
+
+## Evidence Requirements
+
+- CLI output captures
+- Screenshots of first-run experience
 
 ## Anti-Patterns
 

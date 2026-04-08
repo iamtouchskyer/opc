@@ -11,7 +11,12 @@ const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
 const srcDir = join(__dirname, "..");
 
 // Only these files/dirs are managed by OPC — custom roles are left alone
-const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles", "pipeline"];
+const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles", "pipeline", "bin", "package.json"];
+
+// Files removed in newer versions — clean up from target on install
+const STALE_FILES = [
+  "pipeline/verification-gate.md",
+];
 
 const pkg = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
 const command = process.argv[2];
@@ -29,6 +34,14 @@ switch (command) {
       }
     }
     mkdirSync(skillsDir, { recursive: true });
+    // Clean up files removed in this version
+    for (const stale of STALE_FILES) {
+      const target = join(skillsDir, stale);
+      if (existsSync(target)) {
+        rmSync(target);
+        console.log(`  Removed stale file: ${stale}`);
+      }
+    }
     for (const entry of MANAGED_ENTRIES) {
       const src = join(srcDir, entry);
       if (!existsSync(src)) continue;

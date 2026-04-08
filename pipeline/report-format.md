@@ -51,7 +51,7 @@ Agents: {list}
 ## OPC Build — {task summary}
 
 ### Implementation
-Wave {N} — {what was built, 2-3 sentences}
+Node {NODE_ID} — {what was built, 2-3 sentences}
 
 ### Evaluation (Round {R})
 
@@ -129,7 +129,7 @@ mkdir -p ~/.opc/reports
 opc-harness report . --mode {mode} --task "{task}" --challenged N --dismissed M --downgraded K > ~/.opc/reports/{filename}.json
 ```
 
-The tool reads `.harness/evaluation-wave-*-{role}.md` files and outputs a complete JSON report to stdout. The orchestrator only needs to provide mode, task description, and coordinator action counts.
+The tool reads `.harness/nodes/*/run_*/eval*.md` files and outputs a complete JSON report to stdout. The orchestrator only needs to provide mode, task description, and coordinator action counts.
 
 **Directory:** `~/.opc/reports/`
 **Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{mode}_{sanitized-task-summary}.json`
@@ -158,6 +158,12 @@ The tool reads `.harness/evaluation-wave-*-{role}.md` files and outputs a comple
           "status": "<accepted|dismissed|downgraded>",
           "dismissReason": "<reason if dismissed/downgraded, null otherwise>"
         }
+      ],
+      "evidence": [
+        {
+          "type": "<screenshot|cli-output|test-result>",
+          "path": "<path to evidence file>"
+        }
       ]
     }
   ],
@@ -173,11 +179,22 @@ The tool reads `.harness/evaluation-wave-*-{role}.md` files and outputs a comple
   },
   "timeline": [
     {
-      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report>",
+      "type": "<triage|roles|context|dispatch|agent-output|verification|deep-dive|deep-dive-response|synthesis|report|discussion|execution|gate-decision|loopback>",
       "role": "<coordinator or agent role name>",
       "content": "<message content>"
     }
-  ]
+  ],
+  "flow": {
+    "template": "<flow template name>",
+    "nodesExecuted": ["<node IDs in execution order>"],
+    "loopbacks": [
+      {
+        "from": "<source node ID>",
+        "to": "<target node ID>",
+        "reason": "<why the loopback occurred>"
+      }
+    ]
+  }
 }
 ```
 

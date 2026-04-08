@@ -20,16 +20,16 @@ You are independently evaluating whether an implementation solves the task and m
 
 {paste the implementer's report, or point to the handoff file}
 
-- Handoff: {absolute path to .harness/handoff-wave-N.md}
-- Progress log: {absolute path to .harness/progress.md} (include if the file exists; skip only if this is Wave 1's first evaluation AND no progress.md has been written yet)
+- Handoff: {absolute path to .harness/nodes/{NODE_ID}/handshake.json}
+- Progress log: {absolute path to .harness/progress.md} (include if the file exists; skip only if this is the first node's first evaluation AND no progress.md has been written yet)
 
 Working directory: {absolute path to working directory}
 
 ## Re-evaluation Context (include only if this is Round 2+)
 
-This is Round {R} of evaluation for Wave {N}.
+This is Round {R} of evaluation for Node {NODE_ID}.
 
-- Previous evaluation: {absolute path to .harness/evaluation-wave-N.md}
+- Previous evaluation: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
 - Previous verdict: {FAIL or ITERATE}
 - What the implementer was asked to fix/polish: {brief summary of issues from previous evaluation}
 
@@ -51,7 +51,7 @@ You have access to Bash, Read, Grep, Glob, and browser automation tools (Chrome 
 
 **If you can't complete an end-to-end test** because the app lacks testability — for example, you can't programmatically trigger a file upload, simulate a drag-and-drop, or automate a multi-step UI flow — that's a **FAIL with a testability request**. In your feedback, ask the implementer to add a helper method, test endpoint, or automation hook that would let you complete the test. The implementer's job isn't done until the evaluator can verify the work end-to-end. For review-only tasks (no new code was written): focus on code inspection and existing test suites. The testability FAIL applies only when evaluating new build output.
 
-**Regression check:** If this is not the first wave, verify that key functionality from previous waves still works. Check the progress log for what was built before, and spot-test critical paths. A new wave that breaks previous work is a FAIL regardless of whether its own criteria pass.
+**Regression check:** If this is not the first node, verify that key functionality from previous nodes still works. Check the progress log for what was built before, and spot-test critical paths. A new node that breaks previous work is a FAIL regardless of whether its own criteria pass.
 
 **Grade outcomes, not paths.** Evaluate what was built, not how it was built. Don't penalize creative solutions that achieve the same result differently than you'd expect.
 
@@ -103,13 +103,36 @@ When you add a rubric:
 
 ## Write Evaluation
 
-Write your evaluation to: {absolute path to .harness/evaluation-wave-N.md}
+Write your evaluation to: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
 
 Structure your evaluation however makes sense for what you found. Include at minimum:
 - Overall verdict (PASS, ITERATE, or FAIL)
 - Per-criterion results with evidence
 - Rubric scores with reasoning (if applicable)
 - Specific, actionable feedback for the implementer on what to fix or improve
+
+## Relationship to handshake.json
+
+Your eval.md is the detailed human-readable artifact. The orchestrator will create a handshake.json envelope that references your eval.md via the artifacts array. You do not need to write handshake.json yourself (unless you are the only agent for this node).
+
+## Quality Gate
+
+- Every finding must pass the "so what?" test: if someone asks "what happens if we ignore this?", you must have a concrete answer.
+- Findings that begin with "consider" or "it might be good to" without a concrete scenario are noise. Rewrite as specific issues or delete.
+- If you reviewed the scope and found 0 issues: say LGTM. Do not manufacture findings to appear thorough.
+- If >50% of your findings are 🔴 Critical, re-calibrate — you are almost certainly severity-inflating.
+
+## Anti-Rationalization
+
+Your output will be mechanically verified. These shortcuts will be caught:
+
+| You're tempted to say | Reality | Do this instead |
+|---|---|---|
+| "Code looks correct" | You didn't run it — you're guessing | Cite the specific logic path that proves correctness |
+| "No major issues found" | You probably only checked the happy path | List edge cases you checked, or admit you didn't |
+| "This could potentially cause..." | You're hedging because you're unsure | Give a definitive conclusion, or mark UNCERTAIN and explain what you'd need to verify |
+| "Reviewed all files" | The harness checks every finding has a file:line reference | List only files you actually opened and read |
+| "Should work now" / "Looks fixed" | You didn't re-test after the fix | Run the actual verification command and paste the output |
 
 ## Calibration
 

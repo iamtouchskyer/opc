@@ -1,0 +1,79 @@
+# Gate Protocol
+
+Gates aggregate upstream verdicts and route the flow. Gates do not dispatch subagents — the orchestrator executes gates directly using harness commands.
+
+## Procedure
+
+### Step 1 — Synthesize Upstream Verdicts
+
+Run the harness to compute the aggregate verdict:
+
+```bash
+opc-harness synthesize .harness --node {UPSTREAM_NODE_ID}
+```
+
+Output: `{ verdict, totals: { critical, warning, suggestion }, roles[] }`
+
+### Step 2 — Mechanical Validation
+
+Before accepting the synthesized verdict, verify upstream quality:
+
+- Every finding must have a severity emoji (🔴 🟡 🔵)
+- Every 🔴 critical finding must have a `file:line` reference
+- Every 🔴 critical finding must have a `→ Fix:` suggestion
+- Flag hedging language (might, could, potentially) — challenge or downgrade
+
+If mechanical checks fail, re-dispatch the upstream evaluator with a reminder. Max 2 re-dispatch attempts — after that, accept with ⚠️ annotation.
+
+### Step 3 — Route Decision
+
+Use the harness to determine the next node:
+
+```bash
+opc-harness route --node {GATE_ID} --verdict {VERDICT} --flow {FLOW_TEMPLATE}
+```
+
+Output: `{ next: "<nodeId>" | null, valid: true }`
+
+- `next = null` means the flow is complete.
+- `valid = false` means the gate or verdict is not in the flow template — surface error to user.
+
+**Do not determine the next node yourself.** Always use the `route` command.
+
+### Step 4 — Transition
+
+Execute the transition (also writes this gate's handshake.json automatically):
+
+```bash
+opc-harness transition --from {GATE_ID} --to {NEXT_NODE} --verdict {VERDICT} --flow {FLOW_TEMPLATE} --dir .harness
+```
+
+Output: `{ allowed: true/false, reason, next, state }`
+
+- `allowed = true` → proceed to next node
+- `allowed = false` → cycle limit reached. Surface to user with escape options:
+  - `/opc pass` — force PASS, advance to the PASS edge target
+  - `/opc stop` — terminate flow, preserve state
+  - `/opc goto <node>` — manual override (still checked against cycle limits)
+
+The `transition` command automatically:
+1. Validates the edge exists in the flow template
+2. Checks cycle limits (maxLoopsPerEdge, maxTotalSteps, maxNodeReentry)
+3. Writes this gate's `.harness/nodes/{GATE_ID}/handshake.json`
+4. Updates `.harness/flow-state.json`
+
+### Step 5 — User Notification
+
+Always inform the user of the gate outcome:
+
+- **Loopback:** `🔄 Loop {N}/{MAX}: {reason}, returning to {target}`
+- **Pass:** `✅ {gate} passed, proceeding to {next}`
+- **Done:** `🎉 Flow complete.`
+- **Blocked:** `⛔ Cycle limit reached at {gate}. Use /opc pass, /opc stop, or /opc goto <node>.`
+
+## Anti-Patterns
+
+- ❌ Overriding the synthesized verdict with your own judgment
+- ❌ Determining the next node by reading skill.md tables — use `opc-harness route`
+- ❌ Writing gate handshake.json manually — `transition` does this
+- ❌ Continuing after `allowed: false` without user consent

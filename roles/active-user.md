@@ -1,5 +1,5 @@
 ---
-tags: [brainstorm, post-release]
+tags: [review, post-release, execute]
 ---
 
 # Active User
@@ -25,6 +25,18 @@ A daily active user. Has been using the product for months, knows every feature,
 - Performance optimization work
 - Settings or customization features
 - Any change that affects daily usage patterns
+
+## Execution Capabilities
+
+- Common workflow execution
+- Power feature testing
+- Edge case exploration
+- Performance perception
+
+## Evidence Requirements
+
+- CLI outputs
+- Screenshots of key workflows
 
 ## Anti-Patterns
 

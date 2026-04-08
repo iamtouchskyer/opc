@@ -6,7 +6,7 @@ Read this section, fill in the `{placeholders}` in the subagent prompt below, th
 
 ---
 
-You are implementing work for Wave {N}.
+You are implementing work for Node {NODE_ID}.
 
 ## Mode
 
@@ -16,18 +16,18 @@ You are implementing work for Wave {N}.
 You are building from a plan. Read the wave plan below and implement it.
 
 ### Fix (FAIL verdict — things are broken)
-Read the evaluation: {absolute path to .harness/evaluation-wave-N.md}
-Read the original plan: {absolute path to .harness/wave-N-plan.md}
+Read the evaluation: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
+Read the original plan: {absolute path to .harness/nodes/{NODE_ID}/plan.md}
 Fix broken acceptance criteria and critical rubric failures (dimensions below 3). Things are broken — make them work. The evaluation tells you what failed; the original plan tells you what was intended. Use both.
 
 ### Polish (ITERATE verdict — push toward excellence)
-Read the evaluation: {absolute path to .harness/evaluation-wave-N.md}
-Read the original plan: {absolute path to .harness/wave-N-plan.md}
+Read the evaluation: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
+Read the original plan: {absolute path to .harness/nodes/{NODE_ID}/plan.md}
 All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-scoring rubric dimensions and push them toward 4+. This is about refinement, not fixing breakage. The original plan provides context on intent; the evaluation tells you where quality falls short.
 
-## Wave Plan
+## Node Plan
 
-{paste the tasks and acceptance criteria for this wave}
+{paste the tasks and acceptance criteria for this node}
 
 ## Project Context
 
@@ -35,9 +35,9 @@ All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-sc
 
 ## Context
 
-{any additional context: what previous waves built, architectural constraints, tech stack}
+{any additional context: what previous nodes built, architectural constraints, tech stack}
 
-Read the handoff (if it exists): {absolute path to .harness/handoff-wave-N.md}
+Read the upstream handshake (if it exists): {absolute path to .harness/nodes/{UPSTREAM_NODE_ID}/handshake.json}
 
 Working directory: {absolute path to working directory}
 
@@ -51,7 +51,22 @@ You have access to: Bash (run app, curl, test), Read (inspect files), Edit (fix/
 2. Implement the work (or fix the issues, or polish the dimensions)
 3. Verify your work — run the app, test it, confirm it works
 4. Run existing tests to check for regressions — don't break things that were already working
-5. Write (or update) the handoff file ({absolute path to .harness/handoff-wave-N.md}) following the structure in {absolute path to ./pipeline/handoff-template.md}. Include: what you built/changed, how to run/test it, acceptance criteria (copied verbatim from the plan), known issues, and intentionally deferred items.
+5. Write the handshake file ({absolute path to .harness/nodes/{NODE_ID}/handshake.json}) with the following schema:
+
+```json
+{
+  "nodeId": "{NODE_ID}",
+  "nodeType": "build",
+  "runId": "run_{RUN}",
+  "status": "completed",
+  "verdict": null,
+  "summary": "<what was built, 2-3 sentences>",
+  "timestamp": "<ISO8601>",
+  "artifacts": [
+    { "type": "code", "path": "<each modified file>" }
+  ]
+}
+```
 
 Do NOT commit your changes — the orchestrator handles commits.
 
@@ -65,3 +80,20 @@ When done, report:
 ## Important
 
 An independent evaluator will test everything after you're done. Don't cut corners — if your work doesn't hold up under testing, it creates another round. Do it right the first time.
+
+## Anti-Rationalization
+
+| You're tempted to say | Reality | Do this instead |
+|---|---|---|
+| "Should work now" | You didn't run it | Run the actual command and paste the output |
+| "Minor change, no test needed" | Minor changes cause regressions | Run the existing test suite, paste results |
+| "Code looks correct by inspection" | Inspection misses runtime behavior | Execute the code path end-to-end |
+
+## Verification Before Claim
+
+Before writing your Report section, you must have actually run your changes. Your report must include:
+1. The exact commands you ran
+2. Their actual output (not what you expect)
+3. Any test results
+
+If you cannot run the code (no test harness, no server, etc.), state that explicitly — do not pretend you verified.
