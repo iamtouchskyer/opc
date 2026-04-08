@@ -191,7 +191,7 @@ Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to crea
 | review | review |
 | build | build |
 | execute | execute, post-release |
-| discussion | brainstorm, plan |
+| discussion | brainstorm, plan, discussion |
 | gate | (no roles dispatched) |
 
    Read the `tags:` front matter from each `roles/<name>.md`. Keep only roles whose tags include at least one matching stage tag.

@@ -52,7 +52,7 @@ const FLOW_TEMPLATES = {
       acceptance:          { PASS: "gate-acceptance" },
       "gate-acceptance":   { PASS: "audit", FAIL: "discuss", ITERATE: "discuss" },
       audit:               { PASS: "gate-audit" },
-      "gate-audit":        { PASS: "e2e-user", FAIL: "build", ITERATE: "build" },
+      "gate-audit":        { PASS: "e2e-user", FAIL: "discuss", ITERATE: "discuss" },
       "e2e-user":          { PASS: "gate-e2e" },
       "gate-e2e":          { PASS: "post-launch-sim", FAIL: "discuss", ITERATE: "discuss" },
       "post-launch-sim":   { PASS: "gate-final" },

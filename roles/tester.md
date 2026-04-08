@@ -1,5 +1,5 @@
 ---
-tags: [review, verification, post-release]
+tags: [review, verification, post-release, discussion]
 ---
 
 # Tester
