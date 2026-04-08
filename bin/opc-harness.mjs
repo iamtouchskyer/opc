@@ -909,6 +909,20 @@ function cmdTransition(args) {
   // Ensure target node dir exists
   mkdirSync(join(dir, "nodes", to, runId), { recursive: true });
 
+  // Print live flow viz to stderr so user sees progress in terminal
+  console.error("");
+  for (let i = 0; i < template.nodes.length; i++) {
+    const id = template.nodes[i];
+    const m = getMarker(id, state);
+    let line = `  ${m} ${id}`;
+    // Show loopback annotation on gates
+    const edges = template.edges[id];
+    if (edges && edges.FAIL) line += `  ← FAIL → ${edges.FAIL}`;
+    console.error(line);
+    if (i < template.nodes.length - 1) console.error("  │");
+  }
+  console.error("");
+
   console.log(JSON.stringify({ allowed: true, reason: "ok", next: to, runId, state }));
 }
 
@@ -977,6 +991,73 @@ function cmdValidateChain(args) {
   console.log(JSON.stringify({ valid: errors.length === 0, errors, executedPath }));
 }
 
+// ─── viz command ────────────────────────────────────────────────
+
+function getMarker(nodeId, state) {
+  if (!state) return "○";
+  if (state.currentNode === nodeId) return "▶";
+  if (state.history?.some((h) => h.nodeId === nodeId)) return "✅";
+  // Entry node is not in history but is completed once we've moved past it
+  if (state.entryNode === nodeId && state.currentNode !== nodeId) return "✅";
+  return "○";
+}
+
+function cmdViz(args) {
+  const flow = getFlag(args, "flow");
+  const dir = getFlag(args, "dir");
+  const jsonOut = args.includes("--json");
+
+  if (!flow) {
+    console.error("Usage: opc-harness viz --flow <template> [--dir <path>] [--json]");
+    process.exit(1);
+  }
+
+  const template = FLOW_TEMPLATES[flow];
+  if (!template) {
+    console.error(`Unknown flow template: ${flow}`);
+    process.exit(1);
+  }
+
+  let state = null;
+  if (dir) {
+    const sp = join(dir, "flow-state.json");
+    if (existsSync(sp)) {
+      try { state = JSON.parse(readFileSync(sp, "utf8")); } catch { /* ignore */ }
+    }
+  }
+
+  // Collect loopbacks: gates with FAIL/ITERATE edges
+  const loopbacks = [];
+  for (const [nodeId, edges] of Object.entries(template.edges)) {
+    for (const [verdict, target] of Object.entries(edges)) {
+      if (target && verdict !== "PASS") {
+        loopbacks.push({ gate: nodeId, verdict, target });
+      }
+    }
+  }
+
+  if (jsonOut) {
+    const nodes = template.nodes.map((id) => ({ id, status: getMarker(id, state) }));
+    console.log(JSON.stringify({ nodes, loopbacks }, null, 2));
+    return;
+  }
+
+  // ASCII output — prefer FAIL over ITERATE for display
+  const loopMap = {};
+  for (const lb of loopbacks) {
+    if (!loopMap[lb.gate] || lb.verdict === "FAIL") loopMap[lb.gate] = lb;
+  }
+
+  for (let i = 0; i < template.nodes.length; i++) {
+    const id = template.nodes[i];
+    const marker = getMarker(id, state);
+    let line = `  ${marker} ${id}`;
+    if (loopMap[id]) line += `          ← ${loopMap[id].verdict} → ${loopMap[id].target}`;
+    console.log(line);
+    if (i < template.nodes.length - 1) console.log("  │");
+  }
+}
+
 // ─── CLI router ──────────────────────────────────────────────────
 
 const command = process.argv[2];
@@ -1010,6 +1091,9 @@ switch (command) {
   case "validate-chain":
     cmdValidateChain(args);
     break;
+  case "viz":
+    cmdViz(args);
+    break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -1025,6 +1109,7 @@ switch (command) {
     console.log("  opc-harness transition --from <n> --to <n> --verdict <V> --flow <tpl> --dir <p>");
     console.log("                                                      Execute state transition");
     console.log("  opc-harness validate-chain [--dir <p>]               Validate entire execution path");
+    console.log("  opc-harness viz --flow <tpl> [--dir <p>] [--json]     Visualize flow graph (ASCII or JSON)");
     console.log();
     console.log("All output is JSON to stdout. Errors go to stderr.");
     break;
