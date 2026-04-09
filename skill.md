@@ -179,7 +179,7 @@ Product:     pm, designer
 User Lens:   new-user, active-user, churned-user
 Engineering: frontend, backend, devops, architect, engineer
 Quality:     security, tester, compliance, a11y
-Specialist:  planner, user-simulator
+Specialist:  planner, user-simulator, devil-advocate
 ```
 
 Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to create a custom role.
@@ -202,6 +202,7 @@ Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to crea
 
 - Each dispatched agent must have a DISTINCT angle. If two would produce 80%+ overlapping output, pick one.
 - Not every task needs every role. A CSS fix doesn't need Security.
+- **Devil's Advocate auto-inclusion:** When a discussion node reaches Round 2 with near-unanimous agreement (all agents converge on the same approach), the orchestrator SHOULD include devil-advocate in a subsequent review pass. Consensus is a signal to challenge, not to proceed. For irreversible decisions (data deletion, public API contracts, destructive migrations), devil-advocate is MANDATORY.
 - If user specified roles explicitly, use those — skip tag filtering entirely.
 
 **Dynamic Role Creation:** If the task requires expertise not covered by any candidate, create a role on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Write to `.harness/nodes/{nodeId}/dynamic-role-{name}.md`. Max 5 dynamic roles per flow run.
