@@ -5,6 +5,7 @@
 
 import { cmdVerify, cmdSynthesize, cmdReport, cmdDiff } from "./lib/eval-commands.mjs";
 import { cmdRoute, cmdInit, cmdValidate, cmdTransition, cmdValidateChain } from "./lib/flow-commands.mjs";
+import { cmdInitLoop, cmdCompleteTick, cmdNextTick } from "./lib/loop-commands.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 
 const command = process.argv[2];
@@ -44,6 +45,15 @@ switch (command) {
   case "replay":
     cmdReplayData(args);
     break;
+  case "init-loop":
+    cmdInitLoop(args);
+    break;
+  case "complete-tick":
+    cmdCompleteTick(args);
+    break;
+  case "next-tick":
+    cmdNextTick(args);
+    break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -61,6 +71,12 @@ switch (command) {
     console.log("  opc-harness validate-chain [--dir <p>]               Validate entire execution path");
     console.log("  opc-harness viz --flow <tpl> [--dir <p>] [--json]     Visualize flow graph (ASCII or JSON)");
     console.log("  opc-harness replay [--dir <p>]                       Export flow replay data as JSON");
+    console.log();
+    console.log("Loop commands (Layer 2 — zero trust):");
+    console.log("  opc-harness init-loop [--plan <file>] [--dir <p>]    Init loop state with plan validation");
+    console.log("  opc-harness complete-tick --unit <id> --artifacts <a,b> --description <text> [--dir <p>]");
+    console.log("                                                      Complete tick with evidence validation");
+    console.log("  opc-harness next-tick [--dir <p>]                    Get next unit or auto-terminate");
     console.log();
     console.log("All output is JSON to stdout. Errors go to stderr.");
     break;

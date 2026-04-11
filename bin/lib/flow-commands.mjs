@@ -265,6 +265,59 @@ export function cmdTransition(args) {
   const existingRuns = state.history.filter((h) => h.nodeId === to).length;
   const runId = `run_${existingRuns + 1}`;
 
+  // ── Backlog enforcement for 🟡 findings ──
+  // On PASS or ITERATE verdict from a gate, check if upstream has 🟡 warnings.
+  // If so, backlog.md MUST exist and contain entries from the upstream node.
+  if (from.startsWith("gate") && (verdict === "PASS" || verdict === "ITERATE")) {
+    const backlogPath = join(dir, "backlog.md");
+    // Find upstream node (the node before this gate in the template)
+    const gateIdx = template.nodes.indexOf(from);
+    const upstreamId = gateIdx > 0 ? template.nodes[gateIdx - 1] : null;
+
+    if (upstreamId) {
+      // Check if upstream handshake has warnings
+      const upstreamHandshake = join(dir, "nodes", upstreamId, "handshake.json");
+      if (existsSync(upstreamHandshake)) {
+        try {
+          const hsData = JSON.parse(readFileSync(upstreamHandshake, "utf8"));
+          const warningCount = hsData.findings?.warning || 0;
+          if (warningCount > 0) {
+            // backlog.md must exist and have entries from this upstream
+            if (!existsSync(backlogPath)) {
+              console.log(JSON.stringify({
+                allowed: false,
+                reason: `upstream '${upstreamId}' has ${warningCount} 🟡 warning(s) but backlog.md does not exist — write findings to backlog before transitioning`,
+                backlog_required: true,
+                upstream: upstreamId,
+                warnings: warningCount,
+              }));
+              return;
+            }
+            const backlogText = readFileSync(backlogPath, "utf8");
+            // Check backlog mentions the upstream node
+            if (!backlogText.includes(upstreamId)) {
+              console.log(JSON.stringify({
+                allowed: false,
+                reason: `upstream '${upstreamId}' has ${warningCount} 🟡 warning(s) but backlog.md has no entries from '${upstreamId}' — track all warnings before transitioning`,
+                backlog_required: true,
+                upstream: upstreamId,
+                warnings: warningCount,
+              }));
+              return;
+            }
+          }
+        } catch (parseErr) {
+          // Corrupt upstream handshake = hard error (don't silently skip enforcement)
+          console.log(JSON.stringify({
+            allowed: false,
+            reason: `upstream '${upstreamId}' handshake is corrupt: ${parseErr.message} — fix handshake before transitioning`,
+          }));
+          return;
+        }
+      }
+    }
+  }
+
   if (from.startsWith("gate")) {
     const gateDir = join(dir, "nodes", from);
     mkdirSync(gateDir, { recursive: true });
