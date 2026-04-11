@@ -62,7 +62,29 @@ The `transition` command automatically:
 3. Writes this gate's `.harness/nodes/{GATE_ID}/handshake.json`
 4. Updates `.harness/flow-state.json`
 
-### Step 5 — User Notification
+### Step 5 — Findings Disposition
+
+After routing, handle unresolved findings. **Findings that are not fixed in the current cycle MUST be tracked — they cannot be "acknowledged" and forgotten.**
+
+| Verdict | 🔴 Critical | 🟡 Warning | 🔵 Suggestion |
+|---------|-------------|------------|---------------|
+| FAIL | Must fix before re-gate | — | — |
+| ITERATE | Must fix before re-gate | Append to `.harness/backlog.md` if not fixing now | Optional |
+| PASS | N/A (no 🔴 if PASS) | Append to `.harness/backlog.md` | Drop or append |
+
+**Backlog append format:**
+```markdown
+- [ ] {emoji} [{source node}] {finding summary} — {file:line if applicable}
+```
+
+**Devil's Advocate findings** receive special treatment:
+- Product-level concerns (design validity, algorithm effectiveness, business assumptions) → always 🟡 minimum, always tracked in backlog
+- These are explicitly NOT dismissible with "acknowledged but not code-blocking"
+- If the orchestrator disagrees with a devil's advocate finding, it must write a **counter-argument** in the backlog entry, not simply omit it
+
+Create `.harness/backlog.md` if it doesn't exist. Append, never overwrite.
+
+### Step 6 — User Notification
 
 Always inform the user of the gate outcome:
 
@@ -77,3 +99,5 @@ Always inform the user of the gate outcome:
 - ❌ Determining the next node by reading skill.md tables — use `opc-harness route`
 - ❌ Writing gate handshake.json manually — `transition` does this
 - ❌ Continuing after `allowed: false` without user consent
+- ❌ "Acknowledging" a 🟡 finding without writing it to backlog.md — this is how findings get lost
+- ❌ Dismissing devil's advocate product concerns as "not code-blocking" without tracking them

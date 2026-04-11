@@ -22,6 +22,7 @@ All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a she
 /opc <task>              # auto mode — infer flow and roles from the task
 /opc -i <task>           # interactive mode — ask questions before dispatch
 /opc <role> [role...]    # explicit roles — skip role selection, dispatch directly
+/opc loop <task>         # autonomous loop — decompose, schedule cron, run 24h unattended
 /opc skip                # skip current node, advance via PASS edge
 /opc pass                # force-pass current gate
 /opc stop                # terminate flow, preserve .harness/ state
@@ -42,6 +43,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | "verify", "test", "QA", "check before release", "发布前验收" | pre-release | acceptance |
 | "post-release", "user test", "onboarding check", "用户验收" | pre-release | acceptance |
 | Complex, vague, or multi-keyword request | full-stack | discuss |
+| `/opc loop` or multi-unit feature backlog | **loop-protocol** | plan decomposition |
 
 **Entry override** — user context can shift the entry point (only if target ∈ template nodes):
 
@@ -54,6 +56,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
 **Priority rules:**
+- `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: decompose task into units, initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
 - `/opc <role> [role...]` without a task = review of current codebase using quick-review flow with named roles.
 - `/opc` with no arguments = prompt user to describe their task.
 - If task matches multiple rows, prefer the flow that includes build — code changes must precede review.
@@ -266,6 +269,11 @@ Follow `./pipeline/role-evaluator-prompt.md`.
 4. **Orchestrator writes handshake.json** after all agents return, merging all eval files into artifacts[].
 5. Before dispatching, build context brief using `./pipeline/context-brief.md` (for review/analysis tasks).
 
+**Critical — Review Independence:**
+- Review MUST use independent subagents (Agent tool), never the orchestrator reviewing its own build output.
+- In loop mode, review MUST be a separate tick/unit from implementation. Never combine build + review in one tick.
+- The orchestrator MUST NOT filter, downgrade, or dismiss findings before writing the handshake. All findings pass through to the gate.
+
 ### Node Type: execute
 
 Follow `./pipeline/executor-protocol.md`.
@@ -352,8 +360,9 @@ All templates live in `./pipeline/`:
 - `role-evaluator-prompt.md` — Role-specific evaluator (review, analysis, brainstorm outputs)
 - `implementer-prompt.md` — Implementer (Build / Fix / Polish modes)
 - `discussion-protocol.md` — Multi-agent discussion (round-robin, 3 rounds, facilitator)
-- `gate-protocol.md` — Verdict aggregation + code-based routing + transition
+- `gate-protocol.md` — Verdict aggregation + code-based routing + transition + **findings disposition**
 - `executor-protocol.md` — CLI/GUI execution with evidence requirements
+- `loop-protocol.md` — **Autonomous multi-unit execution** (plan decomposition → cron loop → auto-terminate)
 - `handoff-template.md` — Handshake.json specification
 - `context-brief.md` — Design context brief procedure
 - `report-format.md` — Presentation templates + JSON schema + replay
