@@ -34,6 +34,32 @@ Do NOT use for single-cycle tasks (a code review, a single bug fix, a brainstorm
 └─────────────────────────────────────────────────────┘
 ```
 
+## Terminology
+
+- **Flow** = single-round node graph (`build-verify`, `quick-review`, etc.). Runs within one tick.
+- **Runbook** = multi-round autonomous procedure. Defines the unit sequence for an entire task across many ticks.
+
+## Runbook Discovery
+
+Before decomposing a task from scratch, check for existing runbooks:
+
+```
+Discovery order:
+1. .opc/runbooks/    (project-local, checked into repo)
+2. Auto-generate     (OPC decomposes task into units, writes to .opc/runbooks/)
+```
+
+**If runbook found:**
+1. List matching runbooks by filename and first heading
+2. If exactly one match → use it (confirm with user in interactive mode)
+3. If multiple matches → ask user which one
+4. Load the runbook as the plan — skip Step 1 (Plan Decomposition)
+
+**If no runbook found:**
+1. Proceed to Step 1 (Plan Decomposition) as normal
+2. After decomposition, save the generated plan to `.opc/runbooks/{task-slug}.md`
+3. Ask user: "Runbook saved to `.opc/runbooks/{task-slug}.md`. Check it in for reuse?"
+
 ## Procedure
 
 ### Step 1 — Plan Decomposition

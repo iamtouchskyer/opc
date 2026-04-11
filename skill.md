@@ -56,7 +56,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
 **Priority rules:**
-- `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: decompose task into units, initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
+- `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: first check `.opc/runbooks/` for a matching runbook, otherwise decompose task into units. Initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
 - `/opc <role> [role...]` without a task = review of current codebase using quick-review flow with named roles.
 - `/opc` with no arguments = prompt user to describe their task.
 - If task matches multiple rows, prefer the flow that includes build — code changes must precede review.
