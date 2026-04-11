@@ -1,6 +1,13 @@
 // Flow graph definitions — nodes, edges, limits per template
 // Pure data, no dependencies.
 
+import { readdirSync, readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+// Harness version — used for opc_compat checking
+export const HARNESS_VERSION = "0.6.0";
+
 export const FLOW_TEMPLATES = {
   "legacy-linear": {
     nodes: ["design", "plan", "build", "evaluate", "deliver"],
@@ -12,6 +19,7 @@ export const FLOW_TEMPLATES = {
       deliver:  { PASS: null },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 20, maxNodeReentry: 5 },
+    nodeTypes: { design: "discussion", plan: "build", build: "build", evaluate: "review", deliver: "execute" },
   },
   "quick-review": {
     nodes: ["code-review", "gate"],
@@ -20,6 +28,7 @@ export const FLOW_TEMPLATES = {
       gate:          { PASS: null },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+    nodeTypes: { "code-review": "review", gate: "gate" },
   },
   "build-verify": {
     nodes: ["build", "code-review", "test-verify", "gate"],
@@ -30,6 +39,7 @@ export const FLOW_TEMPLATES = {
       gate:          { PASS: null, FAIL: "build", ITERATE: "build" },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 20, maxNodeReentry: 5 },
+    nodeTypes: { build: "build", "code-review": "review", "test-verify": "execute", gate: "gate" },
   },
   "full-stack": {
     nodes: [
@@ -55,6 +65,12 @@ export const FLOW_TEMPLATES = {
       "gate-final":        { PASS: null, FAIL: "discuss", ITERATE: "discuss" },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 30, maxNodeReentry: 5 },
+    nodeTypes: {
+      discuss: "discussion", build: "build", "code-review": "review", "test-verify": "execute",
+      "gate-test": "gate", acceptance: "review", "gate-acceptance": "gate",
+      audit: "review", "gate-audit": "gate", "e2e-user": "execute", "gate-e2e": "gate",
+      "post-launch-sim": "execute", "gate-final": "gate",
+    },
   },
   "pre-release": {
     nodes: ["acceptance", "gate-acceptance", "audit", "gate-audit", "e2e-user", "gate-e2e"],
@@ -67,5 +83,95 @@ export const FLOW_TEMPLATES = {
       "gate-e2e":          { PASS: null, FAIL: "acceptance", ITERATE: "acceptance" },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 20, maxNodeReentry: 5 },
+    nodeTypes: {
+      acceptance: "review", "gate-acceptance": "gate",
+      audit: "review", "gate-audit": "gate",
+      "e2e-user": "execute", "gate-e2e": "gate",
+    },
   },
 };
+
+// ── External flow template loading ──
+// Scans ~/.claude/flows/*.json and merges into FLOW_TEMPLATES.
+// Built-in templates take precedence (external cannot override).
+const VALID_TYPES = new Set(["discussion", "build", "review", "execute", "gate"]);
+
+// Simple semver-range check: supports ">=X.Y" format only (good enough for opc_compat)
+function satisfiesVersion(range, version) {
+  if (!range || !version) return true; // missing = no constraint
+  const m = range.match(/^>=(\d+)\.(\d+)/);
+  if (!m) { console.error(`⚠️  malformed opc_compat range: '${range}' — rejecting`); return false; }
+  const [, rMaj, rMin] = m.map(Number);
+  const v = version.match(/^(\d+)\.(\d+)/);
+  if (!v) return true;
+  const [, vMaj, vMin] = v.map(Number);
+  return vMaj > rMaj || (vMaj === rMaj && vMin >= rMin);
+}
+
+function loadExternalFlows() {
+  const flowDir = join(homedir(), ".claude", "flows");
+  try {
+    if (!existsSync(flowDir)) return;
+    const files = readdirSync(flowDir).filter((f) => f.endsWith(".json"));
+    for (const f of files) {
+      const name = f.replace(/\.json$/, "");
+      if (FLOW_TEMPLATES[name]) continue; // built-in takes precedence
+      // Guard against prototype pollution
+      if (name === "__proto__" || name === "constructor" || name === "prototype") continue;
+      try {
+        const data = JSON.parse(readFileSync(join(flowDir, f), "utf8"));
+        // Validate required fields
+        if (!Array.isArray(data.nodes) || data.nodes.length === 0 || !data.edges || !data.limits) {
+          console.error(`⚠️  Skipping ${f}: missing or empty nodes/edges/limits`);
+          continue;
+        }
+        // Validate edges reference valid nodes
+        let valid = true;
+        for (const [src, dests] of Object.entries(data.edges)) {
+          if (!data.nodes.includes(src)) {
+            console.error(`⚠️  Skipping ${f}: edge source '${src}' not in nodes`);
+            valid = false;
+            break;
+          }
+          for (const [, target] of Object.entries(dests)) {
+            if (target !== null && !data.nodes.includes(target)) {
+              console.error(`⚠️  Skipping ${f}: edge target '${target}' not in nodes`);
+              valid = false;
+              break;
+            }
+          }
+          if (!valid) break;
+        }
+        if (!valid) continue;
+        // Validate nodeTypes values if present
+        if (data.nodeTypes) {
+          for (const [node, type] of Object.entries(data.nodeTypes)) {
+            if (!data.nodes.includes(node)) {
+              console.error(`⚠️  Skipping ${f}: nodeTypes key '${node}' not in nodes array`);
+              valid = false;
+              break;
+            }
+            if (!VALID_TYPES.has(type)) {
+              console.error(`⚠️  Skipping ${f}: nodeType '${type}' for '${node}' is invalid`);
+              valid = false;
+              break;
+            }
+          }
+          if (!valid) continue;
+        }
+        // Check opc_compat version constraint
+        if (data.opc_compat && !satisfiesVersion(data.opc_compat, HARNESS_VERSION)) {
+          console.error(`⚠️  Skipping ${f}: requires opc_compat ${data.opc_compat} but harness is ${HARNESS_VERSION}`);
+          continue;
+        }
+        FLOW_TEMPLATES[name] = data;
+      } catch (e) {
+        console.error(`⚠️  Skipping ${f}: ${e.message}`);
+      }
+    }
+  } catch {
+    // ~/.claude/flows/ doesn't exist or not readable — that's fine
+  }
+}
+
+loadExternalFlows();

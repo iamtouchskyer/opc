@@ -1,14 +1,10 @@
 // Visualization and replay commands: getMarker, cmdViz, cmdReplayData
-// Depends on: flow-templates.mjs
+// Depends on: flow-templates.mjs, util.mjs
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { FLOW_TEMPLATES } from "./flow-templates.mjs";
-
-function getFlag(args, name, fallback = null) {
-  const idx = args.indexOf(`--${name}`);
-  return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
-}
+import { getFlag } from "./util.mjs";
 
 export function getMarker(nodeId, state) {
   if (!state) return "○";
