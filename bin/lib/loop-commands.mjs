@@ -23,7 +23,7 @@
 // 17. fix must reference findings      (complete-tick: fix artifacts must mention upstream review)
 // 18. plan in .harness/plan.md         (init-loop: plan file validation)
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
@@ -304,6 +304,34 @@ export function cmdCompleteTick(args) {
               if (!hasTestFields) {
                 warnings.push(`artifact '${a}' is JSON but has no test-result fields`);
               }
+              // Bug 9 mitigation: artifact plausibility checks
+              // Must have _command (what was run) and reasonable structure
+              if (hasTestFields) {
+                if (!data._command && !data.command) {
+                  warnings.push(`artifact '${a}' has no _command field — test results should record what command was executed`);
+                }
+                if (data.durationMs != null && data.durationMs <= 0) {
+                  errors.push(`artifact '${a}' has durationMs=${data.durationMs} — test runs must take positive time`);
+                }
+                if (data._timestamp) {
+                  const ts = new Date(data._timestamp).getTime();
+                  const now = Date.now();
+                  // Timestamp must be within last 30 minutes (not from the future, not stale)
+                  if (ts > now + 60000) {
+                    errors.push(`artifact '${a}' has future timestamp — evidence must be from current tick`);
+                  } else if (now - ts > 30 * 60 * 1000) {
+                    warnings.push(`artifact '${a}' timestamp is >30min old — may be stale evidence`);
+                  }
+                }
+                // File must have been modified recently (within last 30 min)
+                try {
+                  const fstat = statSync(a);
+                  const fileAge = Date.now() - fstat.mtimeMs;
+                  if (fileAge > 30 * 60 * 1000) {
+                    warnings.push(`artifact '${a}' file mtime is >30min ago — may be reused from previous run`);
+                  }
+                } catch { /* stat fail is non-fatal */ }
+              }
             } catch { /* raw output ok */ }
           }
         }
@@ -332,6 +360,7 @@ export function cmdCompleteTick(args) {
       if (evalFiles.length < 2) {
         errors.push(`review unit '${unit}' has ${evalFiles.length} eval file(s) — need ≥2 for independent review (separate subagents)`);
       }
+      const evalContents = [];
       for (const a of artifacts) {
         if (!existsSync(a)) {
           errors.push(`artifact not found: ${a}`);
@@ -340,11 +369,42 @@ export function cmdCompleteTick(args) {
           if (content.trim().length === 0) {
             errors.push(`artifact is empty: ${a}`);
           } else if (a.endsWith(".md")) {
+            evalContents.push({ path: a, content });
             // Rule 2: eval must have severity markers
             const hasSeverity = /[🔴🟡🔵]/.test(content) || /LGTM/i.test(content) ||
               /critical|warning|suggestion/i.test(content);
             if (!hasSeverity) {
               errors.push(`eval '${a}' has no severity markers (🔴🟡🔵) or LGTM — review must produce structured findings`);
+            }
+          }
+        }
+      }
+
+      // Bug 8 mitigation: eval distinctness check — catch copy-paste / orchestrator self-review
+      if (evalContents.length >= 2) {
+        for (let i = 0; i < evalContents.length; i++) {
+          for (let j = i + 1; j < evalContents.length; j++) {
+            const a = evalContents[i], b = evalContents[j];
+            // Check 1: identical content
+            if (a.content === b.content) {
+              errors.push(`eval files '${a.path}' and '${b.path}' are identical — reviews must be independent`);
+            } else {
+              // Check 2: line-level overlap (>70% shared lines = suspiciously similar)
+              const linesA = a.content.split("\n").filter(l => l.trim().length > 10);
+              const linesB = new Set(b.content.split("\n").filter(l => l.trim().length > 10));
+              if (linesA.length > 0) {
+                const shared = linesA.filter(l => linesB.has(l)).length;
+                const overlapPct = shared / Math.min(linesA.length, linesB.size);
+                if (overlapPct > 0.7) {
+                  warnings.push(`eval files '${a.path}' and '${b.path}' have ${Math.round(overlapPct * 100)}% line overlap — reviews may lack independence`);
+                }
+              }
+            }
+            // Check 3: different headings — each eval should have a distinct title/angle
+            const headingA = (a.content.match(/^#\s+(.+)/m) || [])[1] || "";
+            const headingB = (b.content.match(/^#\s+(.+)/m) || [])[1] || "";
+            if (headingA && headingB && headingA === headingB) {
+              warnings.push(`eval files '${a.path}' and '${b.path}' have identical headings — each reviewer should have a distinct angle`);
             }
           }
         }
