@@ -160,6 +160,9 @@ export function cmdNextTick(args) {
 
     const unitDetails = units.find(u => u.id === state.next_unit);
 
+    // Capture previous status before mutation
+    const prevStatus = state.status;
+
     // Set in_progress as mutex
     state.status = "in_progress";
     state._written_by = WRITER_SIG;
@@ -174,7 +177,7 @@ export function cmdNextTick(args) {
       unit_description: unitDetails ? unitDetails.description : "",
       tick: state.tick + 1,
       previous_unit: state.unit,
-      previous_status: state.status,
+      previous_status: prevStatus,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;

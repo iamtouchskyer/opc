@@ -161,7 +161,13 @@ export function cmdSynthesize(args) {
       roleName = prefix ? prefix[1] : f.name.replace(/\.md$/, "");
     }
 
-    const text = readFileSync(f.path, "utf8");
+    let text;
+    try {
+      text = readFileSync(f.path, "utf8");
+    } catch (readErr) {
+      console.error(`⚠️  Cannot read ${f.path}: ${readErr.message}`);
+      continue;
+    }
     const parsed = parseEvaluation(text);
 
     const blocked = /BLOCKED/i.test(parsed.verdict);

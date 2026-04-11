@@ -155,6 +155,17 @@ export function cmdCompleteTick(args) {
 
 // ── Validation helpers ──────────────────────────────────────────
 
+const MAX_ARTIFACT_SIZE = 10 * 1024 * 1024; // 10 MB
+
+function _checkArtifactSize(a, errors) {
+  const sz = statSync(a).size;
+  if (sz > MAX_ARTIFACT_SIZE) {
+    errors.push(`artifact too large (${Math.round(sz / 1024 / 1024)}MB, max 10MB): ${a}`);
+    return false;
+  }
+  return true;
+}
+
 function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state) {
   if (artifacts.length === 0) {
     errors.push(`implement unit '${unit}' has no artifacts — must have test evidence`);
@@ -162,6 +173,8 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
   for (const a of artifacts) {
     if (!existsSync(a)) {
       errors.push(`artifact not found: ${a}`);
+    } else if (!_checkArtifactSize(a, errors)) {
+      continue;
     } else {
       const content = readFileSync(a, "utf8");
       if (content.trim().length === 0) {
@@ -235,6 +248,8 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
   for (const a of artifacts) {
     if (!existsSync(a)) {
       errors.push(`artifact not found: ${a}`);
+    } else if (!_checkArtifactSize(a, errors)) {
+      continue;
     } else {
       const content = readFileSync(a, "utf8");
       if (content.trim().length === 0) {
@@ -306,7 +321,7 @@ function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
   if (artifacts.length > 0) {
     let referencesFindings = false;
     for (const a of artifacts) {
-      if (existsSync(a)) {
+      if (existsSync(a) && _checkArtifactSize(a, errors)) {
         const content = readFileSync(a, "utf8");
         if (/[\ud83d\udd34\ud83d\udfe1\ud83d\udd35]/.test(content) || /\w+\.\w+:\d+/.test(content)) {
           referencesFindings = true;
