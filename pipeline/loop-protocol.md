@@ -66,6 +66,23 @@ Adjust based on feature complexity:
 
 Write the plan to `.harness/plan.md` with unit numbers, descriptions, and acceptance criteria per unit.
 
+**Each unit in plan.md MUST include a verification method.** This is not optional — it's how each tick knows how to verify itself after context compaction.
+
+Format per unit:
+```markdown
+- F1.2: implement-backend — User authentication with email/password
+  - verify: `npm test -- --grep "auth"` passes; `curl -X POST /api/auth/login` returns 200 with token
+  - eval: No plaintext passwords in code; session expires after 24h; handles duplicate email gracefully
+```
+
+The `verify:` line tells the implement tick what to run. The `eval:` line tells the review tick what to look for. Without these, the tick either skips verification (quality hole) or guesses wrong (wasted time).
+
+### Step 1.5 — Definition of Done (Pre-Flight)
+
+Before writing plan.md, establish a global definition of done. Follow the "Definition of Done — Mandatory Pre-Flight" section in skill.md. The three questions (what does done look like, how to verify, how to evaluate) must be answered and written to `.harness/acceptance-criteria.md`.
+
+Per-unit verify/eval lines in plan.md are derived from these global criteria.
+
 ### Step 2 — Initialize Loop State
 
 Write `.harness/loop-state.json`:
@@ -212,11 +229,14 @@ The cron job should schedule this prompt (adapt paths to project):
 
 ```
 Read .harness/loop-state.json and .harness/plan.md.
+Read .harness/acceptance-criteria.md for the definition of done.
 Re-read the full loop-protocol.md and skill.md protocols — do NOT rely on memory from previous ticks.
+Find the current unit's verify: and eval: lines in plan.md — these tell you HOW to verify this specific unit.
 Key rules to re-verify each tick:
   - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
   - Implement/fix units MUST produce a git commit
   - UI units MUST include a screenshot artifact
+  - Use the unit's verify: line to run the correct verification command
   - Use opc-harness complete-tick with actual artifact paths (never skip)
   - On blocked/failed, include --description explaining why
 Execute the current next_unit. After completion, call opc-harness complete-tick, then opc-harness next-tick.

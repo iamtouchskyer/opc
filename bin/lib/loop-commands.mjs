@@ -51,10 +51,21 @@ function parsePlan(planText) {
   const units = [];
   const lines = planText.split("\n");
   const unitPattern = /^\s*[-*]\s+(\w+\.\d+)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
-  for (const line of lines) {
-    const m = line.match(unitPattern);
+  const subLinePattern = /^\s+[-*]\s+(verify|eval)\s*:\s*(.*)/i;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(unitPattern);
     if (m) {
-      units.push({ id: m[1], type: m[2].toLowerCase(), description: m[3].trim() });
+      const unit = { id: m[1], type: m[2].toLowerCase(), description: m[3].trim(), verify: null, eval: null };
+      // Look ahead for verify/eval sub-lines
+      for (let j = i + 1; j < lines.length; j++) {
+        const sub = lines[j].match(subLinePattern);
+        if (sub) {
+          unit[sub[1].toLowerCase()] = sub[2].trim();
+        } else if (lines[j].match(unitPattern) || lines[j].trim() === "") {
+          break; // Next unit or blank line
+        }
+      }
+      units.push(unit);
     }
   }
   return units;
@@ -189,6 +200,22 @@ export function cmdInitLoop(args) {
   }
 
   mkdirSync(dir, { recursive: true });
+
+  // Check for verify/eval coverage in plan
+  const initWarnings = [];
+  const unitsWithoutVerify = units.filter(u =>
+    !u.verify && (u.type.startsWith("implement") || u.type.startsWith("build") || u.type.startsWith("fix") || u.type.startsWith("e2e"))
+  );
+  const unitsWithoutEval = units.filter(u =>
+    !u.eval && (u.type.startsWith("review") || u.type.startsWith("accept"))
+  );
+  if (unitsWithoutVerify.length > 0) {
+    initWarnings.push(`${unitsWithoutVerify.length} implement/fix/e2e unit(s) have no verify: line — ticks won't know how to verify themselves (${unitsWithoutVerify.map(u => u.id).join(", ")})`);
+  }
+  if (unitsWithoutEval.length > 0) {
+    initWarnings.push(`${unitsWithoutEval.length} review/accept unit(s) have no eval: line — reviewers won't know what to look for (${unitsWithoutEval.map(u => u.id).join(", ")})`);
+  }
+
   const planHash = hashContent(planText);
   const state = {
     tick: 0,
@@ -241,6 +268,7 @@ export function cmdInitLoop(args) {
     first_unit: units[0].id,
     total_units: units.length,
     external_validators: validatorList.length > 0 ? validatorList : ["none detected — quality relies on in-process checks only"],
+    warnings: initWarnings.length > 0 ? initWarnings : undefined,
   }));
 }
 

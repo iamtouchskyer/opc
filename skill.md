@@ -155,9 +155,37 @@ opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} --dir .harness
 
 Before starting, extract **acceptance criteria** — 3-7 concrete, testable bullet points. Evaluators grade against these.
 
-### Interactive Mode (only if `-i`)
+### Definition of Done — Mandatory Pre-Flight (all modes)
 
-Ask targeted questions derived from selected roles — what does each role need that can't be inferred from the codebase? Aim for 3-5 grouped questions.
+Before dispatching ANY work, the orchestrator MUST establish a clear definition of done. This applies to **both auto and interactive modes** — the only difference is how the answers are obtained (inferred vs asked).
+
+**Three questions that must have answers before the first node executes:**
+
+1. **What does "done" look like?** — Concrete, observable outcomes. Not "implement auth" but "user can log in with email/password, session persists across refresh, logout clears session."
+
+2. **How will we verify it?** — Map each outcome to a verification method:
+   - Code change → which tests? (`npm test`, specific test file, new test to write?)
+   - UI change → which page/component to screenshot? What should be visible?
+   - API change → which endpoint to curl? What response shape?
+   - Refactor → which existing tests must still pass?
+
+3. **How will we evaluate quality?** — What should reviewers look for beyond "it works"?
+   - Performance constraints? ("page load < 2s")
+   - Security concerns? ("no PII in logs")
+   - Compatibility? ("works in Safari")
+   - Edge cases? ("handles empty input, 10k items, unicode")
+
+**In auto mode**: infer answers from the task description + codebase context (package.json scripts, existing tests, CLAUDE.md rules). Show inferred answers to user for confirmation. If task is too vague to infer concrete verification methods → **ask, even in auto mode.** A vague task is worse than a 30-second clarification.
+
+**In interactive mode (`-i`)**: ask directly, grouped with role-specific questions.
+
+**In loop mode (`/opc loop`)**: these answers go into `plan.md` per unit, so every tick knows how to verify itself even after context compaction.
+
+Write the finalized acceptance criteria to `.harness/acceptance-criteria.md` and include them in every subagent prompt.
+
+### Interactive Mode Details (with `-i`)
+
+Ask targeted questions derived from selected roles — what does each role need that can't be inferred from the codebase? Aim for 3-5 grouped questions, merged with the Definition of Done questions above.
 
 - Engineering roles usually read code directly — no extra context needed.
 - Product and user roles benefit most: "Who are your target users?", "What's the product stage?"
