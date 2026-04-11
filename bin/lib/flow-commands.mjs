@@ -3,8 +3,11 @@
 
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join, dirname } from "path";
+import { createHash } from "crypto";
 import { FLOW_TEMPLATES } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
+
+const WRITER_SIG = "opc-harness";
 
 function getFlag(args, name, fallback = null) {
   const idx = args.indexOf(`--${name}`);
@@ -93,6 +96,11 @@ export function cmdInit(args) {
     maxNodeReentry: template.limits.maxNodeReentry,
     history: [],
     edgeCounts: {},
+    _written_by: WRITER_SIG,
+    _last_modified: new Date().toISOString(),
+    _write_nonce: createHash("sha256")
+      .update(Date.now().toString() + Math.random().toString())
+      .digest("hex").slice(0, 16),
   };
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
@@ -234,6 +242,12 @@ export function cmdTransition(args) {
       console.log(JSON.stringify({ allowed: false, reason: `currentNode is '${state.currentNode}', not '${from}' — cannot transition from a node you are not at` }));
       return;
     }
+
+    // Tamper detection
+    if (state._written_by !== WRITER_SIG || !state._write_nonce) {
+      console.log(JSON.stringify({ allowed: false, reason: "flow-state.json was not written by opc-harness — possible direct edit" }));
+      return;
+    }
   } else {
     mkdirSync(join(dir, "nodes"), { recursive: true });
     state = {
@@ -351,6 +365,9 @@ export function cmdTransition(args) {
   state.currentNode = to;
   state.totalSteps++;
   state.edgeCounts[edgeKey] = edgeCount + 1;
+  state._written_by = WRITER_SIG;
+  state._last_modified = new Date().toISOString();
+  // _write_nonce persists from init
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 

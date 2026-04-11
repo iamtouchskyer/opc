@@ -187,6 +187,11 @@ export function cmdInitLoop(args) {
     _max_duration_hours: 24,  // wall-clock deadline
   };
 
+  // Generate write nonce — random value that only persists in state file, never in stdout
+  state._write_nonce = createHash("sha256")
+    .update(Date.now().toString() + Math.random().toString())
+    .digest("hex").slice(0, 16);
+
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   console.log(JSON.stringify({
@@ -240,14 +245,14 @@ export function cmdCompleteTick(args) {
   const warnings = [];
 
   // Rule 7: terminated pipeline
-  if (state.status === "pipeline_complete" || state.status === "terminated") {
+  if (state.status === "pipeline_complete" || state.status === "terminated" || state.status === "stalled") {
     console.log(JSON.stringify({ completed: false, errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`] }));
     return;
   }
 
-  // Tamper: writer signature
-  if (state._written_by !== WRITER_SIG) {
-    warnings.push("state was not written by opc-harness — possible direct edit detected");
+  // Tamper: writer signature + nonce
+  if (state._written_by !== WRITER_SIG || !state._write_nonce) {
+    errors.push("state was not written by opc-harness — possible direct edit detected");
   }
 
   // Tamper: plan hash
@@ -480,8 +485,8 @@ export function cmdNextTick(args) {
   }
   const warnings = [];
 
-  // Tamper: writer chain
-  if (state._written_by !== WRITER_SIG) {
+  // Tamper: writer chain + nonce
+  if (state._written_by !== WRITER_SIG || !state._write_nonce) {
     warnings.push("loop-state.json was not written by opc-harness — possible direct edit");
   }
 
@@ -491,6 +496,17 @@ export function cmdNextTick(args) {
       ready: false,
       terminate: true,
       reason: `loop already ${state.status}`,
+    }));
+    return;
+  }
+
+  // Concurrent tick guard
+  if (state.status === "in_progress") {
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: false,
+      reason: "another tick is in progress — skipping this cron fire",
+      current_unit: state.next_unit,
     }));
     return;
   }
@@ -655,6 +671,12 @@ export function cmdNextTick(args) {
     }
 
     const unitDetails = units.find(u => u.id === state.next_unit);
+
+    // Set in_progress as mutex
+    state.status = "in_progress";
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
     console.log(JSON.stringify({
       ready: true,
