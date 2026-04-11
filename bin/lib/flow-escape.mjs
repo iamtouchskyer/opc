@@ -15,7 +15,12 @@ import {
 function loadState(dir) {
   const statePath = join(dir, "flow-state.json");
   if (!existsSync(statePath)) return null;
-  return { state: JSON.parse(readFileSync(statePath, "utf8")), statePath };
+  try {
+    return { state: JSON.parse(readFileSync(statePath, "utf8")), statePath };
+  } catch {
+    console.error(`Cannot parse ${statePath}`);
+    process.exit(1);
+  }
 }
 
 // ─── skip ───────────────────────────────────────────────────────
@@ -28,7 +33,7 @@ export function cmdSkip(args) {
   if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
   const { state, statePath } = loaded;
   const templateName = flow || state.flowTemplate;
-  const template = FLOW_TEMPLATES[templateName];
+  const template = Object.hasOwn(FLOW_TEMPLATES, templateName) ? FLOW_TEMPLATES[templateName] : null;
   if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${templateName}` })); return; }
 
   const current = state.currentNode;
@@ -83,7 +88,7 @@ export function cmdPass(args) {
   if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
   const { state } = loaded;
   const templateName = state.flowTemplate;
-  const template = FLOW_TEMPLATES[templateName];
+  const template = Object.hasOwn(FLOW_TEMPLATES, templateName) ? FLOW_TEMPLATES[templateName] : null;
   if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${templateName}` })); return; }
 
   const current = state.currentNode;
@@ -146,7 +151,7 @@ export function cmdGoto(args) {
   const loaded = loadState(dir);
   if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
   const { state, statePath } = loaded;
-  const template = FLOW_TEMPLATES[state.flowTemplate];
+  const template = Object.hasOwn(FLOW_TEMPLATES, state.flowTemplate) ? FLOW_TEMPLATES[state.flowTemplate] : null;
   if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${state.flowTemplate}` })); return; }
 
   if (!template.nodes.includes(targetNode)) {

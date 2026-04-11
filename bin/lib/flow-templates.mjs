@@ -115,7 +115,7 @@ function loadExternalFlows() {
     const files = readdirSync(flowDir).filter((f) => f.endsWith(".json"));
     for (const f of files) {
       const name = f.replace(/\.json$/, "");
-      if (FLOW_TEMPLATES[name]) continue; // built-in takes precedence
+      if (Object.hasOwn(FLOW_TEMPLATES, name)) continue; // built-in takes precedence
       // Guard against prototype pollution
       if (name === "__proto__" || name === "constructor" || name === "prototype") continue;
       try {

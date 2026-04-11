@@ -24,7 +24,7 @@ export function cmdRoute(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ next: null, valid: false, error: `unknown flow template: ${flow}` }));
     return;
@@ -56,7 +56,7 @@ export function cmdInit(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ created: false, error: `unknown flow template: ${flow}` }));
     return;
@@ -243,7 +243,7 @@ export function cmdValidateContext(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ valid: false, errors: [`unknown flow template: ${flow}`] }));
     return;

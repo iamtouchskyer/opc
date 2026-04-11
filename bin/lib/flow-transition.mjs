@@ -25,7 +25,7 @@ export function cmdTransition(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ allowed: false, reason: `unknown flow template: ${flow}` }));
     return;
@@ -340,7 +340,7 @@ export function cmdFinalize(args) {
   }
 
   const flow = state.flowTemplate;
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ finalized: false, error: `unknown flow template: ${flow}` }));
     return;

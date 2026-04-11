@@ -24,7 +24,7 @@ export function cmdViz(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[flow];
+  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.error(`Unknown flow template: ${flow}`);
     process.exit(1);
@@ -90,7 +90,7 @@ export function cmdReplayData(args) {
     process.exit(1);
   }
 
-  const template = FLOW_TEMPLATES[state.flowTemplate];
+  const template = Object.hasOwn(FLOW_TEMPLATES, state.flowTemplate) ? FLOW_TEMPLATES[state.flowTemplate] : null;
   if (!template) {
     console.error(`Unknown flow template: ${state.flowTemplate}`);
     process.exit(1);
