@@ -1,7 +1,7 @@
 // Flow state management commands: route, init, validate, transition, validate-chain
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker)
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { FLOW_TEMPLATES } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -9,6 +9,12 @@ import { getMarker } from "./viz-commands.mjs";
 function getFlag(args, name, fallback = null) {
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
+}
+
+function atomicWriteSync(filePath, data) {
+  const tmp = filePath + ".tmp";
+  writeFileSync(tmp, data);
+  renameSync(tmp, filePath);
 }
 
 // ─── route ──────────────────────────────────────────────────────
@@ -89,7 +95,7 @@ export function cmdInit(args) {
     edgeCounts: {},
   };
 
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   // Print initial flow viz to stderr
   const vizLines = [""];
@@ -346,7 +352,7 @@ export function cmdTransition(args) {
   state.totalSteps++;
   state.edgeCounts[edgeKey] = edgeCount + 1;
 
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   mkdirSync(join(dir, "nodes", to, runId), { recursive: true });
 

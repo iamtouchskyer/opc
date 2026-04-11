@@ -23,7 +23,7 @@
 // 17. fix must reference findings      (complete-tick: fix artifacts must mention upstream review)
 // 18. plan in .harness/plan.md         (init-loop: plan file validation)
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
@@ -37,6 +37,12 @@ const WRITER_SIG = "opc-harness";
 
 function hashContent(text) {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+function atomicWriteSync(filePath, data) {
+  const tmp = filePath + ".tmp";
+  writeFileSync(tmp, data);
+  renameSync(tmp, filePath);
 }
 
 // ─── plan validation helpers ────────────────────────────────────
@@ -176,9 +182,12 @@ export function cmdInitLoop(args) {
     _last_modified: new Date().toISOString(),
     _git_head: getGitHeadHash(),
     _tick_history: [],  // for stall detection: [{unit, tick}]
+    _max_total_ticks: units.length * 3,  // 3x unit count as safety cap
+    _started_at: new Date().toISOString(),
+    _max_duration_hours: 24,  // wall-clock deadline
   };
 
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   console.log(JSON.stringify({
     initialized: true,
@@ -428,7 +437,7 @@ export function cmdCompleteTick(args) {
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
   state._tick_history.push({ unit, tick: newTick, status });
 
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   // Rule 14: append to progress.md
   const progressPath = join(dir, "progress.md");
@@ -501,7 +510,7 @@ export function cmdNextTick(args) {
           state.description = `Stalled on unit '${last3[0].unit}' for 3 consecutive ticks`;
           state._written_by = WRITER_SIG;
           state._last_modified = new Date().toISOString();
-          writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+          atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
           console.log(JSON.stringify({
             ready: false,
@@ -515,13 +524,79 @@ export function cmdNextTick(args) {
     }
   }
 
+  // Oscillation detection: A↔B pattern over last 4 ticks
+  if (history.length >= 4) {
+    const last4 = history.slice(-4);
+    if (last4[0].unit === last4[2].unit && last4[1].unit === last4[3].unit && last4[0].unit !== last4[1].unit) {
+      warnings.push(`oscillation detected: '${last4[0].unit}' ↔ '${last4[1].unit}' repeating for 4 ticks`);
+
+      if (history.length >= 6) {
+        const last6 = history.slice(-6);
+        if (last6[0].unit === last6[2].unit && last6[2].unit === last6[4].unit &&
+            last6[1].unit === last6[3].unit && last6[3].unit === last6[5].unit) {
+          state.status = "stalled";
+          state.description = `Oscillation stall: '${last6[0].unit}' ↔ '${last6[1].unit}' for 6 ticks`;
+          state._written_by = WRITER_SIG;
+          state._last_modified = new Date().toISOString();
+          atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+          console.log(JSON.stringify({
+            ready: false,
+            terminate: true,
+            reason: `⛔ oscillation stall: '${last6[0].unit}' ↔ '${last6[1].unit}' for 6 ticks — needs human input`,
+            stalled_units: [last6[0].unit, last6[1].unit],
+          }));
+          return;
+        }
+      }
+    }
+  }
+
+  // Total tick limit
+  const maxTicks = state._max_total_ticks || Infinity;
+  if (state.tick >= maxTicks) {
+    state.status = "terminated";
+    state.description = `maxTotalTicks (${maxTicks}) reached at tick ${state.tick}`;
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: true,
+      reason: `maxTotalTicks (${maxTicks}) reached`,
+      total_ticks: state.tick,
+    }));
+    return;
+  }
+
+  // Wall-clock deadline
+  if (state._started_at && state._max_duration_hours) {
+    const elapsed = (Date.now() - new Date(state._started_at).getTime()) / (1000 * 60 * 60);
+    if (elapsed >= state._max_duration_hours) {
+      state.status = "terminated";
+      state.description = `Wall-clock deadline (${state._max_duration_hours}h) reached after ${elapsed.toFixed(1)}h`;
+      state._written_by = WRITER_SIG;
+      state._last_modified = new Date().toISOString();
+      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: true,
+        reason: `wall-clock deadline (${state._max_duration_hours}h) reached after ${elapsed.toFixed(1)}h`,
+        elapsed_hours: parseFloat(elapsed.toFixed(1)),
+      }));
+      return;
+    }
+  }
+
   // No next unit → terminate
   if (!state.next_unit) {
     state.status = "pipeline_complete";
     state.description = `Pipeline complete at tick ${state.tick}`;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
-    writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
     // Rule 13: surface backlog at termination
     const backlogPath = join(dir, "backlog.md");
@@ -568,7 +643,7 @@ export function cmdNextTick(args) {
       state.next_unit = null;
       state._written_by = WRITER_SIG;
       state._last_modified = new Date().toISOString();
-      writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
       console.log(JSON.stringify({
         ready: false,
