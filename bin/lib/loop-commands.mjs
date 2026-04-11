@@ -284,18 +284,18 @@ export function cmdCompleteTick(args) {
         }
       }
 
-      // Rule 6: UI implement needs screenshot
+      // Rule 6: UI implement needs screenshot (HARD ERROR)
       if (unitType.includes("ui") || unitType.includes("frontend") || unitType.includes("fe")) {
         const hasScreenshot = artifacts.some(a => a.endsWith(".png") || a.endsWith(".jpg") || a.endsWith(".jpeg"));
         if (!hasScreenshot) {
-          warnings.push(`UI implement unit '${unit}' has no screenshot artifact (.png/.jpg) — UI changes require visual verification`);
+          errors.push(`UI implement unit '${unit}' has no screenshot artifact (.png/.jpg) — UI changes require visual verification`);
         }
       }
 
-      // Rule 3: atomic commit — git HEAD must have changed since last tick
+      // Rule 3: atomic commit — git HEAD must have changed since last tick (HARD ERROR)
       const currentHead = getGitHeadHash();
       if (currentHead && state._git_head && currentHead === state._git_head) {
-        warnings.push(`git HEAD unchanged since last tick — implement unit should produce a commit`);
+        errors.push(`git HEAD unchanged since last tick — implement unit must produce a commit`);
       }
 
     } else if (unitType.startsWith("review")) {
@@ -336,29 +336,42 @@ export function cmdCompleteTick(args) {
       state._last_review_evals = evalHashes;
 
     } else if (unitType.startsWith("fix")) {
+      // Rule 5: verify eval file integrity from previous review
+      if (state._last_review_evals && typeof state._last_review_evals === "object") {
+        for (const [evalPath, expectedHash] of Object.entries(state._last_review_evals)) {
+          if (existsSync(evalPath)) {
+            const actualHash = hashContent(readFileSync(evalPath, "utf8"));
+            if (actualHash !== expectedHash) {
+              errors.push(`eval file '${evalPath}' was modified after review (hash ${expectedHash} → ${actualHash}) — review findings must not be altered before fix`);
+            }
+          } else {
+            errors.push(`eval file '${evalPath}' from previous review was deleted — review findings must persist through fix`);
+          }
+        }
+      }
+
       // Rule 17: fix must reference upstream review findings
-      // Check that at least one artifact mentions a review finding pattern
+      // Require severity emoji (🔴🟡🔵) OR file:line pattern — NOT just generic words
       if (artifacts.length > 0) {
         let referencesFindings = false;
         for (const a of artifacts) {
           if (existsSync(a)) {
             const content = readFileSync(a, "utf8");
-            // Fix artifacts should reference severity emojis or specific file:line from review
-            if (/[🔴🟡🔵]/.test(content) || /fix|address|resolve/i.test(content) ||
-                /:\d+/.test(content)) {
+            // Fix artifacts should reference severity emojis or specific file.ext:linenum from review
+            if (/[🔴🟡🔵]/.test(content) || /\w+\.\w+:\d+/.test(content)) {
               referencesFindings = true;
             }
           }
         }
         if (!referencesFindings) {
-          warnings.push(`fix unit '${unit}' artifacts don't reference review findings — fixes should trace to specific 🔴/🟡 items`);
+          warnings.push(`fix unit '${unit}' artifacts don't reference review findings — fixes should trace to specific 🔴/🟡 items or file:line refs`);
         }
       }
 
-      // Rule 3: fix should also commit
+      // Rule 3: fix should also commit (HARD ERROR)
       const currentHead = getGitHeadHash();
       if (currentHead && state._git_head && currentHead === state._git_head) {
-        warnings.push(`git HEAD unchanged — fix unit should produce a commit`);
+        errors.push(`git HEAD unchanged — fix unit must produce a commit`);
       }
 
     } else if (unitType.startsWith("e2e") || unitType.startsWith("accept")) {
