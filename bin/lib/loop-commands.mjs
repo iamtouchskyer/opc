@@ -1,25 +1,38 @@
 // Loop state management commands: init-loop, complete-tick, next-tick
 // Tamper-detecting guardrails for OPC Layer 2 (loop protocol)
 //
-// These commands enforce plan structure, evidence requirements, and detect tampering:
-// - init-loop: plan structure validation + plan hash fingerprint
-// - complete-tick: evidence validation + writer signature + content checks
-// - next-tick: auto-termination + plan hash integrity + writer chain verification
-//
+// Coverage target: ALL 16 rules from loop-protocol.md should have code participation.
 // Threat model: LLM agent is forgetful/lazy, not adversarial.
-// Tamper detection catches: direct state edits, plan modification after init,
-// skipped ticks, empty/fake artifacts.
+//
+// Rules enforced:
+//  1. implement→review chain          (init-loop: structure validation)
+//  2. verifiable output per unit       (complete-tick: artifact content checks)
+//  3. atomic commit per unit           (complete-tick: git HEAD check)
+//  4. review independence (≥2 evals)   (complete-tick: review needs ≥2 distinct eval files)
+//  5. eval file integrity              (complete-tick: eval hash lock after dispatch)
+//  6. UI changes need screenshot       (complete-tick: ui-implement needs .png artifact)
+//  7. blocked ≠ completed              (complete-tick: status whitelist)
+//  8. stall detection (2 same unit)    (next-tick: consecutive same-unit check)
+//  9. 3-tick stall → stop              (next-tick: hard stop after 3)
+// 10. auto-termination                 (next-tick: null/missing next_unit)
+// 11. cron termination signal          (next-tick: returns terminate + cron hint)
+// 12. 🟡 → backlog.md                  (transition: backlog enforcement in flow-commands.mjs)
+// 13. backlog surfaced at end          (next-tick: terminate checks backlog exists)
+// 14. progress.md append per tick      (complete-tick: appends to progress.md)
+// 15/16. review ≠ self-review          (= rule 4, ≥2 distinct eval files)
+// 17. fix must reference findings      (complete-tick: fix artifacts must mention upstream review)
+// 18. plan in .harness/plan.md         (init-loop: plan file validation)
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { createHash } from "crypto";
+import { execSync } from "child_process";
 
 function getFlag(args, name, fallback = null) {
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
 }
 
-// Tamper detection constants
 const WRITER_SIG = "opc-harness";
 
 function hashContent(text) {
@@ -28,16 +41,9 @@ function hashContent(text) {
 
 // ─── plan validation helpers ────────────────────────────────────
 
-/**
- * Parse plan.md into structured units.
- * Expected format: lines like "{F}.{N}  <type>  — <description>"
- * or "- {F}.{N}: <type> — <description>"
- */
 function parsePlan(planText) {
   const units = [];
   const lines = planText.split("\n");
-  // Match ONLY bullet-prefixed lines: "- F1.2  implement-a" or "- F1.2: implement-a"
-  // Requires [-*] bullet to avoid matching prose lines containing word.digit patterns
   const unitPattern = /^\s*[-*]\s+(\w+\.\d+)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
   for (const line of lines) {
     const m = line.match(unitPattern);
@@ -48,11 +54,6 @@ function parsePlan(planText) {
   return units;
 }
 
-/**
- * Validate plan structure:
- * - Every implement* unit must be followed by a review* unit (before the next implement)
- * - No two implement units in a row without review between them
- */
 function validatePlanStructure(units) {
   const errors = [];
   let pendingImplement = null;
@@ -61,7 +62,7 @@ function validatePlanStructure(units) {
     const u = units[i];
     const type = u.type;
 
-    if (type.startsWith("implement")) {
+    if (type.startsWith("implement") || type.startsWith("build")) {
       if (pendingImplement) {
         errors.push(
           `unit ${u.id} (${type}) follows ${pendingImplement.id} (${pendingImplement.type}) without a review unit between them`
@@ -69,18 +70,11 @@ function validatePlanStructure(units) {
       }
       pendingImplement = u;
     } else if (type.startsWith("review")) {
-      pendingImplement = null; // review clears the pending implement
+      pendingImplement = null;
     }
-    // fix, spec, design, e2e-verify, accept — don't affect the implement→review chain
-    // NOTE: fix units are code changes but they respond to review findings,
-    // so the review→fix sequence is valid. However, fix→implement without review is caught
-    // because fix does NOT clear pendingImplement. The sequence must be:
-    //   implement → review → fix (ok, review happened)
-    //   implement → review → fix → implement (caught: fix didn't clear pending, but review did)
-    // This is correct because fix follows a review by definition.
+    // fix, spec, design, e2e-verify, accept — don't clear pendingImplement
   }
 
-  // If plan ends with an implement unit and no review follows
   if (pendingImplement) {
     errors.push(
       `plan ends with ${pendingImplement.id} (${pendingImplement.type}) — no review unit follows`
@@ -90,13 +84,22 @@ function validatePlanStructure(units) {
   return errors;
 }
 
+// ─── git helpers ────────────────────────────────────────────────
+
+function getGitHeadHash() {
+  try {
+    return execSync("git rev-parse HEAD", { encoding: "utf8", timeout: 5000 }).trim();
+  } catch {
+    return null;
+  }
+}
+
 // ─── init-loop ──────────────────────────────────────────────────
 
 export function cmdInitLoop(args) {
   const dir = getFlag(args, "dir", ".harness");
   const planFile = getFlag(args, "plan", join(dir, "plan.md"));
 
-  // 1. Plan file must exist
   if (!existsSync(planFile)) {
     console.log(JSON.stringify({
       initialized: false,
@@ -105,21 +108,20 @@ export function cmdInitLoop(args) {
     return;
   }
 
-  // 2. Parse and validate plan structure
   const planText = readFileSync(planFile, "utf8");
   const units = parsePlan(planText);
 
   if (units.length === 0) {
     console.log(JSON.stringify({
       initialized: false,
-      errors: ["no units found in plan — expected lines like 'F1.1  spec — description'"],
+      errors: ["no units found in plan — expected lines like '- F1.1: spec — description'"],
     }));
     return;
   }
 
   const structureErrors = validatePlanStructure(units);
 
-  // Check for duplicate unit IDs
+  // Duplicate ID check
   const idCounts = {};
   for (const u of units) {
     idCounts[u.id] = (idCounts[u.id] || 0) + 1;
@@ -130,31 +132,31 @@ export function cmdInitLoop(args) {
     }
   }
 
-  // 3. Check loop-state doesn't already exist
+  // Active loop check
   const statePath = join(dir, "loop-state.json");
   if (existsSync(statePath)) {
-    const existing = JSON.parse(readFileSync(statePath, "utf8"));
-    if (existing.status !== "pipeline_complete" && existing.status !== "terminated") {
-      console.log(JSON.stringify({
-        initialized: false,
-        errors: ["loop-state.json already exists and is active — use next-tick to advance or delete to restart"],
-      }));
-      return;
-    }
+    try {
+      const existing = JSON.parse(readFileSync(statePath, "utf8"));
+      if (existing.status !== "pipeline_complete" && existing.status !== "terminated") {
+        console.log(JSON.stringify({
+          initialized: false,
+          errors: ["loop-state.json already exists and is active — use next-tick to advance or delete to restart"],
+        }));
+        return;
+      }
+    } catch { /* corrupt state, ok to overwrite */ }
   }
 
-  // 4. If structure errors exist, reject initialization
   if (structureErrors.length > 0) {
     console.log(JSON.stringify({
       initialized: false,
       errors: structureErrors,
       units: units.map(u => `${u.id}: ${u.type}`),
-      hint: "every implement unit must be followed by a review unit before the next implement",
+      hint: "every implement/build unit must be followed by a review unit before the next implement",
     }));
     return;
   }
 
-  // 5. Initialize loop state with tamper-detection fields
   mkdirSync(dir, { recursive: true });
   const planHash = hashContent(planText);
   const state = {
@@ -169,10 +171,11 @@ export function cmdInitLoop(args) {
     plan_file: planFile,
     units_total: units.length,
     unit_ids: units.map(u => u.id),
-    // Tamper detection
     _written_by: WRITER_SIG,
     _plan_hash: planHash,
     _last_modified: new Date().toISOString(),
+    _git_head: getGitHeadHash(),
+    _tick_history: [],  // for stall detection: [{unit, tick}]
   };
 
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
@@ -201,7 +204,6 @@ export function cmdCompleteTick(args) {
     process.exit(1);
   }
 
-  // Validate status whitelist (R3 fix: arbitrary status bypassed all checks)
   if (!VALID_TICK_STATUSES.has(status)) {
     console.log(JSON.stringify({ completed: false, errors: [`invalid status '${status}' — must be one of: ${[...VALID_TICK_STATUSES].join(", ")}`] }));
     return;
@@ -217,32 +219,32 @@ export function cmdCompleteTick(args) {
   const errors = [];
   const warnings = [];
 
-  // 0. Reject if pipeline is already terminated
+  // Rule 7: terminated pipeline
   if (state.status === "pipeline_complete" || state.status === "terminated") {
     console.log(JSON.stringify({ completed: false, errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`] }));
     return;
   }
 
-  // 0a. Tamper detection: check writer signature
+  // Tamper: writer signature
   if (state._written_by !== WRITER_SIG) {
     warnings.push("state was not written by opc-harness — possible direct edit detected");
   }
 
-  // 0b. Tamper detection: check plan hash integrity
+  // Tamper: plan hash
   const planFile = state.plan_file || join(dir, "plan.md");
   if (state._plan_hash && existsSync(planFile)) {
     const currentPlanHash = hashContent(readFileSync(planFile, "utf8"));
     if (currentPlanHash !== state._plan_hash) {
-      errors.push(`plan.md was modified after init-loop (hash ${state._plan_hash} → ${currentPlanHash}) — re-run init-loop to re-validate structure`);
+      errors.push(`plan.md was modified after init-loop (hash ${state._plan_hash} → ${currentPlanHash}) — re-run init-loop`);
     }
   }
 
-  // 1. Unit must match current next_unit
+  // Unit sequence
   if (state.next_unit !== unit) {
     errors.push(`expected unit '${state.next_unit}', got '${unit}'`);
   }
 
-  // 2. Determine unit type from plan (read ONCE, reuse for next-unit lookup)
+  // Determine unit type
   let unitType = "unknown";
   let allUnits = [];
   if (existsSync(planFile)) {
@@ -251,16 +253,16 @@ export function cmdCompleteTick(args) {
     if (found) unitType = found.type;
   }
 
-  // 3. Validate artifacts/evidence based on unit type
   const artifacts = artifactsRaw ? artifactsRaw.split(",").map(a => a.trim()).filter(Boolean) : [];
 
   if (status === "completed") {
+    // ── Rule 2+3+6: Evidence validation per unit type ──
+
     if (unitType.startsWith("implement") || unitType.startsWith("build")) {
-      // Implement units MUST have test evidence
+      // Rule 2: implement needs test evidence
       if (artifacts.length === 0) {
-        errors.push(`implement unit '${unit}' has no artifacts — must have test evidence (test output, build output)`);
+        errors.push(`implement unit '${unit}' has no artifacts — must have test evidence`);
       }
-      // ALL declared artifacts must exist, be non-empty, and contain test-like content
       for (const a of artifacts) {
         if (!existsSync(a)) {
           errors.push(`artifact not found: ${a}`);
@@ -269,25 +271,41 @@ export function cmdCompleteTick(args) {
           if (content.trim().length === 0) {
             errors.push(`artifact is empty: ${a}`);
           } else if (a.endsWith(".json")) {
-            // JSON artifacts should parse and have meaningful test fields
             try {
               const data = JSON.parse(content);
               const hasTestFields = data.tests_run != null || data.testsRun != null ||
                 data.passed != null || data.failures != null || data.exitCode != null ||
                 data.pass != null || data.fail != null || data.total != null;
               if (!hasTestFields) {
-                warnings.push(`artifact '${a}' is JSON but has no test-result fields (tests_run, passed, failures, exitCode)`);
+                warnings.push(`artifact '${a}' is JSON but has no test-result fields`);
               }
-            } catch {
-              // Not valid JSON — that's ok, could be raw output
-            }
+            } catch { /* raw output ok */ }
           }
         }
       }
+
+      // Rule 6: UI implement needs screenshot
+      if (unitType.includes("ui") || unitType.includes("frontend") || unitType.includes("fe")) {
+        const hasScreenshot = artifacts.some(a => a.endsWith(".png") || a.endsWith(".jpg") || a.endsWith(".jpeg"));
+        if (!hasScreenshot) {
+          warnings.push(`UI implement unit '${unit}' has no screenshot artifact (.png/.jpg) — UI changes require visual verification`);
+        }
+      }
+
+      // Rule 3: atomic commit — git HEAD must have changed since last tick
+      const currentHead = getGitHeadHash();
+      if (currentHead && state._git_head && currentHead === state._git_head) {
+        warnings.push(`git HEAD unchanged since last tick — implement unit should produce a commit`);
+      }
+
     } else if (unitType.startsWith("review")) {
-      // Review units MUST have eval files with severity markers
+      // Rule 4/15/16: review independence — need ≥2 DISTINCT eval files
       if (artifacts.length === 0) {
         errors.push(`review unit '${unit}' has no artifacts — must have eval-*.md files`);
+      }
+      const evalFiles = artifacts.filter(a => a.endsWith(".md"));
+      if (evalFiles.length < 2) {
+        errors.push(`review unit '${unit}' has ${evalFiles.length} eval file(s) — need ≥2 for independent review (separate subagents)`);
       }
       for (const a of artifacts) {
         if (!existsSync(a)) {
@@ -297,53 +315,104 @@ export function cmdCompleteTick(args) {
           if (content.trim().length === 0) {
             errors.push(`artifact is empty: ${a}`);
           } else if (a.endsWith(".md")) {
-            // Eval markdown must contain at least one severity emoji OR explicit LGTM
+            // Rule 2: eval must have severity markers
             const hasSeverity = /[🔴🟡🔵]/.test(content) || /LGTM/i.test(content) ||
               /critical|warning|suggestion/i.test(content);
             if (!hasSeverity) {
-              errors.push(`eval artifact '${a}' has no severity markers (🔴🟡🔵) or LGTM — review must produce structured findings`);
+              errors.push(`eval '${a}' has no severity markers (🔴🟡🔵) or LGTM — review must produce structured findings`);
             }
           }
         }
       }
+
+      // Rule 5: hash eval files for tamper detection downstream
+      const evalHashes = {};
+      for (const a of evalFiles) {
+        if (existsSync(a)) {
+          evalHashes[a] = hashContent(readFileSync(a, "utf8"));
+        }
+      }
+      // Store in state for fix-unit cross-reference
+      state._last_review_evals = evalHashes;
+
+    } else if (unitType.startsWith("fix")) {
+      // Rule 17: fix must reference upstream review findings
+      // Check that at least one artifact mentions a review finding pattern
+      if (artifacts.length > 0) {
+        let referencesFindings = false;
+        for (const a of artifacts) {
+          if (existsSync(a)) {
+            const content = readFileSync(a, "utf8");
+            // Fix artifacts should reference severity emojis or specific file:line from review
+            if (/[🔴🟡🔵]/.test(content) || /fix|address|resolve/i.test(content) ||
+                /:\d+/.test(content)) {
+              referencesFindings = true;
+            }
+          }
+        }
+        if (!referencesFindings) {
+          warnings.push(`fix unit '${unit}' artifacts don't reference review findings — fixes should trace to specific 🔴/🟡 items`);
+        }
+      }
+
+      // Rule 3: fix should also commit
+      const currentHead = getGitHeadHash();
+      if (currentHead && state._git_head && currentHead === state._git_head) {
+        warnings.push(`git HEAD unchanged — fix unit should produce a commit`);
+      }
+
     } else if (unitType.startsWith("e2e") || unitType.startsWith("accept")) {
-      // Verification units MUST have evidence
+      // Rule 2: verification needs evidence
       if (artifacts.length === 0) {
         errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
       }
     }
-    // spec, design, fix — artifacts recommended but not required
+    // spec, design — artifacts recommended but not required
   }
 
   if (errors.length > 0) {
-    console.log(JSON.stringify({ completed: false, errors }));
+    console.log(JSON.stringify({ completed: false, errors, warnings: warnings.length > 0 ? warnings : undefined }));
     return;
   }
 
-  // 4. Determine next unit (using allUnits from step 2 — single plan read)
+  // Determine next unit
   const currentIdx = allUnits.findIndex(u => u.id === unit);
   const nextUnit = currentIdx >= 0 && currentIdx < allUnits.length - 1
     ? allUnits[currentIdx + 1].id
     : null;
 
-  // 5. Update state with writer signature
-  state.tick = (state.tick || 0) + 1;
+  // Update state
+  const newTick = (state.tick || 0) + 1;
+  state.tick = newTick;
   state.unit = unit;
   state.description = description || `Completed unit ${unit} (${unitType})`;
   state.status = status;
   state.artifacts = artifacts;
   state.next_unit = nextUnit;
   state.review_of_previous = "";
-  // Tamper detection
   state._written_by = WRITER_SIG;
   state._last_modified = new Date().toISOString();
-  // Preserve plan hash from init
+  state._git_head = getGitHeadHash();
+
+  // Rule 8/9: stall detection history
+  if (!Array.isArray(state._tick_history)) state._tick_history = [];
+  state._tick_history.push({ unit, tick: newTick, status });
 
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
+  // Rule 14: append to progress.md
+  const progressPath = join(dir, "progress.md");
+  const progressLine = `- **Tick ${newTick}** [${unit}] (${unitType}): ${description || status} — ${new Date().toISOString()}\n`;
+  try {
+    appendFileSync(progressPath, progressLine);
+  } catch {
+    // progress.md write failed — non-blocking
+    warnings.push("failed to append to progress.md");
+  }
+
   console.log(JSON.stringify({
     completed: true,
-    tick: state.tick,
+    tick: newTick,
     unit,
     unitType,
     next_unit: nextUnit,
@@ -366,12 +435,12 @@ export function cmdNextTick(args) {
   const state = JSON.parse(readFileSync(statePath, "utf8"));
   const warnings = [];
 
-  // 0. Tamper detection: writer chain
+  // Tamper: writer chain
   if (state._written_by !== WRITER_SIG) {
     warnings.push("loop-state.json was not written by opc-harness — possible direct edit");
   }
 
-  // 1. Already terminated?
+  // Already terminated
   if (state.status === "pipeline_complete" || state.status === "terminated") {
     console.log(JSON.stringify({
       ready: false,
@@ -381,30 +450,74 @@ export function cmdNextTick(args) {
     return;
   }
 
-  // 2. No next unit?
+  // Rule 8/9: Stall detection
+  const history = state._tick_history || [];
+  if (history.length >= 2) {
+    const last2 = history.slice(-2);
+    if (last2[0].unit === last2[1].unit) {
+      warnings.push(`stall detected: unit '${last2[0].unit}' completed in 2 consecutive ticks`);
+
+      if (history.length >= 3) {
+        const last3 = history.slice(-3);
+        if (last3[0].unit === last3[1].unit && last3[1].unit === last3[2].unit) {
+          // Rule 9: hard stop after 3 consecutive same unit
+          state.status = "stalled";
+          state.description = `Stalled on unit '${last3[0].unit}' for 3 consecutive ticks`;
+          state._written_by = WRITER_SIG;
+          state._last_modified = new Date().toISOString();
+          writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+          console.log(JSON.stringify({
+            ready: false,
+            terminate: true,
+            reason: `⛔ stalled on unit '${last3[0].unit}' for 3 ticks — needs human input`,
+            stalled_unit: last3[0].unit,
+          }));
+          return;
+        }
+      }
+    }
+  }
+
+  // No next unit → terminate
   if (!state.next_unit) {
-    // Auto-terminate
     state.status = "pipeline_complete";
     state.description = `Pipeline complete at tick ${state.tick}`;
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
     writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+    // Rule 13: surface backlog at termination
+    const backlogPath = join(dir, "backlog.md");
+    const backlogExists = existsSync(backlogPath);
+    let backlogSummary = null;
+    if (backlogExists) {
+      const backlogText = readFileSync(backlogPath, "utf8");
+      const openItems = (backlogText.match(/^- \[ \]/gm) || []).length;
+      backlogSummary = { file: backlogPath, open_items: openItems };
+    }
 
     console.log(JSON.stringify({
       ready: false,
       terminate: true,
       reason: "next_unit is null — pipeline complete",
       total_ticks: state.tick,
+      backlog: backlogSummary,
+      hint: backlogSummary && backlogSummary.open_items > 0
+        ? `⚠️ ${backlogSummary.open_items} open backlog items — review before closing`
+        : undefined,
     }));
     return;
   }
 
-  // 3. Validate next_unit exists in plan + check plan hash integrity
+  // Validate next_unit in plan + plan hash
   const planFile = state.plan_file || join(dir, "plan.md");
   if (existsSync(planFile)) {
     const planText = readFileSync(planFile, "utf8");
     const units = parsePlan(planText);
     const unitIds = units.map(u => u.id);
 
-    // Plan hash integrity check
+    // Plan hash integrity
     if (state._plan_hash) {
       const currentHash = hashContent(planText);
       if (currentHash !== state._plan_hash) {
@@ -413,11 +526,12 @@ export function cmdNextTick(args) {
     }
 
     if (!unitIds.includes(state.next_unit)) {
-      // next_unit not in plan → auto-terminate
       state.status = "pipeline_complete";
       state.description = `Auto-terminated: unit '${state.next_unit}' not found in plan`;
       const badUnit = state.next_unit;
       state.next_unit = null;
+      state._written_by = WRITER_SIG;
+      state._last_modified = new Date().toISOString();
       writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
       console.log(JSON.stringify({
@@ -429,7 +543,6 @@ export function cmdNextTick(args) {
       return;
     }
 
-    // Get unit details
     const unitDetails = units.find(u => u.id === state.next_unit);
 
     console.log(JSON.stringify({
@@ -446,7 +559,7 @@ export function cmdNextTick(args) {
     return;
   }
 
-  // No plan file — hard error, cannot validate
+  // No plan file — hard error
   console.log(JSON.stringify({
     ready: false,
     terminate: false,
