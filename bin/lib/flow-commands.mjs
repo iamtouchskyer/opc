@@ -320,14 +320,28 @@ export function cmdTransition(args) {
               return;
             }
             const backlogText = readFileSync(backlogPath, "utf8");
-            // Check backlog mentions the upstream node
-            if (!backlogText.includes(upstreamId)) {
+            // Check backlog has properly formatted entries from this upstream
+            // Format: "- [ ] {emoji} [{upstreamId}] ..."
+            const backlogEntryPattern = new RegExp(`^\\s*-\\s*\\[[ x]\\]\\s*[🔴🟡🔵⏭️].*\\[${upstreamId}\\]`, "gm");
+            const matches = backlogText.match(backlogEntryPattern) || [];
+            if (matches.length === 0) {
               console.log(JSON.stringify({
                 allowed: false,
-                reason: `upstream '${upstreamId}' has ${warningCount} 🟡 warning(s) but backlog.md has no entries from '${upstreamId}' — track all warnings before transitioning`,
+                reason: `upstream '${upstreamId}' has ${warningCount} 🟡 warning(s) but backlog.md has no properly formatted entries from '${upstreamId}' — use format: '- [ ] 🟡 [${upstreamId}] finding summary'`,
                 backlog_required: true,
                 upstream: upstreamId,
                 warnings: warningCount,
+              }));
+              return;
+            }
+            if (matches.length < warningCount) {
+              console.log(JSON.stringify({
+                allowed: false,
+                reason: `upstream '${upstreamId}' has ${warningCount} 🟡 warning(s) but backlog.md only has ${matches.length} formatted entries — need ${warningCount}`,
+                backlog_required: true,
+                upstream: upstreamId,
+                warnings: warningCount,
+                backlog_entries: matches.length,
               }));
               return;
             }

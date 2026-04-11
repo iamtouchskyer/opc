@@ -92,6 +92,7 @@ Use CronCreate to schedule the tick prompt:
 cron: "*/10 * * * *"   (every 10 minutes, or user-specified interval)
 prompt: <the tick execution prompt — see Tick Prompt below>
 recurring: true
+durable: true          (MANDATORY for autonomous runs — survives process restart)
 ```
 
 Then immediately execute the first tick (don't wait for cron).
@@ -186,14 +187,40 @@ If the same unit appears in 3 consecutive ticks → stop the loop, surface to us
 ⛔ Stalled on unit {X} for 3 ticks. Needs human input.
 ```
 
+### Step 9 — Context Resilience
+
+Each tick prompt MUST be self-contained. After context compaction, the orchestrator loses:
+- skill.md procedural instructions
+- CLAUDE.md project conventions  
+- Review independence requirements
+- Backlog management rules
+
+**Mitigations:**
+1. The tick prompt explicitly lists critical rules (see Tick Prompt Template above)
+2. Use `durable: true` on CronCreate so the tick prompt survives process restart
+3. Each tick should re-read protocol files, not rely on in-context memory
+4. Keep individual ticks small (one flow, not full-stack) to reduce context pressure
+
+**What cannot be recovered after compaction:**
+- Project-specific conventions from CLAUDE.md (mitigate: include key rules in plan.md)
+- Nuanced understanding of acceptance criteria (mitigate: write detailed criteria in plan.md per unit)
+- Previous tick's detailed reasoning (mitigate: write key decisions to progress.md)
+
 ## Tick Prompt Template
 
 The cron job should schedule this prompt (adapt paths to project):
 
 ```
 Read .harness/loop-state.json and .harness/plan.md.
-Execute the current next_unit following loop-protocol.md.
-After completion, update loop-state.json.
+Re-read the full loop-protocol.md and skill.md protocols — do NOT rely on memory from previous ticks.
+Key rules to re-verify each tick:
+  - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
+  - Implement/fix units MUST produce a git commit
+  - UI units MUST include a screenshot artifact
+  - Use opc-harness complete-tick with actual artifact paths (never skip)
+  - On blocked/failed, include --description explaining why
+Execute the current next_unit. After completion, call opc-harness complete-tick, then opc-harness next-tick.
+If next-tick returns terminate:true, call CronDelete to stop the loop.
 ```
 
 ## Review Units — Mandatory Independence
