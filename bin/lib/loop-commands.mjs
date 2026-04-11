@@ -1,21 +1,29 @@
 // Loop state management commands: init-loop, complete-tick, next-tick
-// Structural guardrails for OPC Layer 2 (loop protocol)
+// Tamper-detecting guardrails for OPC Layer 2 (loop protocol)
 //
-// These commands enforce plan structure and evidence requirements:
-// - init-loop: plan structure validation (implement must be followed by review)
-// - complete-tick: evidence/artifact validation before tick completion
-// - next-tick: auto-termination when next_unit not in plan
+// These commands enforce plan structure, evidence requirements, and detect tampering:
+// - init-loop: plan structure validation + plan hash fingerprint
+// - complete-tick: evidence validation + writer signature + content checks
+// - next-tick: auto-termination + plan hash integrity + writer chain verification
 //
-// Limitation: These are guardrails for well-intentioned agents, not true zero-trust.
-// The agent has filesystem access and can bypass these checks by editing state directly.
-// For real zero-trust, you need out-of-process enforcement with sandbox isolation.
+// Threat model: LLM agent is forgetful/lazy, not adversarial.
+// Tamper detection catches: direct state edits, plan modification after init,
+// skipped ticks, empty/fake artifacts.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { createHash } from "crypto";
 
 function getFlag(args, name, fallback = null) {
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
+}
+
+// Tamper detection constants
+const WRITER_SIG = "opc-harness";
+
+function hashContent(text) {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 // ─── plan validation helpers ────────────────────────────────────
@@ -146,8 +154,9 @@ export function cmdInitLoop(args) {
     return;
   }
 
-  // 5. Initialize loop state
+  // 5. Initialize loop state with tamper-detection fields
   mkdirSync(dir, { recursive: true });
+  const planHash = hashContent(planText);
   const state = {
     tick: 0,
     unit: null,
@@ -160,6 +169,10 @@ export function cmdInitLoop(args) {
     plan_file: planFile,
     units_total: units.length,
     unit_ids: units.map(u => u.id),
+    // Tamper detection
+    _written_by: WRITER_SIG,
+    _plan_hash: planHash,
+    _last_modified: new Date().toISOString(),
   };
 
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
@@ -202,11 +215,26 @@ export function cmdCompleteTick(args) {
 
   const state = JSON.parse(readFileSync(statePath, "utf8"));
   const errors = [];
+  const warnings = [];
 
   // 0. Reject if pipeline is already terminated
   if (state.status === "pipeline_complete" || state.status === "terminated") {
     console.log(JSON.stringify({ completed: false, errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`] }));
     return;
+  }
+
+  // 0a. Tamper detection: check writer signature
+  if (state._written_by !== WRITER_SIG) {
+    warnings.push("state was not written by opc-harness — possible direct edit detected");
+  }
+
+  // 0b. Tamper detection: check plan hash integrity
+  const planFile = state.plan_file || join(dir, "plan.md");
+  if (state._plan_hash && existsSync(planFile)) {
+    const currentPlanHash = hashContent(readFileSync(planFile, "utf8"));
+    if (currentPlanHash !== state._plan_hash) {
+      errors.push(`plan.md was modified after init-loop (hash ${state._plan_hash} → ${currentPlanHash}) — re-run init-loop to re-validate structure`);
+    }
   }
 
   // 1. Unit must match current next_unit
@@ -215,7 +243,6 @@ export function cmdCompleteTick(args) {
   }
 
   // 2. Determine unit type from plan (read ONCE, reuse for next-unit lookup)
-  const planFile = state.plan_file || join(dir, "plan.md");
   let unitType = "unknown";
   let allUnits = [];
   if (existsSync(planFile)) {
@@ -233,19 +260,32 @@ export function cmdCompleteTick(args) {
       if (artifacts.length === 0) {
         errors.push(`implement unit '${unit}' has no artifacts — must have test evidence (test output, build output)`);
       }
-      // ALL declared artifacts must exist and be non-empty
+      // ALL declared artifacts must exist, be non-empty, and contain test-like content
       for (const a of artifacts) {
         if (!existsSync(a)) {
           errors.push(`artifact not found: ${a}`);
         } else {
-          const stat = readFileSync(a, "utf8");
-          if (stat.trim().length === 0) {
+          const content = readFileSync(a, "utf8");
+          if (content.trim().length === 0) {
             errors.push(`artifact is empty: ${a}`);
+          } else if (a.endsWith(".json")) {
+            // JSON artifacts should parse and have meaningful test fields
+            try {
+              const data = JSON.parse(content);
+              const hasTestFields = data.tests_run != null || data.testsRun != null ||
+                data.passed != null || data.failures != null || data.exitCode != null ||
+                data.pass != null || data.fail != null || data.total != null;
+              if (!hasTestFields) {
+                warnings.push(`artifact '${a}' is JSON but has no test-result fields (tests_run, passed, failures, exitCode)`);
+              }
+            } catch {
+              // Not valid JSON — that's ok, could be raw output
+            }
           }
         }
       }
     } else if (unitType.startsWith("review")) {
-      // Review units MUST have eval files, and they must exist and be non-empty
+      // Review units MUST have eval files with severity markers
       if (artifacts.length === 0) {
         errors.push(`review unit '${unit}' has no artifacts — must have eval-*.md files`);
       }
@@ -256,6 +296,13 @@ export function cmdCompleteTick(args) {
           const content = readFileSync(a, "utf8");
           if (content.trim().length === 0) {
             errors.push(`artifact is empty: ${a}`);
+          } else if (a.endsWith(".md")) {
+            // Eval markdown must contain at least one severity emoji OR explicit LGTM
+            const hasSeverity = /[🔴🟡🔵]/.test(content) || /LGTM/i.test(content) ||
+              /critical|warning|suggestion/i.test(content);
+            if (!hasSeverity) {
+              errors.push(`eval artifact '${a}' has no severity markers (🔴🟡🔵) or LGTM — review must produce structured findings`);
+            }
           }
         }
       }
@@ -279,7 +326,7 @@ export function cmdCompleteTick(args) {
     ? allUnits[currentIdx + 1].id
     : null;
 
-  // 5. Update state
+  // 5. Update state with writer signature
   state.tick = (state.tick || 0) + 1;
   state.unit = unit;
   state.description = description || `Completed unit ${unit} (${unitType})`;
@@ -287,6 +334,10 @@ export function cmdCompleteTick(args) {
   state.artifacts = artifacts;
   state.next_unit = nextUnit;
   state.review_of_previous = "";
+  // Tamper detection
+  state._written_by = WRITER_SIG;
+  state._last_modified = new Date().toISOString();
+  // Preserve plan hash from init
 
   writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
@@ -297,6 +348,7 @@ export function cmdCompleteTick(args) {
     unitType,
     next_unit: nextUnit,
     terminate: nextUnit === null,
+    warnings: warnings.length > 0 ? warnings : undefined,
   }));
 }
 
@@ -312,6 +364,12 @@ export function cmdNextTick(args) {
   }
 
   const state = JSON.parse(readFileSync(statePath, "utf8"));
+  const warnings = [];
+
+  // 0. Tamper detection: writer chain
+  if (state._written_by !== WRITER_SIG) {
+    warnings.push("loop-state.json was not written by opc-harness — possible direct edit");
+  }
 
   // 1. Already terminated?
   if (state.status === "pipeline_complete" || state.status === "terminated") {
@@ -339,11 +397,20 @@ export function cmdNextTick(args) {
     return;
   }
 
-  // 3. Validate next_unit exists in plan
+  // 3. Validate next_unit exists in plan + check plan hash integrity
   const planFile = state.plan_file || join(dir, "plan.md");
   if (existsSync(planFile)) {
-    const units = parsePlan(readFileSync(planFile, "utf8"));
+    const planText = readFileSync(planFile, "utf8");
+    const units = parsePlan(planText);
     const unitIds = units.map(u => u.id);
+
+    // Plan hash integrity check
+    if (state._plan_hash) {
+      const currentHash = hashContent(planText);
+      if (currentHash !== state._plan_hash) {
+        warnings.push(`plan.md modified since init-loop (hash ${state._plan_hash} → ${currentHash})`);
+      }
+    }
 
     if (!unitIds.includes(state.next_unit)) {
       // next_unit not in plan → auto-terminate
@@ -374,6 +441,7 @@ export function cmdNextTick(args) {
       tick: state.tick + 1,
       previous_unit: state.unit,
       previous_status: state.status,
+      warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;
   }
