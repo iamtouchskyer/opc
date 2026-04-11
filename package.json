@@ -1,6 +1,6 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
   "type": "module",
   "bin": {
@@ -17,10 +17,12 @@
     "replay.md",
     "roles",
     "pipeline",
+    "test",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "test": "bash test/test-harness.sh",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "keywords": [

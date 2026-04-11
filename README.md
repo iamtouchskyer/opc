@@ -2,32 +2,35 @@
 
 > A full team in a single Claude Code skill. You're the CEO — OPC is everyone else.
 
-11 specialist agents (PM, Designer, Security, Tester, and more) that review, analyze, build, and brainstorm your code — so you don't have to context-switch between hats.
+16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
-## Why not just ask Claude directly?
+## What's Different in v0.6
 
-You can — and for code-level bugs, a single Claude prompt is often more thorough. We tested both on this repo:
+**Digraph engine.** Tasks flow through typed nodes (build → review → gate → ...) with mechanical verdict routing. No more linear pipelines.
 
-| | Single Claude | OPC (3 agents) |
-|---|:---:|:---:|
-| Code bugs (variable shadowing, DRY violations, exit codes) | **14 found** | 9 found |
-| UX issues ("new user runs `opc review` in terminal expecting a CLI command") | 0 found | **5 found** |
+**Autonomous loop.** `opc loop` decomposes a feature into units, schedules a durable cron, and runs 8-16 hours unattended — with code-enforced guardrails that survive context compaction.
 
-Single Claude found more code issues. OPC found **different types of issues** — things that require thinking from a specific persona's perspective. A security engineer looks for content exposure. A new user tries the install flow and gets confused. A DevOps engineer checks npm packaging. Claude won't switch to these mindsets unless you explicitly ask.
+**Code-enforced, not honor-system.** 34 automated tests verify: tamper detection (write nonce), atomic state writes, review independence checks (eval distinctness), oscillation detection, tick limits, and JSON crash recovery.
 
-**OPC's value isn't finding more bugs. It's finding bugs you wouldn't think to look for.**
+**External validator integration.** Pre-commit hooks, test suites, Playwright E2E, and CI pipelines are formally part of the quality architecture — the agent is supervised by tools it doesn't control.
 
 ## How It Works
 
 One principle: **the agent that does the work never evaluates it.**
 
-1. **Task inference** — OPC reads your request and picks the right pipeline: review, analysis, build, brainstorm, plan, or full pipeline. Every path ends with independent evaluation.
+```
+Task → Flow Selection → Node Execution → Gate Verdict → Route Next
+                              ↑                              ↓
+                              └──────── ITERATE/FAIL ────────┘
+```
 
-2. **Parallel specialists** — 2-5 role-specific agents run in parallel, each with domain expertise and anti-patterns (what NOT to flag). They don't see each other's output.
+1. **Task inference** — reads your request, picks a flow template (quick-review, build-verify, full-stack, pre-release), and enters at the right node.
 
-3. **Verification gate** — the orchestrator checks agent findings: verifies facts, challenges severity, dismisses false positives, and synthesizes a verdict (PASS / ITERATE / FAIL).
+2. **Typed nodes** — each node has a type (discussion, build, review, execute, gate) with specific protocols. Build nodes produce commits. Review nodes dispatch parallel subagents. Gate nodes compute verdicts from code, not LLM judgment.
 
-4. **Iteration loop** — if the verdict is FAIL or ITERATE, the implementer fixes or polishes, and the evaluator re-tests. Up to 10 rounds, with early exit on oscillation.
+3. **Mechanical gates** — verdicts are computed by `opc-harness synthesize`: any red = FAIL, any yellow = ITERATE, all green = PASS. No LLM gets to decide if a finding is "important enough."
+
+4. **Cycle limits** — max 3 loops per edge, 5 re-entries per node, 20-30 total steps depending on flow. Oscillation detection catches A↔B loops.
 
 ## Quick Start
 
@@ -37,89 +40,99 @@ One principle: **the agent that does the work never evaluates it.**
 npm install -g @touchskyer/opc
 ```
 
-Skill files are automatically copied to `~/.claude/skills/opc/`. If the postinstall fails, run `opc install` manually.
+Skill files are automatically copied to `~/.claude/skills/opc/`.
 
 #### Manual install (no npm)
 
 ```bash
 git clone https://github.com/iamtouchskyer/opc.git
-ln -s $(pwd)/opc ~/.claude/skills/opc
+cp -r opc ~/.claude/skills/opc
 ```
-
-> **Note:** Symlink tracks the repo — `git pull` updates the skill immediately. Use `cp -r` instead if you want a stable snapshot.
 
 ### Use it
 
 ```bash
-# Review a PR
-/opc review the changes in this PR
+# Review — dispatches 2-5 role agents in parallel
+/opc review the auth changes
 
-# Analyze an architecture problem
-/opc analyze why the API is slow
+# Build — implements + independent review + gate
+/opc implement user authentication with email/password
 
-# Execute with a plan
-/opc implement the migration plan in PLAN.md
+# Autonomous loop — decomposes, schedules cron, runs unattended
+/opc loop build features F1-F4 from PLAN.md
 
-# Brainstorm approaches
-/opc what are our options for auth?
-
-# Interactive mode — agents ask you questions first
-/opc -i review the payment flow
+# Interactive mode — asks clarifying questions first
+/opc -i redesign the onboarding flow
 
 # Explicit roles
-/opc security compliance
+/opc security devil-advocate
 
-# Open the report viewer
-/opc replay
+# Flow control
+/opc skip          # skip current node
+/opc pass          # force-pass gate
+/opc stop          # terminate, preserve state
+/opc goto build    # jump to node
 ```
 
-## Task Types
+## Flow Templates
 
-| Task type | When | Pipeline |
-|-----------|------|----------|
-| **Review** | PR review, audit, pre-launch | Context brief → multi-role evaluation → verification gate → report |
-| **Analysis** | Architecture, performance, diagnosis | Context brief → single deep-role evaluation → report |
-| **Build** | Direction is set, implement it | Plan → build → independent evaluation → iterate until PASS |
-| **Brainstorm** | Options, trade-offs, alternatives | Role perspectives → comparison table → evaluation → recommendation |
-| **Plan** | Scope, decompose, estimate | Task decomposition → evaluation → report |
-| **Verification** | QA, test, pre-release check | Context brief → multi-role evaluation (verification tags) → report |
-| **Post-release** | User test, onboarding check | Context brief → multi-role evaluation (post-release tags) → report |
-| **Full pipeline** | Complex or vague request | Design → Plan → Build → Evaluate → Deliver |
+| Template | Nodes | When |
+|----------|-------|------|
+| **quick-review** | code-review → gate | PR review, audit, "find problems" |
+| **build-verify** | build → code-review → test-verify → gate | "implement X", "fix bug Y" |
+| **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
+| **pre-release** | acceptance → audit → e2e → gates | "verify before release" |
+
+## Autonomous Loop (v0.6)
+
+```bash
+/opc loop build the math tutoring app features F1-F4
+```
+
+What happens:
+1. **Decompose** — breaks task into atomic units (spec, implement, review, fix, e2e)
+2. **Definition of done** — establishes verify/eval criteria per unit before any work starts
+3. **Schedule** — durable cron (survives process restart) fires every 10 min
+4. **Execute** — each tick runs one unit through the appropriate OPC flow
+5. **Guard** — `opc-harness` enforces: git commit required, ≥2 independent reviewers, no plan tampering, no state forgery, artifact freshness, tick limits
+6. **Terminate** — auto-stops when plan complete, tick limit hit, or wall-clock deadline reached
+
+### Guardrails (code-enforced, not prompt-level)
+
+| Guard | Enforcement |
+|-------|-------------|
+| Write nonce | Random SHA256 at init; state written by harness only |
+| Atomic writes | write → rename (POSIX atomic); no truncated JSON on crash |
+| Plan integrity | SHA256 hash at init; verified every tick |
+| Review independence | ≥2 eval files, identical content rejected, line overlap warned |
+| Git commit required | HEAD must change for implement/fix units |
+| Screenshot required | UI units must produce .png/.jpg artifact |
+| Tick limits | maxTotalTicks (units×3) + 24h wall-clock deadline |
+| Oscillation detection | A↔B pattern over 4-6 ticks = warning/hard stop |
+| Concurrent tick mutex | in_progress status blocks overlapping cron fires |
+| JSON crash recovery | try/catch on all JSON.parse; structured errors, not crashes |
+| External validators | Pre-commit hooks, test suites detected at init and leveraged |
 
 ## Built-in Roles
 
-### Product
-| Role | Focus |
-|------|-------|
-| **PM** | Requirements, user value, scope, prioritization |
-| **Designer** | Interaction design, information architecture, visual system, accessibility |
+```
+Product:     pm, designer
+User Lens:   new-user, active-user, churned-user
+Engineering: frontend, backend, devops, architect, engineer
+Quality:     security, tester, compliance, a11y
+Specialist:  planner, user-simulator, devil-advocate
+```
 
-### User Lens
-| Role | Focus |
-|------|-------|
-| **New User** | First impression, onboarding, setup friction, trust signals |
-| **Active User** | Workflow efficiency, power features, scale behavior, customization |
-| **Churned User** | Re-entry experience, change communication, win-back signals |
+**Devil's Advocate** (the 10th person) is auto-included when consensus is near-unanimous or decisions are irreversible. Comes with an automated verification script that checks its own findings.
 
-### Engineering
-| Role | Focus |
-|------|-------|
-| **Frontend** | Component architecture, framework patterns, performance, i18n, type safety |
-| **Backend** | API design, database, auth, input validation, data consistency |
-| **DevOps** | CI/CD, containers, deployment, secrets, monitoring, developer experience |
+### Custom Roles
 
-### Quality
-| Role | Focus |
-|------|-------|
-| **Security** | Vulnerabilities (OWASP), dependency audit, secrets, auth security, attack surface |
-| **Tester** | Boundary cases, state coverage, regression risk, integration points |
-| **Compliance** | GDPR/CCPA, WCAG accessibility, license compatibility, industry regulations |
-
-## Custom Roles
-
-Add a `.md` file to `roles/` following this format:
+Add a `.md` file to `roles/`:
 
 ```markdown
+---
+tags: [review, build]
+---
 # Role Name
 
 ## Identity
@@ -127,58 +140,34 @@ One sentence: who you are and what you care about.
 
 ## Expertise
 - **Area** — what you know about it
-- **Area** — what you know about it
-...
 
 ## When to Include
 - Condition that triggers this role
-- Condition that triggers this role
-...
 ```
 
-The coordinator reads `When to Include` to decide whether to dispatch your role. It's available immediately — no configuration needed.
+Available immediately, no configuration needed.
 
-If a task needs expertise not covered by any role file, the coordinator creates a temporary role on-the-fly.
+## Testing
 
-## How Review Works
-
+```bash
+bash test/test-harness.sh
 ```
-You: /opc review this PR
 
-1. Triage     → Task type: review
-2. Roles      → Frontend, Backend, Security (auto-selected from changed files)
-3. Brief      → Orchestrator builds context from git log, CLAUDE.md, specs
-4. Dispatch   → 3 role evaluators run in parallel, each with role expertise + context
-5. Verify     → Mechanical checks auto-reject incomplete outputs (no file:line, no VERDICT).
-                 Orchestrator spot-checks facts, challenges severity, deduplicates.
-6. Report     → Curated findings with severity, file:line references, and fix suggestions
-```
+34 end-to-end tests covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, and plan parsing.
 
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)
-- Node.js ≥ 18 (for npm install only — not needed if you install manually)
-- That's it. No runtime dependencies, no build step, no MCP server. Just markdown files.
+- Node.js >= 18
+- No runtime dependencies, no MCP server, no build step
 
 ## Works better with memex (optional)
 
-OPC works standalone — but pair it with [memex](https://github.com/iamtouchskyer/memex) and it learns across sessions. Memex remembers which roles were useful, which findings were false positives, and your project-specific context. OPC doesn't need to know how memex works — memex drives itself.
+OPC works standalone — pair it with [memex](https://github.com/iamtouchskyer/memex) for cross-session memory. Memex remembers which roles were useful, which findings were false positives, and your project-specific context.
 
 ```bash
 npm install -g @touchskyer/memex
 ```
-
-## Visualize reports (optional)
-
-OPC saves structured reports to `~/.opc/reports/` after every run. Browse them in a web UI:
-
-```bash
-npx @touchskyer/opc-viewer
-```
-
-Or use `/opc replay` in Claude Code to open the viewer automatically.
-
-The viewer shows a Slack-like replay of your review team's conversation, plus a filterable summary of findings by severity.
 
 ## License
 
