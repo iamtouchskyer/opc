@@ -238,6 +238,40 @@ Review units MUST use independent subagents (Agent tool). The orchestrator:
 - ❌ Switching personas in the same context ("now I'll be the security reviewer...")
 - ❌ Filtering findings before writing them ("this 🟡 isn't important, skip it")
 
+## External Validators — Leverage What Already Exists
+
+LLM subagent reviews are same-model cosplay. True independent validation comes from **external tools the project already has**. These are not optional extras — they are the backbone of quality assurance in autonomous runs.
+
+### The Validation Stack (outermost = hardest to bypass)
+
+1. **Pre-commit hooks** (lint, typecheck, format) — triggered by `git commit`, agent cannot skip (`--no-verify` is prohibited by CLAUDE.md and harness checks git HEAD). Hook failure = no commit = complete-tick hard error.
+2. **Test suites** (`npm test`, `pytest`, `cargo test`) — agent runs these to produce artifact evidence. Harness validates artifact exists, has test fields, and is recent.
+3. **E2E / visual verification** (Playwright, webapp-testing skill) — produces screenshots that harness validates for UI units. Browser rendering is ground truth no LLM can fake.
+4. **CI pipeline** (GitHub Actions, etc.) — truly out-of-process. Runs on push, independent of agent.
+
+### How to Leverage Per Unit Type
+
+| Unit type | External validator | Enforcement |
+|---|---|---|
+| implement/build | pre-commit hooks + test suite | git HEAD must change (hard error) |
+| implement-ui | above + Playwright screenshot | screenshot artifact required (hard error) |
+| review | LLM subagents + lint/typecheck findings | ≥2 distinct eval files (hard error) |
+| fix | pre-commit hooks + test suite | git HEAD must change + eval hashes intact |
+| e2e-verify | Playwright / webapp-testing | screenshot + test-result artifact |
+
+### Discovery at Init
+
+At `init-loop`, the orchestrator SHOULD probe for available validators:
+- Check for `.husky/`, `.git/hooks/pre-commit`, `.pre-commit-config.yaml`
+- Check for `package.json` scripts (`test`, `lint`, `typecheck`)
+- Check for `playwright.config.*`, `cypress.config.*`
+- Check for `.github/workflows/`
+- Record findings in plan.md so each tick knows what validators to invoke
+
+### Key Principle
+
+**The agent that does the work is supervised by tools it doesn't control.** Pre-commit hooks are executed by git, not by the agent. CI is executed by GitHub, not by the agent. This is real independence — not same-model-different-prompt cosplay.
+
 ## Backlog Management
 
 During execution, unaddressed findings accumulate. The loop maintains `.harness/backlog.md`:

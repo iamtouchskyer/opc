@@ -100,6 +100,31 @@ function getGitHeadHash() {
   }
 }
 
+function detectPreCommitHooks() {
+  // Detect project-level pre-commit hooks
+  const indicators = [
+    ".husky/pre-commit",
+    ".git/hooks/pre-commit",
+    ".pre-commit-config.yaml",
+  ];
+  return indicators.some(p => existsSync(p));
+}
+
+function detectTestScript() {
+  // Check package.json for test/lint/typecheck scripts
+  try {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+    const scripts = pkg.scripts || {};
+    return {
+      test: !!scripts.test,
+      lint: !!scripts.lint || !!scripts.eslint,
+      typecheck: !!scripts.typecheck || !!scripts["type-check"] || !!scripts.tsc,
+    };
+  } catch {
+    return { test: false, lint: false, typecheck: false };
+  }
+}
+
 // ─── init-loop ──────────────────────────────────────────────────
 
 export function cmdInitLoop(args) {
@@ -192,13 +217,30 @@ export function cmdInitLoop(args) {
     .update(Date.now().toString() + Math.random().toString())
     .digest("hex").slice(0, 16);
 
+  // External validator discovery — record what's available for downstream enforcement
+  const hasHooks = detectPreCommitHooks();
+  const testScripts = detectTestScript();
+  state._external_validators = {
+    pre_commit_hooks: hasHooks,
+    test_script: testScripts.test,
+    lint_script: testScripts.lint,
+    typecheck_script: testScripts.typecheck,
+  };
+
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+  const validatorList = [];
+  if (hasHooks) validatorList.push("pre-commit hooks");
+  if (testScripts.test) validatorList.push("test script");
+  if (testScripts.lint) validatorList.push("lint script");
+  if (testScripts.typecheck) validatorList.push("typecheck script");
 
   console.log(JSON.stringify({
     initialized: true,
     units: units.map(u => `${u.id}: ${u.type}`),
     first_unit: units[0].id,
     total_units: units.length,
+    external_validators: validatorList.length > 0 ? validatorList : ["none detected — quality relies on in-process checks only"],
   }));
 }
 
@@ -349,6 +391,11 @@ export function cmdCompleteTick(args) {
       const currentHead = getGitHeadHash();
       if (currentHead && state._git_head && currentHead === state._git_head) {
         errors.push(`git HEAD unchanged since last tick — implement unit must produce a commit`);
+      }
+
+      // External validator awareness: warn if no hooks are guarding commit quality
+      if (state._external_validators && !state._external_validators.pre_commit_hooks) {
+        warnings.push("no pre-commit hooks detected — git commit has no external quality gate (lint/typecheck/format)");
       }
 
     } else if (unitType.startsWith("review")) {
