@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.5.0
+version: 0.6.0
 description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Every path ends with evaluation. /opc <task>, /opc -i <task>, /opc <role> [role...]"
 ---
 
@@ -394,6 +394,113 @@ All templates live in `./pipeline/`:
 - `handoff-template.md` — Handshake.json specification
 - `context-brief.md` — Design context brief procedure
 - `report-format.md` — Presentation templates + JSON schema + replay
+
+---
+
+## External Flow Templates
+
+Custom flows can be defined as JSON files in `~/.claude/flows/`. The harness loads them at startup and merges them into the template registry. Built-in templates take precedence (external cannot override).
+
+**JSON schema:**
+```json
+{
+  "nodes": ["discover", "build", "review", "gate"],
+  "edges": {
+    "discover": { "PASS": "build" },
+    "build":    { "PASS": "review" },
+    "review":   { "PASS": "gate" },
+    "gate":     { "PASS": null, "FAIL": "build", "ITERATE": "build" }
+  },
+  "limits": { "maxLoopsPerEdge": 3, "maxTotalSteps": 20, "maxNodeReentry": 5 },
+  "nodeTypes": {
+    "discover": "discussion", "build": "build",
+    "review": "review", "gate": "gate"
+  },
+  "softEvidence": true,
+  "opc_compat": ">=0.5",
+  "contextSchema": {
+    "build": {
+      "required": ["task"],
+      "rules": { "task": "non-empty-string" }
+    }
+  }
+}
+```
+
+**Validation rules:**
+- `nodes`, `edges`, `limits` are required
+- All edge sources and targets must be in `nodes`
+- `nodeTypes` values must be: `discussion`, `build`, `review`, `execute`, `gate`
+- `opc_compat` uses `>=X.Y` semver range (current harness: 0.6.0)
+- Prototype pollution names (`__proto__`, `constructor`, `prototype`) are rejected
+
+**Optional fields:**
+- `softEvidence: true` — downgrades missing-evidence errors to warnings for execute nodes
+- `contextSchema` — per-node validation rules for `flow-context.json`
+- `opc_compat` — minimum harness version required
+
+**contextSchema rules:**
+- `non-empty-string` — must be a non-empty string
+- `non-empty-array` — must be a non-empty array
+- `non-empty-object` — must be a non-empty plain object (not array)
+- `positive-integer` — must be a positive integer > 0
+
+---
+
+## Harness Command Reference
+
+All commands output JSON to stdout. Errors go to stderr. All output is machine-parseable.
+
+### Flow Commands
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `init` | `--flow <tpl> [--entry <node>] [--dir <p>]` | Initialize flow state. Creates `flow-state.json` and node directories. |
+| `route` | `--node <id> --verdict <V> --flow <tpl>` | Get next node from graph edges. Returns `{next, allowed}`. |
+| `transition` | `--from <n> --to <n> --verdict <V> --flow <tpl> --dir <p>` | Execute state transition. Validates edge, checks limits, writes gate handshake, enforces backlog. |
+| `validate` | `<handshake.json>` | Validate handshake schema (required fields, evidence check for execute nodes). |
+| `validate-chain` | `[--dir <p>]` | Validate entire execution path — checks all handshakes match history. |
+| `validate-context` | `--flow <tpl> --node <id> [--dir <p>]` | Validate `flow-context.json` against contextSchema rules. |
+| `finalize` | `[--dir <p>] [--strict]` | Finalize terminal node. Marks flow as completed. |
+| `viz` | `--flow <tpl> [--dir <p>] [--json]` | Visualize flow graph (ASCII or JSON). Shows ▶ current, ✅ visited, ○ pending. |
+| `replay` | `[--dir <p>]` | Export full replay data as JSON (flow state + handshakes + run artifacts). |
+
+### Escape Hatches
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `skip` | `[--dir <p>] [--flow <tpl>]` | Skip current node, advance via PASS edge. Writes skip handshake. |
+| `pass` | `[--dir <p>]` | Force-pass current gate node. Only works on gate-type nodes. |
+| `stop` | `[--dir <p>]` | Terminate flow, preserve state. Sets status to "stopped". |
+| `goto` | `<nodeId> [--dir <p>]` | Manual jump to any node. Cycle limits still enforced. |
+| `ls` | `[--base <p>]` | List all active flows in project (scans `.harness*` directories). |
+
+### Eval Commands
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `verify` | `<file>` | Parse evaluation markdown → JSON (severity counts, verdict, findings). |
+| `synthesize` | `<dir> --node <id> [--run N]` | Merge all evaluations for a node → aggregate verdict (PASS/ITERATE/FAIL/BLOCKED). |
+| `report` | `<dir> --mode <m> --task <t>` | Generate full report JSON with presentation data. |
+| `diff` | `<file1> <file2>` | Compare two evaluation rounds. Detects oscillation. |
+
+### Loop Commands (Layer 2 — Zero Trust)
+
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `init-loop` | `[--plan <file>] [--dir <p>]` | Initialize loop state from plan.md. Validates plan structure, detects test/lint scripts. |
+| `complete-tick` | `--unit <id> --artifacts <a,b> [--description <text>] [--dir <p>]` | Complete tick with evidence. Validates artifacts per unit type, checks plan hash, overlap detection. |
+| `next-tick` | `[--dir <p>]` | Get next unit. Checks stall/oscillation, returns `{ready, unit, terminate}`. |
+
+### Transition Details
+
+The `transition` command enforces:
+- **Edge validation** — only declared edges are allowed
+- **Cycle limits** — `maxLoopsPerEdge`, `maxTotalSteps`, `maxNodeReentry`
+- **Idempotency** — repeated identical transitions are silently accepted
+- **Gate detection** — uses `nodeTypes[from] === "gate"` (not name prefix)
+- **Pre-transition validation** — upstream handshake must exist and be valid
+- **Backlog enforcement** — if upstream has warnings, `backlog.md` must exist for FAIL/ITERATE transitions
 
 ---
 

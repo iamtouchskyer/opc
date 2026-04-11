@@ -101,10 +101,12 @@ function satisfiesVersion(range, version) {
   if (!range || !version) return true; // missing = no constraint
   const m = range.match(/^>=(\d+)\.(\d+)/);
   if (!m) { console.error(`⚠️  malformed opc_compat range: '${range}' — rejecting`); return false; }
-  const [, rMaj, rMin] = m.map(Number);
+  const rMaj = parseInt(m[1], 10);
+  const rMin = parseInt(m[2], 10);
   const v = version.match(/^(\d+)\.(\d+)/);
   if (!v) return true;
-  const [, vMaj, vMin] = v.map(Number);
+  const vMaj = parseInt(v[1], 10);
+  const vMin = parseInt(v[2], 10);
   return vMaj > rMaj || (vMaj === rMaj && vMin >= rMin);
 }
 
@@ -158,6 +160,45 @@ function loadExternalFlows() {
             }
           }
           if (!valid) continue;
+        }
+        // Validate contextSchema if present
+        if (data.contextSchema) {
+          if (typeof data.contextSchema !== "object" || Array.isArray(data.contextSchema)) {
+            console.error(`⚠️  Skipping ${f}: contextSchema must be an object`);
+            continue;
+          }
+          const validRules = new Set(["non-empty-string", "non-empty-array", "non-empty-object", "positive-integer"]);
+          let schemaValid = true;
+          for (const [schemaNode, nodeSchema] of Object.entries(data.contextSchema)) {
+            if (!data.nodes.includes(schemaNode)) {
+              console.error(`⚠️  Skipping ${f}: contextSchema key '${schemaNode}' not in nodes array`);
+              schemaValid = false;
+              break;
+            }
+            if (nodeSchema.required !== undefined) {
+              if (!Array.isArray(nodeSchema.required) || !nodeSchema.required.every((r) => typeof r === "string")) {
+                console.error(`⚠️  Skipping ${f}: contextSchema['${schemaNode}'].required must be an array of strings`);
+                schemaValid = false;
+                break;
+              }
+            }
+            if (nodeSchema.rules !== undefined) {
+              if (typeof nodeSchema.rules !== "object" || Array.isArray(nodeSchema.rules)) {
+                console.error(`⚠️  Skipping ${f}: contextSchema['${schemaNode}'].rules must be an object`);
+                schemaValid = false;
+                break;
+              }
+              for (const [field, ruleName] of Object.entries(nodeSchema.rules)) {
+                if (!validRules.has(ruleName)) {
+                  console.error(`⚠️  Skipping ${f}: contextSchema['${schemaNode}'].rules['${field}'] has invalid rule '${ruleName}'`);
+                  schemaValid = false;
+                  break;
+                }
+              }
+              if (!schemaValid) break;
+            }
+          }
+          if (!schemaValid) continue;
         }
         // Check opc_compat version constraint
         if (data.opc_compat && !satisfiesVersion(data.opc_compat, HARNESS_VERSION)) {

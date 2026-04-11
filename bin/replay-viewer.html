@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OPC Flow Replay</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-surface: #161b22;
+    --bg-panel: #1c2128;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --text-bright: #f0f6fc;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --gray: #484f58;
+    --red: #f85149;
+    --orange: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39d2c0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-bright);
+  }
+  header h1 span { color: var(--blue); }
+  .header-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ── Main layout ── */
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Canvas (flow graph) ── */
+  .canvas-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 24px;
+  }
+  svg.flow-graph {
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  /* ── Side panel ── */
+  .panel {
+    width: 380px;
+    flex-shrink: 0;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .panel-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 32px 16px;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .panel h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 4px;
+  }
+  .panel h3 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 8px;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge-pass { background: #1a3a2a; color: var(--green); }
+  .badge-fail { background: #3a1a1a; color: var(--red); }
+  .badge-iterate { background: #3a2a1a; color: var(--orange); }
+  .badge-pending { background: #2a2a2a; color: var(--text-dim); }
+  .badge-completed { background: #1a3a2a; color: var(--green); }
+  .badge-active { background: #1a2a3a; color: var(--blue); }
+
+  .detail-section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .detail-section .kv { display: flex; justify-content: space-between; margin: 3px 0; }
+  .detail-section .kv .k { color: var(--text-dim); }
+  .detail-section .kv .v { color: var(--text); font-weight: 500; }
+
+  .summary-text {
+    white-space: pre-wrap;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    word-break: break-word;
+  }
+
+  .artifact-list {
+    list-style: none;
+    font-size: 12px;
+  }
+  .artifact-list li {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+  .artifact-list li:last-child { border-bottom: none; }
+  .artifact-list .art-type {
+    display: inline-block;
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--cyan);
+    margin-right: 4px;
+  }
+
+  .findings-bar {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+  }
+  .findings-bar .fc { color: var(--red); }
+  .findings-bar .fw { color: var(--orange); }
+  .findings-bar .fs { color: var(--blue); }
+
+  .detail-file {
+    margin-top: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .detail-file-header {
+    padding: 4px 8px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: monospace;
+  }
+  .detail-file-body {
+    padding: 8px;
+    font-size: 11px;
+    line-height: 1.4;
+    font-family: monospace;
+    white-space: pre-wrap;
+    max-height: 160px;
+    overflow-y: auto;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  /* ── Controls bar ── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .controls button {
+    background: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .controls button:hover { background: var(--border); }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .controls button.active {
+    background: var(--blue);
+    color: #fff;
+    border-color: var(--blue);
+  }
+
+  .step-display {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-bright);
+    min-width: 100px;
+    text-align: center;
+  }
+
+  .timeline-slider {
+    flex: 1;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  .timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--blue);
+    cursor: pointer;
+  }
+  .timeline-slider::-moz-range-thumb {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--blue);
+    cursor: pointer;
+    border: none;
+  }
+
+  .speed-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .speed-control select {
+    background: var(--bg-panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  /* ── SVG node styles ── */
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-rect { filter: brightness(1.2); }
+  .node-rect {
+    rx: 8;
+    ry: 8;
+    stroke-width: 2;
+    transition: fill 0.3s, stroke 0.3s;
+  }
+  .node-label {
+    font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    fill: var(--text-bright);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .node-type-label {
+    font-size: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    fill: var(--text-dim);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .node-selected .node-rect {
+    stroke-width: 3;
+    filter: drop-shadow(0 0 6px rgba(88,166,255,0.4));
+  }
+
+  .edge-line {
+    stroke: var(--gray);
+    stroke-width: 2;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+  .edge-visited {
+    stroke: var(--green);
+    stroke-width: 2;
+  }
+
+  .loopback-path {
+    stroke-width: 2;
+    fill: none;
+    stroke-dasharray: 6 3;
+    marker-end: url(#arrowhead-loop);
+  }
+  .loopback-label {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    fill: var(--orange);
+    text-anchor: middle;
+  }
+
+  /* ── No data state ── */
+  .no-data {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  .no-data code {
+    background: var(--bg-surface);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OPC <span>Flow Replay</span></h1>
+  <div class="header-meta" id="headerMeta"></div>
+</header>
+
+<div class="main" id="mainArea">
+  <div class="no-data" id="noData">
+    <div>No replay data loaded.</div>
+    <div>Set <code>window.REPLAY_DATA</code> or place <code>data.json</code> alongside this file.</div>
+  </div>
+</div>
+
+<div class="controls" id="controls" style="display:none">
+  <button id="btnReset" title="Reset (R)">&#x23EE;</button>
+  <button id="btnPrev" title="Previous (Left)">&#x25C0;</button>
+  <button id="btnPlayPause" title="Play/Pause (Space)">&#x25B6;</button>
+  <button id="btnNext" title="Next (Right)">&#x25B6;&#x25B6;</button>
+  <button id="btnEnd" title="End (E)">&#x23ED;</button>
+  <input type="range" class="timeline-slider" id="slider" min="0" value="0">
+  <div class="step-display" id="stepDisplay">0 / 0</div>
+  <div class="speed-control">
+    <label for="speedSelect">Speed:</label>
+    <select id="speedSelect">
+      <option value="2000">0.5x</option>
+      <option value="1000" selected>1x</option>
+      <option value="500">2x</option>
+      <option value="250">4x</option>
+    </select>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── Data loading ──
+  let DATA = null;
+
+  function init() {
+    if (window.REPLAY_DATA) {
+      DATA = window.REPLAY_DATA;
+    } else {
+      // Try loading data.json from the same directory
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', 'data.json', false); // sync for simplicity
+        xhr.send();
+        if (xhr.status === 200 || xhr.status === 0) { // status 0 for file://
+          DATA = JSON.parse(xhr.responseText);
+        }
+      } catch(e) { /* ignore */ }
+    }
+
+    if (!DATA || !DATA.nodes || !DATA.nodes.length) return;
+
+    document.getElementById('noData').style.display = 'none';
+    document.getElementById('controls').style.display = 'flex';
+
+    const meta = [];
+    if (DATA.flowTemplate) meta.push('Flow: ' + DATA.flowTemplate);
+    meta.push(DATA.totalSteps + ' steps');
+    if (DATA.entryNode) meta.push('entry: ' + DATA.entryNode);
+    if (DATA.currentNode) meta.push('current: ' + DATA.currentNode);
+    document.getElementById('headerMeta').textContent = meta.join(' \u2022 ');
+
+    buildUI();
+    goToStep(0);
+  }
+
+  // ── Layout constants ──
+  const NODE_W = 150;
+  const NODE_H = 50;
+  const NODE_GAP = 32;
+  const PADDING = 60;
+  const LOOP_OFFSET = 120;
+
+  // ── State ──
+  let currentStep = 0;
+  let selectedNode = null;
+  let playing = false;
+  let playTimer = null;
+
+  // ── DOM refs ──
+  let svgEl, panelEl;
+
+  // ── Compute node positions (vertical layout) ──
+  function computeLayout(nodes) {
+    const positions = {};
+    const totalH = nodes.length * NODE_H + (nodes.length - 1) * NODE_GAP;
+    const startY = PADDING;
+    const cx = PADDING + LOOP_OFFSET + NODE_W / 2;
+
+    nodes.forEach(function(id, i) {
+      positions[id] = {
+        x: cx,
+        y: startY + i * (NODE_H + NODE_GAP) + NODE_H / 2
+      };
+    });
+
+    const svgW = cx + NODE_W / 2 + PADDING + LOOP_OFFSET;
+    const svgH = totalH + 2 * PADDING;
+
+    return { positions, svgW, svgH };
+  }
+
+  // ── Determine node statuses at a given step ──
+  function getNodeStatuses(step) {
+    const statuses = {};
+    DATA.nodes.forEach(function(n) { statuses[n] = 'pending'; });
+
+    if (!DATA.history || DATA.history.length === 0) {
+      if (DATA.entryNode) statuses[DATA.entryNode] = 'current';
+      return statuses;
+    }
+
+    // Step 0: initial state (entry node is current, nothing visited)
+    // Step i: after i-th history entry has executed
+    var visitedSet = {};
+    var currentNodeAtStep = DATA.entryNode;
+
+    for (var i = 0; i < Math.min(step, DATA.history.length); i++) {
+      var entry = DATA.history[i];
+      visitedSet[entry.nodeId] = true;
+    }
+
+    if (step === 0) {
+      currentNodeAtStep = DATA.entryNode;
+    } else if (step <= DATA.history.length) {
+      // The current node at step i is the node from history[i-1]
+      // But if step < history.length, the "next" node is being approached
+      // Let's say step N means N transitions have happened
+      // After all transitions, current = DATA.currentNode
+      if (step >= DATA.history.length) {
+        currentNodeAtStep = DATA.currentNode;
+      } else {
+        currentNodeAtStep = DATA.history[step].nodeId;
+      }
+    }
+
+    // Mark visited
+    for (var nodeId in visitedSet) {
+      if (visitedSet.hasOwnProperty(nodeId)) {
+        statuses[nodeId] = 'visited';
+      }
+    }
+
+    // Current overrides visited
+    statuses[currentNodeAtStep] = 'current';
+
+    return statuses;
+  }
+
+  // ── Get visited edges at a given step ──
+  function getVisitedEdges(step) {
+    var visited = [];
+    if (!DATA.history) return visited;
+    for (var i = 1; i < Math.min(step, DATA.history.length); i++) {
+      visited.push({ from: DATA.history[i-1].nodeId, to: DATA.history[i].nodeId });
+    }
+    // edge from entry to first history node
+    if (step > 0 && DATA.history.length > 0 && DATA.entryNode !== DATA.history[0].nodeId) {
+      visited.unshift({ from: DATA.entryNode, to: DATA.history[0].nodeId });
+    }
+    return visited;
+  }
+
+  // ── Color scheme ──
+  function nodeColors(status) {
+    switch(status) {
+      case 'current': return { fill: '#1a3a5c', stroke: '#58a6ff' };
+      case 'visited': return { fill: '#1a3a2a', stroke: '#3fb950' };
+      case 'pending': default: return { fill: '#21262d', stroke: '#484f58' };
+    }
+  }
+
+  // ── Build UI ──
+  function buildUI() {
+    var mainArea = document.getElementById('mainArea');
+    mainArea.innerHTML = '';
+
+    // Canvas
+    var canvasWrap = document.createElement('div');
+    canvasWrap.className = 'canvas-wrap';
+    mainArea.appendChild(canvasWrap);
+
+    // Panel
+    panelEl = document.createElement('div');
+    panelEl.className = 'panel';
+    panelEl.innerHTML = '<div class="panel-empty">Click a node to see details</div>';
+    mainArea.appendChild(panelEl);
+
+    var layout = computeLayout(DATA.nodes);
+
+    svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgEl.setAttribute('class', 'flow-graph');
+    svgEl.setAttribute('width', layout.svgW);
+    svgEl.setAttribute('height', layout.svgH);
+    svgEl.setAttribute('viewBox', '0 0 ' + layout.svgW + ' ' + layout.svgH);
+    canvasWrap.appendChild(svgEl);
+
+    // Defs (arrowheads)
+    var defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = '<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
+      '<polygon points="0 0, 8 3, 0 6" fill="#484f58"/></marker>' +
+      '<marker id="arrowhead-visited" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
+      '<polygon points="0 0, 8 3, 0 6" fill="#3fb950"/></marker>' +
+      '<marker id="arrowhead-loop" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
+      '<polygon points="0 0, 8 3, 0 6" fill="#d29922"/></marker>' +
+      '<marker id="arrowhead-loop-fail" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">' +
+      '<polygon points="0 0, 8 3, 0 6" fill="#f85149"/></marker>';
+    svgEl.appendChild(defs);
+
+    // Groups for layering
+    var edgeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    edgeGroup.setAttribute('id', 'edges');
+    svgEl.appendChild(edgeGroup);
+
+    var loopGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    loopGroup.setAttribute('id', 'loops');
+    svgEl.appendChild(loopGroup);
+
+    var nodeGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    nodeGroup.setAttribute('id', 'nodes');
+    svgEl.appendChild(nodeGroup);
+
+    // Draw edges (PASS edges = straight vertical lines)
+    DATA.nodes.forEach(function(nodeId, idx) {
+      if (!DATA.edges || !DATA.edges[nodeId]) return;
+      var passTarget = DATA.edges[nodeId].PASS;
+      if (!passTarget) return;
+
+      var fromPos = layout.positions[nodeId];
+      var toPos = layout.positions[passTarget];
+      if (!fromPos || !toPos) return;
+
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', fromPos.x);
+      line.setAttribute('y1', fromPos.y + NODE_H / 2);
+      line.setAttribute('x2', toPos.x);
+      line.setAttribute('y2', toPos.y - NODE_H / 2);
+      line.setAttribute('class', 'edge-line');
+      line.setAttribute('data-from', nodeId);
+      line.setAttribute('data-to', passTarget);
+      edgeGroup.appendChild(line);
+    });
+
+    // Draw loopback edges (curved arrows on the left side)
+    // Group by gate→target pair to offset overlapping loopbacks
+    if (DATA.loopbacks) {
+      var loopKey = {};
+      DATA.loopbacks.forEach(function(lb) {
+        var key = lb.gate + '→' + lb.target;
+        if (!loopKey[key]) loopKey[key] = 0;
+        var idx = loopKey[key]++;
+
+        var fromPos = layout.positions[lb.gate];
+        var toPos = layout.positions[lb.target];
+        if (!fromPos || !toPos) return;
+
+        var isFail = lb.verdict === 'FAIL';
+        var color = isFail ? '#f85149' : '#d29922';
+        var arrowId = isFail ? 'arrowhead-loop-fail' : 'arrowhead-loop';
+
+        // Offset each loopback further left so they don't overlap
+        var baseOffset = 40;
+        var perLoopOffset = 30;
+        var fromY = fromPos.y + (idx * 8 - 4);
+        var toY = toPos.y - NODE_H / 2 + 5 + (idx * 8);
+        var leftX = fromPos.x - NODE_W / 2 - baseOffset - (idx * perLoopOffset);
+
+        var d = 'M ' + (fromPos.x - NODE_W / 2) + ' ' + fromY +
+                ' C ' + leftX + ' ' + fromY +
+                ' ' + leftX + ' ' + toY +
+                ' ' + (toPos.x - NODE_W / 2 + 10) + ' ' + toY;
+
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'loopback-path');
+        path.setAttribute('stroke', color);
+        path.setAttribute('marker-end', 'url(#' + arrowId + ')');
+        loopGroup.appendChild(path);
+
+        // Label
+        var midY = (fromY + toY) / 2;
+        var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', leftX - 8);
+        label.setAttribute('y', midY);
+        label.setAttribute('class', 'loopback-label');
+        label.setAttribute('fill', color);
+        label.textContent = lb.verdict;
+        loopGroup.appendChild(label);
+      });
+    }
+
+    // Draw nodes
+    DATA.nodes.forEach(function(nodeId) {
+      var pos = layout.positions[nodeId];
+      var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'node-group');
+      g.setAttribute('data-node', nodeId);
+
+      var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', pos.x - NODE_W / 2);
+      rect.setAttribute('y', pos.y - NODE_H / 2);
+      rect.setAttribute('width', NODE_W);
+      rect.setAttribute('height', NODE_H);
+      rect.setAttribute('class', 'node-rect');
+      g.appendChild(rect);
+
+      var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', pos.x);
+      text.setAttribute('y', pos.y - 4);
+      text.setAttribute('class', 'node-label');
+      text.textContent = nodeId;
+      g.appendChild(text);
+
+      // Node type from handshake or edges
+      var nodeType = '';
+      if (DATA.handshakes && DATA.handshakes[nodeId] && DATA.handshakes[nodeId].nodeType) {
+        nodeType = DATA.handshakes[nodeId].nodeType;
+      }
+      if (nodeType) {
+        var typeLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        typeLabel.setAttribute('x', pos.x);
+        typeLabel.setAttribute('y', pos.y + 14);
+        typeLabel.setAttribute('class', 'node-type-label');
+        typeLabel.textContent = nodeType;
+        g.appendChild(typeLabel);
+      }
+
+      g.addEventListener('click', function() { selectNode(nodeId); });
+      nodeGroup.appendChild(g);
+    });
+
+    // Slider setup
+    var maxStep = DATA.history ? DATA.history.length : 0;
+    var slider = document.getElementById('slider');
+    slider.max = maxStep;
+    slider.value = 0;
+
+    // Event listeners
+    slider.addEventListener('input', function() { goToStep(parseInt(this.value)); });
+    document.getElementById('btnPrev').addEventListener('click', function() { goToStep(currentStep - 1); });
+    document.getElementById('btnNext').addEventListener('click', function() { goToStep(currentStep + 1); });
+    document.getElementById('btnReset').addEventListener('click', function() { goToStep(0); });
+    document.getElementById('btnEnd').addEventListener('click', function() { goToStep(maxStep); });
+    document.getElementById('btnPlayPause').addEventListener('click', togglePlay);
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+      switch(e.key) {
+        case 'ArrowLeft': case 'h': e.preventDefault(); goToStep(currentStep - 1); break;
+        case 'ArrowRight': case 'l': e.preventDefault(); goToStep(currentStep + 1); break;
+        case ' ': e.preventDefault(); togglePlay(); break;
+        case 'r': case 'Home': e.preventDefault(); goToStep(0); break;
+        case 'e': case 'End': e.preventDefault(); goToStep(maxStep); break;
+      }
+    });
+  }
+
+  // ── Navigate to step ──
+  function goToStep(step) {
+    var maxStep = DATA.history ? DATA.history.length : 0;
+    step = Math.max(0, Math.min(step, maxStep));
+    currentStep = step;
+
+    var slider = document.getElementById('slider');
+    slider.value = step;
+    document.getElementById('stepDisplay').textContent = step + ' / ' + maxStep;
+
+    // Update button states
+    document.getElementById('btnPrev').disabled = (step === 0);
+    document.getElementById('btnReset').disabled = (step === 0);
+    document.getElementById('btnNext').disabled = (step === maxStep);
+    document.getElementById('btnEnd').disabled = (step === maxStep);
+
+    // Stop autoplay if at end
+    if (step >= maxStep && playing) togglePlay();
+
+    renderGraph();
+
+    // Update panel if a node is selected
+    if (selectedNode) renderPanel(selectedNode);
+  }
+
+  // ── Render graph at current step ──
+  function renderGraph() {
+    var statuses = getNodeStatuses(currentStep);
+    var visitedEdges = getVisitedEdges(currentStep);
+
+    // Update node colors
+    var nodeGroups = svgEl.querySelectorAll('.node-group');
+    nodeGroups.forEach(function(g) {
+      var nodeId = g.getAttribute('data-node');
+      var status = statuses[nodeId] || 'pending';
+      var colors = nodeColors(status);
+      var rect = g.querySelector('.node-rect');
+      rect.setAttribute('fill', colors.fill);
+      rect.setAttribute('stroke', colors.stroke);
+    });
+
+    // Update edge colors
+    var edges = svgEl.querySelectorAll('.edge-line');
+    edges.forEach(function(line) {
+      var from = line.getAttribute('data-from');
+      var to = line.getAttribute('data-to');
+      var isVisited = visitedEdges.some(function(e) { return e.from === from && e.to === to; });
+      if (isVisited) {
+        line.classList.add('edge-visited');
+        line.setAttribute('marker-end', 'url(#arrowhead-visited)');
+      } else {
+        line.classList.remove('edge-visited');
+        line.setAttribute('marker-end', 'url(#arrowhead)');
+      }
+    });
+  }
+
+  // ── Select a node ──
+  function selectNode(nodeId) {
+    selectedNode = nodeId;
+
+    // Highlight
+    var nodeGroups = svgEl.querySelectorAll('.node-group');
+    nodeGroups.forEach(function(g) {
+      g.classList.toggle('node-selected', g.getAttribute('data-node') === nodeId);
+    });
+
+    renderPanel(nodeId);
+  }
+
+  // ── Render details panel ──
+  function renderPanel(nodeId) {
+    var hs = DATA.handshakes ? DATA.handshakes[nodeId] : null;
+    var statuses = getNodeStatuses(currentStep);
+    var status = statuses[nodeId] || 'pending';
+
+    var html = '';
+    html += '<h2>' + esc(nodeId) + '</h2>';
+
+    // Status badge
+    var badgeClass = 'badge-pending';
+    var badgeText = status;
+    if (status === 'current') { badgeClass = 'badge-active'; badgeText = 'active'; }
+    else if (status === 'visited') { badgeClass = 'badge-completed'; badgeText = 'visited'; }
+    html += '<span class="badge ' + badgeClass + '">' + badgeText + '</span>';
+
+    if (hs) {
+      // Handshake info
+      html += '<div class="detail-section">';
+      if (hs.status) html += '<div class="kv"><span class="k">Status</span><span class="v">' + esc(hs.status) + '</span></div>';
+      if (hs.nodeType) html += '<div class="kv"><span class="k">Type</span><span class="v">' + esc(hs.nodeType) + '</span></div>';
+      if (hs.runId) html += '<div class="kv"><span class="k">Run</span><span class="v">' + esc(hs.runId) + '</span></div>';
+      if (hs.verdict) {
+        var vc = hs.verdict === 'PASS' ? 'badge-pass' : (hs.verdict === 'FAIL' ? 'badge-fail' : 'badge-iterate');
+        html += '<div class="kv"><span class="k">Verdict</span><span class="v"><span class="badge ' + vc + '">' + esc(hs.verdict) + '</span></span></div>';
+      }
+      if (hs.timestamp) html += '<div class="kv"><span class="k">Timestamp</span><span class="v">' + esc(hs.timestamp) + '</span></div>';
+      html += '</div>';
+
+      // Summary
+      if (hs.summary) {
+        html += '<h3>Summary</h3>';
+        html += '<div class="summary-text">' + esc(hs.summary) + '</div>';
+      }
+
+      // Findings
+      if (hs.findings) {
+        html += '<h3>Findings</h3>';
+        html += '<div class="findings-bar">';
+        html += '<span class="fc">\uD83D\uDD34 ' + (hs.findings.critical || 0) + ' critical</span>';
+        html += '<span class="fw">\uD83D\uDFE1 ' + (hs.findings.warning || 0) + ' warning</span>';
+        html += '<span class="fs">\uD83D\uDD35 ' + (hs.findings.suggestion || 0) + ' suggestion</span>';
+        html += '</div>';
+      }
+
+      // Artifacts
+      if (hs.artifacts && hs.artifacts.length > 0) {
+        html += '<h3>Artifacts</h3>';
+        html += '<ul class="artifact-list">';
+        hs.artifacts.forEach(function(a) {
+          html += '<li><span class="art-type">' + esc(a.type || '?') + '</span> ' + esc(a.path || a.description || '') + '</li>';
+        });
+        html += '</ul>';
+      }
+
+      // Loopback
+      if (hs.loopback) {
+        html += '<h3>Loopback</h3>';
+        html += '<div class="detail-section">';
+        html += '<div class="kv"><span class="k">From</span><span class="v">' + esc(hs.loopback.from || '') + '</span></div>';
+        html += '<div class="kv"><span class="k">Iteration</span><span class="v">' + (hs.loopback.iteration || 0) + '</span></div>';
+        if (hs.loopback.reason) {
+          html += '<div class="kv"><span class="k">Reason</span><span class="v">' + esc(hs.loopback.reason) + '</span></div>';
+        }
+        html += '</div>';
+      }
+
+      // Detail files
+      if (hs.details && hs.details.length > 0) {
+        html += '<h3>Run Details</h3>';
+        hs.details.forEach(function(d) {
+          html += '<div class="detail-file">';
+          html += '<div class="detail-file-header">' + esc(d.run + '/' + d.file) + '</div>';
+          html += '<div class="detail-file-body">' + esc(d.content || '') + '</div>';
+          html += '</div>';
+        });
+      }
+    } else {
+      html += '<div class="panel-empty" style="padding:16px 0">No handshake data for this node</div>';
+    }
+
+    // History entries for this node
+    var nodeHistory = [];
+    if (DATA.history) {
+      DATA.history.forEach(function(h, i) {
+        if (h.nodeId === nodeId) nodeHistory.push({ entry: h, index: i });
+      });
+    }
+    if (nodeHistory.length > 0) {
+      html += '<h3>History (' + nodeHistory.length + ' visit' + (nodeHistory.length > 1 ? 's' : '') + ')</h3>';
+      html += '<div class="detail-section">';
+      nodeHistory.forEach(function(item) {
+        var isCurrent = (item.index < currentStep);
+        var color = isCurrent ? 'var(--green)' : 'var(--text-dim)';
+        html += '<div class="kv"><span class="k" style="color:' + color + '">Step ' + (item.index + 1) + '</span>';
+        html += '<span class="v">' + esc(item.entry.runId || '') + '</span></div>';
+      });
+      html += '</div>';
+    }
+
+    panelEl.innerHTML = html;
+  }
+
+  // ── Autoplay ──
+  function togglePlay() {
+    playing = !playing;
+    var btn = document.getElementById('btnPlayPause');
+    btn.textContent = playing ? '\u23F8' : '\u25B6';
+    btn.classList.toggle('active', playing);
+
+    if (playing) {
+      var maxStep = DATA.history ? DATA.history.length : 0;
+      if (currentStep >= maxStep) goToStep(0);
+      scheduleNext();
+    } else {
+      clearTimeout(playTimer);
+      playTimer = null;
+    }
+  }
+
+  function scheduleNext() {
+    if (!playing) return;
+    var speed = parseInt(document.getElementById('speedSelect').value) || 1000;
+    playTimer = setTimeout(function() {
+      if (!playing) return;
+      var maxStep = DATA.history ? DATA.history.length : 0;
+      if (currentStep < maxStep) {
+        goToStep(currentStep + 1);
+        scheduleNext();
+      } else {
+        togglePlay();
+      }
+    }, speed);
+  }
+
+  // ── Utils ──
+  function esc(s) {
+    if (typeof s !== 'string') s = String(s);
+    var el = document.createElement('span');
+    el.textContent = s;
+    return el.innerHTML;
+  }
+
+  // ── Boot ──
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

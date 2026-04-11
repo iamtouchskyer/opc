@@ -16,6 +16,7 @@ export function getMarker(nodeId, state) {
 
 export function cmdViz(args) {
   const flow = getFlag(args, "flow");
+  // Read-only command: no resolveDir guard needed (viz reads state but never writes)
   const dir = getFlag(args, "dir");
   const jsonOut = args.includes("--json");
 
@@ -74,6 +75,7 @@ export function cmdViz(args) {
 // Outputs flow-state + handshakes as JSON for the HTML viewer.
 
 export function cmdReplayData(args) {
+  // Read-only command: no resolveDir guard needed (reads state + handshakes, never writes)
   const dir = getFlag(args, "dir", ".harness");
 
   const statePath = join(dir, "flow-state.json");

@@ -1134,8 +1134,8 @@ assert_field_eq "vc unknown tpl" "$OUT" "valid" "false"
 assert_contains "vc unknown msg" "$OUT" "unknown flow"
 
 echo ""
-echo "--- 15.3: validate-context unknown rule name ---"
-# Create external flow with unknown rule
+echo "--- 15.3: validate-context unknown rule name (rejected at load-time) ---"
+# Create external flow with unknown rule — now rejected at load-time by contextSchema validation
 mkdir -p "$HOME/.claude/flows"
 cat > "$HOME/.claude/flows/bad-rule.json" << 'FL'
 {
@@ -1147,11 +1147,12 @@ cat > "$HOME/.claude/flows/bad-rule.json" << 'FL'
   "opc_compat": ">=0.5"
 }
 FL
-rm -rf .h-vc1 && $HARNESS init --flow bad-rule --dir .h-vc1 >/dev/null 2>/dev/null
-echo '{"x": "hello"}' > .h-vc1/flow-context.json
-OUT=$($HARNESS validate-context --flow bad-rule --node s1 --dir .h-vc1 2>/dev/null)
-assert_field_eq "unknown rule" "$OUT" "valid" "false"
-assert_contains "unknown rule msg" "$OUT" "unknown rule"
+# Flow should fail to load due to contextSchema validation — init returns unknown template
+OUT=$($HARNESS init --flow bad-rule --dir .h-vc1 2>/dev/null || true)
+assert_contains "unknown rule rejected at load" "$OUT" "unknown flow template"
+# validate-context also returns unknown since the flow never loaded
+OUT=$($HARNESS validate-context --flow bad-rule --node s1 --dir .h-vc1 2>/dev/null || true)
+assert_contains "unknown rule msg" "$OUT" "unknown flow"
 rm -f "$HOME/.claude/flows/bad-rule.json"
 
 # ═══════════════════════════════════════════════════════════════
