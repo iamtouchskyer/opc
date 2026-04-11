@@ -68,8 +68,9 @@ export function cmdInit(args) {
   }
 
   const statePath = join(dir, "flow-state.json");
-  if (existsSync(statePath)) {
-    console.log(JSON.stringify({ created: false, error: "flow-state.json already exists" }));
+  const force = args.includes("--force");
+  if (existsSync(statePath) && !force) {
+    console.log(JSON.stringify({ created: false, error: "flow-state.json already exists (use --force to overwrite)" }));
     return;
   }
 
@@ -217,7 +218,12 @@ export function cmdTransition(args) {
   const statePath = join(dir, "flow-state.json");
   let state;
   if (existsSync(statePath)) {
-    state = JSON.parse(readFileSync(statePath, "utf8"));
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch (err) {
+      console.log(JSON.stringify({ allowed: false, reason: `corrupt flow-state.json: ${err.message}` }));
+      return;
+    }
     if (state.currentNode !== from) {
       console.log(JSON.stringify({ allowed: false, reason: `currentNode is '${state.currentNode}', not '${from}' — cannot transition from a node you are not at` }));
       return;

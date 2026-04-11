@@ -209,13 +209,24 @@ export function cmdCompleteTick(args) {
     return;
   }
 
+  if (status === "blocked" && (!description || description.trim().length === 0)) {
+    console.log(JSON.stringify({ completed: false, errors: ["blocked status requires --description explaining the blocker"] }));
+    return;
+  }
+
   const statePath = join(dir, "loop-state.json");
   if (!existsSync(statePath)) {
     console.log(JSON.stringify({ completed: false, errors: ["loop-state.json not found"] }));
     return;
   }
 
-  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.log(JSON.stringify({ completed: false, errors: [`corrupt loop-state.json: ${err.message}`] }));
+    return;
+  }
   const errors = [];
   const warnings = [];
 
@@ -388,11 +399,17 @@ export function cmdCompleteTick(args) {
     return;
   }
 
-  // Determine next unit
-  const currentIdx = allUnits.findIndex(u => u.id === unit);
-  const nextUnit = currentIdx >= 0 && currentIdx < allUnits.length - 1
-    ? allUnits[currentIdx + 1].id
-    : null;
+  // Only advance to next unit on successful completion
+  let nextUnit = null;
+  if (status === "completed") {
+    const currentIdx = allUnits.findIndex(u => u.id === unit);
+    nextUnit = currentIdx >= 0 && currentIdx < allUnits.length - 1
+      ? allUnits[currentIdx + 1].id
+      : null;
+  } else {
+    // blocked/failed: stay on current unit (retry next tick)
+    nextUnit = unit;
+  }
 
   // Update state
   const newTick = (state.tick || 0) + 1;
@@ -445,7 +462,13 @@ export function cmdNextTick(args) {
     return;
   }
 
-  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.log(JSON.stringify({ ready: false, terminate: true, reason: `corrupt loop-state.json: ${err.message}` }));
+    return;
+  }
   const warnings = [];
 
   // Tamper: writer chain
