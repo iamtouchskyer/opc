@@ -1,7 +1,7 @@
 // Flow transition commands: transition, validate-chain, finalize
-// Depends on: flow-templates.mjs, flow-core.mjs (validateHandshakeData), viz-commands.mjs, util.mjs
+// Depends on: flow-templates.mjs, flow-core.mjs (validateHandshakeData), viz-commands.mjs, util.mjs, file-lock.mjs
 
-import { readFileSync, readdirSync, mkdirSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { FLOW_TEMPLATES } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
@@ -10,6 +10,7 @@ import {
   getFlag, resolveDir, atomicWriteSync,
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
+import { lockFile } from "./file-lock.mjs";
 
 // ─── transition ─────────────────────────────────────────────────
 
@@ -38,6 +39,21 @@ export function cmdTransition(args) {
   }
 
   const statePath = join(dir, "flow-state.json");
+
+  // Acquire lock
+  const lock = lockFile(statePath, { command: "transition" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ allowed: false, reason: "could not acquire lock", holder: lock.holder }));
+    return;
+  }
+  try {
+    _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath);
+  } finally {
+    lock.release();
+  }
+}
+
+function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath) {
   let state;
   if (existsSync(statePath)) {
     try {
@@ -228,7 +244,7 @@ export function cmdTransition(args) {
       artifacts: [],
       findings: null,
     };
-    writeFileSync(join(gateDir, "handshake.json"), JSON.stringify(gateHandshake, null, 2) + "\n");
+    atomicWriteSync(join(gateDir, "handshake.json"), JSON.stringify(gateHandshake, null, 2) + "\n");
   }
 
   state.history.push({ nodeId: to, runId, timestamp: new Date().toISOString() });
@@ -356,13 +372,30 @@ export function cmdFinalize(args) {
     return;
   }
 
-  // --strict: validate entire chain before finalizing
+  // --strict: validate ALL nodes have valid handshakes before finalizing
   if (strict) {
     const chainErrors = [];
-    for (const entry of state.history) {
-      const hp = join(dir, "nodes", entry.nodeId, "handshake.json");
-      if (!existsSync(hp) && entry.nodeId !== currentNode) {
-        chainErrors.push(`missing handshake for '${entry.nodeId}'`);
+    const allNodes = template.nodes;
+    for (const nodeId of allNodes) {
+      const hp = join(dir, "nodes", nodeId, "handshake.json");
+      if (!existsSync(hp)) {
+        chainErrors.push(`missing handshake for '${nodeId}'`);
+        continue;
+      }
+      let hsData;
+      try {
+        hsData = JSON.parse(readFileSync(hp, "utf8"));
+      } catch (parseErr) {
+        chainErrors.push(`cannot parse handshake for '${nodeId}': ${parseErr.message}`);
+        continue;
+      }
+      const { errors: hsErrors } = validateHandshakeData(hsData, {
+        checkEvidence: true,
+        softEvidence: !!(template.softEvidence),
+        baseDir: join(dir, "nodes", nodeId),
+      });
+      for (const e of hsErrors) {
+        chainErrors.push(`${nodeId}: ${e}`);
       }
     }
     if (chainErrors.length > 0) {
