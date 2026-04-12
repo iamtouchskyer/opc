@@ -27,7 +27,7 @@ Do NOT use for single-cycle tasks (a code review, a single bug fix, a brainstorm
 │         └─────────┘    └───────────┘                │
 │              │                                       │
 │         Each tick runs one OPC flow                  │
-│         (build-verify, quick-review, etc.)           │
+│         (build-verify, review, etc.)           │
 │                                                      │
 │              ▼                                       │
 │         next_unit = null ──→ AUTO-TERMINATE          │
@@ -36,7 +36,7 @@ Do NOT use for single-cycle tasks (a code review, a single bug fix, a brainstorm
 
 ## Terminology
 
-- **Flow** = single-round node graph (`build-verify`, `quick-review`, etc.). Runs within one tick.
+- **Flow** = single-round node graph (`build-verify`, `review`, etc.). Runs within one tick.
 - **Runbook** = multi-round autonomous procedure. Defines the unit sequence for an entire task across many ticks.
 
 ## Runbook Discovery
@@ -152,7 +152,7 @@ Each tick follows this sequence:
 5. Determine unit type → select OPC flow template:
    - spec/design units      → discussion protocol (no flow, direct execution)
    - implement units        → build-verify flow OR direct implementation
-   - review units           → quick-review flow with independent subagents
+   - review units           → review flow with independent subagents
    - fix units              → direct implementation targeting review findings
    - e2e-verify units       → executor-protocol (orchestrator runs directly)
    - accept units           → pre-release flow

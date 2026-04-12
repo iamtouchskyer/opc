@@ -195,7 +195,7 @@ echo ""
 echo "── 5.1: release when lock file already deleted"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 OUT=$($HARNESS skip --dir . 2>/dev/null)
 assert_not_contains "$(ls)" "flow-state.json.lock" "5.1a: no lock file after skip completes"
 
@@ -203,7 +203,7 @@ echo ""
 echo "── 5.2: stale lock from dead PID gets cleaned up"
 D2=$(mktemp -d)
 cd "$D2"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 echo '{"pid": 99999, "timestamp": "2024-01-01T00:00:00Z", "command": "other"}' > flow-state.json.lock
 OUT=$($HARNESS skip --dir . 2>/dev/null)
 assert_contains "$OUT" "skipped|next" "5.2a: stale lock from dead PID cleaned up, skip succeeds"
@@ -297,17 +297,17 @@ echo ""
 echo "── 8.2: transition stderr viz output contains markers"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --entry code-review --dir . > /dev/null 2>&1
-mkdir -p nodes/code-review
+$HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
+mkdir -p nodes/review
 # Must include ALL required fields including runId and artifacts for pre-transition check
-cat > nodes/code-review/handshake.json << 'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+cat > nodes/review/handshake.json << 'EOF'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 EOF
 sleep 2
 STDERR_FILE=$(mktemp)
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2> "$STDERR_FILE"
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2> "$STDERR_FILE"
 STDERR=$(cat "$STDERR_FILE")
-assert_contains "$STDERR" "code-review|gate" "8.2a: transition stderr contains flow node names"
+assert_contains "$STDERR" "review|gate" "8.2a: transition stderr contains flow node names"
 rm -f "$STDERR_FILE"
 cd "$ORIG_DIR"
 rm -rf "$D"
@@ -448,7 +448,7 @@ echo "── 12.3: replay via CLI entry point"
 # NOTE: the CLI command is "replay", NOT "replay-data"
 D2=$(mktemp -d)
 cd "$D2"
-$HARNESS init --flow quick-review --entry code-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
 OUT=$(node "$HOME/.claude/skills/opc/bin/opc-harness.mjs" replay --dir . 2>/dev/null)
 assert_contains "$OUT" "flowTemplate|nodes|history" "12.3a: replay via CLI entry produces output"
 cd "$ORIG_DIR"
@@ -506,7 +506,7 @@ echo ""
 echo "── 15.1: lock file acquisition + release cycle is clean"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 OUT=$($HARNESS skip --dir . 2>/dev/null)
 assert_contains "$OUT" "skipped|next" "15.1a: skip acquires and releases lock cleanly"
 if [ ! -f "flow-state.json.lock" ]; then

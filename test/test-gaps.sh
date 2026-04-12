@@ -200,7 +200,7 @@ assert_contains "non-terminal msg" "$OUT" "not a terminal"
 
 echo ""
 echo "--- 4.4: finalize with missing handshake at terminal ---"
-rm -rf .h-fin4 && $HARNESS init --flow quick-review --entry gate --dir .h-fin4 >/dev/null 2>/dev/null
+rm -rf .h-fin4 && $HARNESS init --flow review --entry gate --dir .h-fin4 >/dev/null 2>/dev/null
 # gate PASS→null so it's terminal, but no handshake.json
 OUT=$($HARNESS finalize --dir .h-fin4 2>/dev/null)
 assert_field_eq "finalize no hs" "$OUT" "finalized" "false"
@@ -359,7 +359,7 @@ echo ""
 echo "--- 6.8: ls with nested harness ---"
 rm -rf .harness && mkdir -p .harness/subflow
 # Create a nested flow-state
-$HARNESS init --flow quick-review --dir .harness/subflow >/dev/null 2>/dev/null
+$HARNESS init --flow review --dir .harness/subflow >/dev/null 2>/dev/null
 OUT=$($HARNESS ls --base . 2>/dev/null)
 assert_contains "ls finds nested" "$OUT" "subflow"
 
@@ -1122,7 +1122,7 @@ VERDICT: PASS FINDINGS[2]
 Reasoning: user input unescaped
 🔵 Minor — style.css:1 — use variables
 EVAL
-OUT=$($HARNESS report .h-rp1 --mode quick-review --task "test")
+OUT=$($HARNESS report .h-rp1 --mode review --task "test")
 # Both findings should be counted (both default to status=accepted)
 assert_contains "critical counted" "$OUT" '"critical": 1'
 assert_contains "suggestion counted" "$OUT" '"suggestion": 1'

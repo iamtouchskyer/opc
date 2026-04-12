@@ -158,7 +158,7 @@ echo ""
 echo "── 4.1: corrupt lock file JSON is treated as stale and cleaned"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 # Write corrupt lock file (not valid JSON)
 echo "THIS IS NOT JSON" > flow-state.json.lock
 # skip should still succeed — corrupt lock treated as stale, removed, then acquired
@@ -185,9 +185,9 @@ D=$(mktemp -d)
 cd "$D"
 # Create a dir with corrupt flow-state.json
 echo "NOT JSON" > flow-state.json
-OUT=$($HARNESS viz --flow quick-review --dir . 2>/dev/null)
+OUT=$($HARNESS viz --flow review --dir . 2>/dev/null)
 # Should still display the graph (state=null, all markers are ○)
-assert_contains "$OUT" "code-review" "5.1a: viz shows nodes despite corrupt state"
+assert_contains "$OUT" "review" "5.1a: viz shows nodes despite corrupt state"
 assert_contains "$OUT" "gate" "5.1b: viz shows gate node"
 cd "$ORIG_DIR"
 rm -rf "$D"
@@ -202,16 +202,16 @@ echo ""
 echo "── 6.1: replay-data with unreadable file in run_* dir"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --entry code-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
 # replay only scans run_* dirs when handshake.json exists for the node
-mkdir -p nodes/code-review
-cat > nodes/code-review/handshake.json << 'HSEOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"test","timestamp":"2025-01-01T00:00:00Z","artifacts":[]}
+mkdir -p nodes/review
+cat > nodes/review/handshake.json << 'HSEOF'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"test","timestamp":"2025-01-01T00:00:00Z","artifacts":[]}
 HSEOF
-mkdir -p nodes/code-review/run_1
-echo "good content" > nodes/code-review/run_1/eval.md
+mkdir -p nodes/review/run_1
+echo "good content" > nodes/review/run_1/eval.md
 # Create a directory named "bad.md" — causes EISDIR on readFileSync (L118 catch)
-mkdir -p nodes/code-review/run_1/bad.md
+mkdir -p nodes/review/run_1/bad.md
 OUT=$($HARNESS replay --dir . 2>/dev/null)
 assert_contains "$OUT" "flowTemplate" "6.1a: replay still produces output despite unreadable file"
 # The good eval.md should still be collected in details
@@ -261,7 +261,7 @@ echo ""
 echo "── 8.1: skip with live-PID lock file returns error"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 # Create lock with current PID (alive) — skip can't acquire
 echo "{\"pid\": $$, \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"command\": \"test\"}" > flow-state.json.lock
 OUT=$($HARNESS skip --dir . 2>/dev/null || true)
@@ -371,8 +371,8 @@ echo ""
 echo "── 13.1: finalize with non-completed handshake status"
 D=$(mktemp -d)
 cd "$D"
-# Use quick-review: code-review → gate (gate PASS → null = terminal)
-$HARNESS init --flow quick-review --entry gate --dir . > /dev/null 2>&1
+# Use review: review → gate (gate PASS → null = terminal)
+$HARNESS init --flow review --entry gate --dir . > /dev/null 2>&1
 mkdir -p nodes/gate
 cat > nodes/gate/handshake.json << 'EOF'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"in_progress","summary":"not done yet","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}

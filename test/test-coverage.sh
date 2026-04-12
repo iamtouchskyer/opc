@@ -423,7 +423,7 @@ cat > .h-report/.harness/evaluation-wave-1-perf.md << 'EVAL'
 # Performance Review
 VERDICT: PASS FINDINGS[0]
 EVAL
-OUT=$($HARNESS report .h-report --mode quick-review --task "test")
+OUT=$($HARNESS report .h-report --mode review --task "test")
 assert_contains "has agents" "$OUT" "agents"
 assert_contains "has summary" "$OUT" "summary"
 assert_contains "has timestamp" "$OUT" "timestamp"
@@ -438,13 +438,13 @@ VERDICT: PASS FINDINGS[1]
 🟡 Warning — api.js:10 — rate limiting needed
 Reasoning: no rate limit on public endpoint
 EVAL
-OUT=$($HARNESS report .h-report2 --mode quick-review --task "test")
+OUT=$($HARNESS report .h-report2 --mode review --task "test")
 assert_contains "evaluator role" "$OUT" "evaluator"
 assert_contains "warning count" "$OUT" "warning"
 
 echo ""
 echo "--- CG-9.3: Report coordinator counts ---"
-OUT=$($HARNESS report .h-report --mode quick-review --task "test" --challenged 2 --dismissed 1 --downgraded 0)
+OUT=$($HARNESS report .h-report --mode review --task "test" --challenged 2 --dismissed 1 --downgraded 0)
 assert_contains "challenged" "$OUT" "challenged"
 
 # ═══════════════════════════════════════════════════════════════

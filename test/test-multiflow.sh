@@ -91,14 +91,14 @@ assert_contains "has flows array" "$OUT" "flows"
 
 echo ""
 echo "--- 1.2: ls finds flow in .harness-xxx/ ---"
-$HARNESS init --flow quick-review --dir .harness-feature >/dev/null 2>/dev/null
+$HARNESS init --flow review --dir .harness-feature >/dev/null 2>/dev/null
 OUT=$($HARNESS ls --base .)
 assert_contains "finds .harness-feature" "$OUT" ".harness-feature"
 
 echo ""
 echo "--- 1.3: ls finds flow in .harness/sub/ (named harness) ---"
 mkdir -p .harness/my-feature
-$HARNESS init --flow quick-review --dir .harness/my-feature >/dev/null 2>/dev/null
+$HARNESS init --flow review --dir .harness/my-feature >/dev/null 2>/dev/null
 OUT=$($HARNESS ls --base .)
 assert_contains "finds .harness/my-feature" "$OUT" "my-feature"
 

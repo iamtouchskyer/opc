@@ -24,7 +24,7 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
                               └──────── ITERATE/FAIL ────────┘
 ```
 
-1. **Task inference** — reads your request, picks a flow template (quick-review, build-verify, full-stack, pre-release), and enters at the right node.
+1. **Task inference** — reads your request, picks a flow template (review, build-verify, full-stack, pre-release), and enters at the right node.
 
 2. **Typed nodes** — each node has a type (discussion, build, review, execute, gate) with specific protocols. Build nodes produce commits. Review nodes dispatch parallel subagents. Gate nodes compute verdicts from code, not LLM judgment.
 
@@ -78,7 +78,7 @@ cp -r opc ~/.claude/skills/opc
 
 | Template | Nodes | When |
 |----------|-------|------|
-| **quick-review** | code-review → gate | PR review, audit, "find problems" |
+| **review** | code-review → gate | PR review, audit, "find problems" |
 | **build-verify** | build → code-review → test-verify → gate | "implement X", "fix bug Y" |
 | **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
 | **pre-release** | acceptance → audit → e2e → gates | "verify before release" |

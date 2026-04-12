@@ -35,8 +35,8 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 
 | Task says... | Flow template | Default entry |
 |---|---|---|
-| "review", "audit", "check", "before we merge", "找问题", "开源前看看" | quick-review | code-review |
-| "analyze", "diagnose", "what's wrong with", "分析" | quick-review | code-review |
+| "review", "audit", "check", "before we merge", "找问题", "开源前看看" | review | review |
+| "analyze", "diagnose", "what's wrong with", "分析" | review | review |
 | "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | build-verify | build |
 | "brainstorm", "explore options", "what are the approaches", "有什么方案" | build-verify | build |
 | "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | build-verify | build |
@@ -57,7 +57,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 
 **Priority rules:**
 - `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: first check `.opc/runbooks/` for a matching runbook, otherwise decompose task into units. Initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
-- `/opc <role> [role...]` without a task = review of current codebase using quick-review flow with named roles.
+- `/opc <role> [role...]` without a task = review of current codebase using review flow with named roles.
 - `/opc` with no arguments = prompt user to describe their task.
 - If task matches multiple rows, prefer the flow that includes build — code changes must precede review.
 
@@ -89,12 +89,14 @@ Equivalent to v0.4.x behavior. Used as internal fallback only.
 | evaluate | review | [selected roles] | role-evaluator-prompt.md |
 | deliver | build | — | commit + report |
 
-### quick-review
+### review
 
 | Node | Type | Agents | Protocol |
 |------|------|--------|----------|
-| code-review | review | [selected roles] | role-evaluator-prompt.md |
+| review | review | [selected roles] | role-evaluator-prompt.md |
 | gate | gate | — | gate-protocol.md |
+
+Gate loopback: FAIL/ITERATE → review (multi-round with prior findings as context). Review is not limited to code — it evaluates any artifact: architecture proposals, documents, strategies, products.
 
 ### build-verify
 

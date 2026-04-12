@@ -21,14 +21,14 @@ export const FLOW_TEMPLATES = {
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 20, maxNodeReentry: 5 },
     nodeTypes: { design: "discussion", plan: "build", build: "build", evaluate: "review", deliver: "execute" },
   },
-  "quick-review": {
-    nodes: ["code-review", "gate"],
+  "review": {
+    nodes: ["review", "gate"],
     edges: {
-      "code-review": { PASS: "gate" },
-      gate:          { PASS: null },
+      review: { PASS: "gate" },
+      gate:   { PASS: null, FAIL: "review", ITERATE: "review" },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
-    nodeTypes: { "code-review": "review", gate: "gate" },
+    nodeTypes: { review: "review", gate: "gate" },
   },
   "build-verify": {
     nodes: ["build", "code-review", "test-verify", "gate"],

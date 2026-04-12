@@ -192,15 +192,15 @@ echo ""
 echo "── 6: --strict rejects missing handshake for visited node"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-# Write handshake for code-review (non-gate, needed for transition)
-write_handshake "." "code-review" "review" "completed"
-# Transition code-review → gate
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+# Write handshake for review node (non-gate, needed for transition)
+write_handshake "." "review" "review" "completed"
+# Transition review → gate
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 # Write completed handshake for gate (terminal node)
 write_handshake "." "gate" "gate" "completed"
-# Now delete code-review handshake to simulate missing
-rm -f nodes/code-review/handshake.json
+# Now delete review handshake to simulate missing
+rm -f nodes/review/handshake.json
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "False" "6a: --strict rejects with missing handshake"
 assert_contains "$OUT" "missing handshake" "6b: error mentions missing handshake"
@@ -214,16 +214,16 @@ echo ""
 echo "── 7: --strict rejects invalid handshake content"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-# Write valid handshake for code-review for transition
-write_handshake "." "code-review" "review" "completed"
-# Transition code-review → gate
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
-# Now overwrite code-review handshake with invalid data (missing nodeType)
-mkdir -p nodes/code-review
-cat > nodes/code-review/handshake.json << 'EOF'
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+# Write valid handshake for review node for transition
+write_handshake "." "review" "review" "completed"
+# Transition review → gate
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
+# Now overwrite review handshake with invalid data (missing nodeType)
+mkdir -p nodes/review
+cat > nodes/review/handshake.json << 'EOF'
 {
-  "nodeId": "code-review",
+  "nodeId": "review",
   "runId": "run_1",
   "status": "completed",
   "summary": "done",
@@ -246,11 +246,11 @@ echo ""
 echo "── 8: --strict passes when all handshakes are valid"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-# Write valid handshake for code-review
-write_handshake "." "code-review" "review" "completed"
-# Transition code-review → gate
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+# Write valid handshake for review node
+write_handshake "." "review" "review" "completed"
+# Transition review → gate
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 # Write completed handshake for gate (terminal)
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
@@ -265,11 +265,11 @@ echo ""
 echo "── 9: finalize without --strict ignores missing intermediate handshakes"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-write_handshake "." "code-review" "review" "completed"
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
-# Delete code-review handshake — should still finalize without --strict
-rm -f nodes/code-review/handshake.json
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+write_handshake "." "review" "review" "completed"
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
+# Delete review handshake — should still finalize without --strict
+rm -f nodes/review/handshake.json
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "True" "9a: finalize without --strict succeeds despite missing intermediate handshake"
@@ -283,12 +283,12 @@ echo ""
 echo "── 10: --strict rejects corrupt handshake JSON"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-write_handshake "." "code-review" "review" "completed"
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
-# Corrupt the code-review handshake
-mkdir -p nodes/code-review
-echo "NOT VALID JSON{{{{" > nodes/code-review/handshake.json
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+write_handshake "." "review" "review" "completed"
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
+# Corrupt the review handshake
+mkdir -p nodes/review
+echo "NOT VALID JSON{{{{" > nodes/review/handshake.json
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "False" "10a: --strict rejects corrupt handshake"

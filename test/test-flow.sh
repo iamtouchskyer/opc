@@ -155,7 +155,7 @@ assert_field_eq "unknown flow" "$OUT" "created" "false"
 
 echo ""
 echo "--- 2.7: Init all built-in flows ---"
-for f in build-verify quick-review full-stack pre-release legacy-linear idea-factory; do
+for f in build-verify review full-stack pre-release legacy-linear idea-factory; do
   rm -rf ".h-$f" && OUT=$($HARNESS init --flow $f --dir ".h-$f" 2>/dev/null)
   assert_field_eq "init $f" "$OUT" "created" "true"
 done
@@ -375,18 +375,18 @@ assert_contains "direct edit" "$OUT" "direct edit"
 
 echo ""
 echo "--- 4.8: maxTotalSteps limit ---"
-rm -rf .h-limit && $HARNESS init --flow quick-review --dir .h-limit >/dev/null 2>/dev/null
+rm -rf .h-limit && $HARNESS init --flow review --dir .h-limit >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-limit/flow-state.json'))
 d['totalSteps'] = d['maxTotalSteps']
 json.dump(d, open('.h-limit/flow-state.json', 'w'), indent=2)
 "
-mkdir -p .h-limit/nodes/code-review
-cat > .h-limit/nodes/code-review/handshake.json << 'HS'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+mkdir -p .h-limit/nodes/review
+cat > .h-limit/nodes/review/handshake.json << 'HS'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
-OUT=$($HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir .h-limit 2>/dev/null)
+OUT=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir .h-limit 2>/dev/null)
 assert_field_eq "steps limit" "$OUT" "allowed" "false"
 assert_contains "maxTotalSteps" "$OUT" "maxTotalSteps"
 
@@ -435,16 +435,16 @@ assert_contains "not terminal" "$OUT" "not a terminal"
 
 echo ""
 echo "--- 6.2: Finalize terminal node ---"
-# Set up quick-review: skip code-review → gate, skip gate manually
-rm -rf .h-fin && $HARNESS init --flow quick-review --dir .h-fin >/dev/null 2>/dev/null
-# Write code-review handshake
-mkdir -p .h-fin/nodes/code-review
-cat > .h-fin/nodes/code-review/handshake.json << 'HS'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+# Set up review: skip review → gate, skip gate manually
+rm -rf .h-fin && $HARNESS init --flow review --dir .h-fin >/dev/null 2>/dev/null
+# Write review handshake
+mkdir -p .h-fin/nodes/review
+cat > .h-fin/nodes/review/handshake.json << 'HS'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
 sleep 1
 # Transition to gate
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir .h-fin >/dev/null 2>/dev/null
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir .h-fin >/dev/null 2>/dev/null
 # Write gate handshake
 mkdir -p .h-fin/nodes/gate
 cat > .h-fin/nodes/gate/handshake.json << 'HS'
@@ -470,12 +470,12 @@ assert_contains "already note" "$OUT" "already"
 
 echo ""
 echo "--- 6.4: Finalize --strict with missing handshake ---"
-rm -rf .h-strict && $HARNESS init --flow quick-review --entry gate --dir .h-strict >/dev/null 2>/dev/null
+rm -rf .h-strict && $HARNESS init --flow review --entry gate --dir .h-strict >/dev/null 2>/dev/null
 # Add a fake history entry with missing handshake
 python3 -c "
 import json
 d = json.load(open('.h-strict/flow-state.json'))
-d['history'].append({'nodeId': 'code-review', 'runId': 'run_1', 'timestamp': '2024-01-01T00:00:00Z'})
+d['history'].append({'nodeId': 'review', 'runId': 'run_1', 'timestamp': '2024-01-01T00:00:00Z'})
 json.dump(d, open('.h-strict/flow-state.json', 'w'), indent=2)
 "
 mkdir -p .h-strict/nodes/gate
@@ -515,7 +515,7 @@ fi
 
 echo ""
 echo "--- 7.2: skip terminal node ---"
-rm -rf .h-skip2 && $HARNESS init --flow quick-review --entry gate --dir .h-skip2 >/dev/null 2>/dev/null
+rm -rf .h-skip2 && $HARNESS init --flow review --entry gate --dir .h-skip2 >/dev/null 2>/dev/null
 OUT=$($HARNESS skip --dir .h-skip2 2>/dev/null)
 assert_contains "terminal skip blocked" "$OUT" "terminal"
 

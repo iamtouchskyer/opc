@@ -57,12 +57,12 @@ echo "── 1.1: Corrupt lock file (not valid JSON) → treat as stale, acquire
 # file-lock.mjs L41-44: JSON.parse fails → catch → unlinkSync → fall through
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 # Write a corrupt .lock file
 echo "NOT-VALID-JSON{{{" > flow-state.json.lock
 # Skip should succeed (corrupt lock treated as stale)
 OUT=$($HARNESS skip --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['skipped']" "code-review" "1.1a: skip succeeds despite corrupt lock"
+assert_field_eq "$OUT" "['skipped']" "review" "1.1a: skip succeeds despite corrupt lock"
 # Lock file should be cleaned up
 if [ ! -f flow-state.json.lock ]; then
   echo "  ✅ 1.1b: corrupt lock cleaned up"; PASS=$((PASS+1))
@@ -80,7 +80,7 @@ echo "── 1.2: Lock held by OUR OWN process → timeout → acquired:false"
 # We use $$ (current shell PID) which is definitely alive and same user.
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 # Create lock owned by our shell process (definitely alive, same user)
 cat > flow-state.json.lock << EOF
 {"pid": $$, "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "command": "fake-holder"}
@@ -97,7 +97,7 @@ echo "── 1.3: Lock held by live process blocks stop too"
 # flow-escape.mjs cmdStop L138-142: lock not acquired
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 cat > flow-state.json.lock << EOF
 {"pid": $$, "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "command": "fake-holder"}
 EOF
@@ -129,15 +129,15 @@ echo "── 1.5: Lock held by live process blocks transition"
 # flow-transition.mjs cmdTransition L45-47: lock not acquired
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-mkdir -p nodes/code-review
-cat > nodes/code-review/handshake.json << 'HS'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+mkdir -p nodes/review
+cat > nodes/review/handshake.json << 'HS'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
 cat > flow-state.json.lock << EOF
 {"pid": $$, "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)", "command": "fake-holder"}
 EOF
-OUT=$($HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . 2>/dev/null || true)
+OUT=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir . 2>/dev/null || true)
 assert_contains "$OUT" "could not acquire lock" "1.5a: transition fails when lock held"
 rm -f flow-state.json.lock
 rm -rf "$D"
@@ -593,14 +593,14 @@ echo "── 5.1: getMarker — entryNode visited but not current → ✅"
 # viz-commands.mjs L13: entryNode !== currentNode → ✅
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-mkdir -p nodes/code-review
-cat > nodes/code-review/handshake.json << 'HS'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+mkdir -p nodes/review
+cat > nodes/review/handshake.json << 'HS'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
-$HARNESS transition --from code-review --to gate --verdict PASS --flow quick-review --dir . > /dev/null 2>&1
-OUT=$($HARNESS viz --flow quick-review --dir . 2>/dev/null)
-assert_contains "$OUT" "✅ code-review" "5.1a: visited entry node shows ✅"
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
+OUT=$($HARNESS viz --flow review --dir . 2>/dev/null)
+assert_contains "$OUT" "✅ review" "5.1a: visited entry node shows ✅"
 assert_contains "$OUT" "▶ gate" "5.1b: current node shows ▶"
 rm -rf "$D"
 cd /tmp

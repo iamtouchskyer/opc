@@ -574,20 +574,20 @@ echo ""
 echo "── DEF-9: replay with unreadable file in run dir"
 D=$(mktemp -d)
 cd "$D"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
-mkdir -p nodes/code-review/run_1
-echo "content" > nodes/code-review/run_1/eval.md
-cat > nodes/code-review/handshake.json << 'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+$HARNESS init --flow review --dir . > /dev/null 2>&1
+mkdir -p nodes/review/run_1
+echo "content" > nodes/review/run_1/eval.md
+cat > nodes/review/handshake.json << 'EOF'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 EOF
 # Make one file unreadable
-echo "secret" > nodes/code-review/run_1/blocked.md
-chmod 000 nodes/code-review/run_1/blocked.md 2>/dev/null || true
+echo "secret" > nodes/review/run_1/blocked.md
+chmod 000 nodes/review/run_1/blocked.md 2>/dev/null || true
 OUT=$($HARNESS replay --dir . 2>/dev/null)
-assert_contains "$OUT" "quick-review" "replay works despite unreadable file"
+assert_contains "$OUT" "review" "replay works despite unreadable file"
 # Verify the readable file IS included
 assert_contains "$OUT" "eval.md" "readable file included in replay"
-chmod 755 nodes/code-review/run_1/blocked.md 2>/dev/null || true
+chmod 755 nodes/review/run_1/blocked.md 2>/dev/null || true
 rm -rf "$D"
 cd /tmp
 

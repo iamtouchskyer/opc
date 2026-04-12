@@ -541,12 +541,12 @@ echo ""
 echo "── GAP2-21: replay with corrupt handshake"
 D21=$(mktemp -d)
 cd "$D21"
-$HARNESS init --flow quick-review --dir . > /dev/null 2>&1
+$HARNESS init --flow review --dir . > /dev/null 2>&1
 mkdir -p nodes/code-review
 echo "NOT JSON" > nodes/code-review/handshake.json
 OUT=$($HARNESS replay --dir . 2>/dev/null)
 # Should still output valid JSON with nodes, just skip the bad handshake
-assert_contains "$OUT" "quick-review" "replay outputs despite corrupt handshake"
+assert_contains "$OUT" "review" "replay outputs despite corrupt handshake"
 # The handshakes object should not contain code-review
 assert_not_contains "$OUT" '"code-review":{' "corrupt handshake silently skipped"
 rm -rf "$D21"
