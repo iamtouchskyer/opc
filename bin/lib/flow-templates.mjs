@@ -6,7 +6,7 @@ import { join } from "path";
 import { homedir } from "os";
 
 // Harness version — used for opc_compat checking
-export const HARNESS_VERSION = "0.6.0";
+export const HARNESS_VERSION = "0.7.0";
 
 export const FLOW_TEMPLATES = {
   "legacy-linear": {
@@ -31,19 +31,20 @@ export const FLOW_TEMPLATES = {
     nodeTypes: { review: "review", gate: "gate" },
   },
   "build-verify": {
-    nodes: ["build", "code-review", "test-verify", "gate"],
+    nodes: ["build", "code-review", "test-design", "test-execute", "gate"],
     edges: {
-      build:         { PASS: "code-review" },
-      "code-review": { PASS: "test-verify" },
-      "test-verify": { PASS: "gate" },
-      gate:          { PASS: null, FAIL: "build", ITERATE: "build" },
+      build:           { PASS: "code-review" },
+      "code-review":   { PASS: "test-design" },
+      "test-design":   { PASS: "test-execute" },
+      "test-execute":  { PASS: "gate" },
+      gate:            { PASS: null, FAIL: "build", ITERATE: "build" },
     },
-    limits: { maxLoopsPerEdge: 3, maxTotalSteps: 20, maxNodeReentry: 5 },
-    nodeTypes: { build: "build", "code-review": "review", "test-verify": "execute", gate: "gate" },
+    limits: { maxLoopsPerEdge: 3, maxTotalSteps: 25, maxNodeReentry: 5 },
+    nodeTypes: { build: "build", "code-review": "review", "test-design": "review", "test-execute": "execute", gate: "gate" },
   },
   "full-stack": {
     nodes: [
-      "discuss", "build", "code-review", "test-verify", "gate-test",
+      "discuss", "build", "code-review", "test-design", "test-execute", "gate-test",
       "acceptance", "gate-acceptance",
       "audit", "gate-audit",
       "e2e-user", "gate-e2e",
@@ -52,8 +53,9 @@ export const FLOW_TEMPLATES = {
     edges: {
       discuss:             { PASS: "build" },
       build:               { PASS: "code-review" },
-      "code-review":       { PASS: "test-verify" },
-      "test-verify":       { PASS: "gate-test" },
+      "code-review":       { PASS: "test-design" },
+      "test-design":       { PASS: "test-execute" },
+      "test-execute":      { PASS: "gate-test" },
       "gate-test":         { PASS: "acceptance", FAIL: "discuss", ITERATE: "discuss" },
       acceptance:          { PASS: "gate-acceptance" },
       "gate-acceptance":   { PASS: "audit", FAIL: "discuss", ITERATE: "discuss" },
@@ -64,9 +66,10 @@ export const FLOW_TEMPLATES = {
       "post-launch-sim":   { PASS: "gate-final" },
       "gate-final":        { PASS: null, FAIL: "discuss", ITERATE: "discuss" },
     },
-    limits: { maxLoopsPerEdge: 3, maxTotalSteps: 30, maxNodeReentry: 5 },
+    limits: { maxLoopsPerEdge: 3, maxTotalSteps: 35, maxNodeReentry: 5 },
     nodeTypes: {
-      discuss: "discussion", build: "build", "code-review": "review", "test-verify": "execute",
+      discuss: "discussion", build: "build", "code-review": "review",
+      "test-design": "review", "test-execute": "execute",
       "gate-test": "gate", acceptance: "review", "gate-acceptance": "gate",
       audit: "review", "gate-audit": "gate", "e2e-user": "execute", "gate-e2e": "gate",
       "post-launch-sim": "execute", "gate-final": "gate",

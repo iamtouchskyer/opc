@@ -244,7 +244,7 @@ echo ""
 echo "--- 3.6: Executor missing evidence ---"
 cat > .h-val/exec.json << 'HS'
 {
-  "nodeId": "test-verify", "nodeType": "execute", "runId": "run_1",
+  "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "summary": "ran tests", "timestamp": "2024-01-01T00:00:00Z",
   "artifacts": [{"type": "report", "path": "report.md"}]
 }
@@ -560,11 +560,11 @@ assert_field_eq "cant stop completed" "$OUT" "stopped" "false"
 echo ""
 echo "--- 7.8: goto ---"
 rm -rf .h-goto && $HARNESS init --flow build-verify --dir .h-goto >/dev/null 2>/dev/null
-OUT=$($HARNESS goto test-verify --dir .h-goto)
-assert_field_eq "goto target" "$OUT" "goto" "\"test-verify\""
+OUT=$($HARNESS goto test-design --dir .h-goto)
+assert_field_eq "goto target" "$OUT" "goto" "\"test-design\""
 CUR=$(python3 -c "import json; print(json.load(open('.h-goto/flow-state.json'))['currentNode'])")
-if [ "$CUR" = "test-verify" ]; then
-  echo "  ✅ jumped to test-verify"
+if [ "$CUR" = "test-design" ]; then
+  echo "  ✅ jumped to test-design"
   PASS=$((PASS + 1))
 else
   echo "  ❌ currentNode=$CUR"

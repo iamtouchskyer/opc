@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.6.0
+version: 0.7.0
 description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Every path ends with evaluation. /opc <task>, /opc -i <task>, /opc <role> [role...]"
 ---
 
@@ -52,7 +52,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | A vague idea or brief | First node in template |
 | A spec or design doc | build (if ∈ template) |
 | An implementation plan | build (if ∈ template) |
-| Code that needs evaluation | code-review or test-verify (if ∈ template) |
+| Code/artifact that needs evaluation | review, code-review, or test-design (if ∈ template) |
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
 **Priority rules:**
@@ -104,8 +104,11 @@ Gate loopback: FAIL/ITERATE → review (multi-round with prior findings as conte
 |------|------|--------|----------|
 | build | build | [implementer] | implementer-prompt.md |
 | code-review | review | [selected roles] | role-evaluator-prompt.md |
-| test-verify | execute | [tester] | executor-protocol.md |
+| test-design | review | [tester, + user/domain roles] | test-design-protocol.md |
+| test-execute | execute | [orchestrator] | executor-protocol.md |
 | gate | gate | — | gate-protocol.md |
+
+**test-design** is a review node where multiple roles design test cases (API tests, E2E UI tests, edge cases) without executing them. **test-execute** runs the designed test plan and captures evidence. Principle: *the person who decides what to test must not be the person who runs the tests.*
 
 ### full-stack
 
@@ -116,7 +119,8 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 | discuss | discussion | [architect, engineer, tester] | discussion-protocol.md |
 | build | build | [implementer] | implementer-prompt.md |
 | code-review | review | [frontend, backend] | role-evaluator-prompt.md |
-| test-verify | execute | [tester] | executor-protocol.md |
+| test-design | review | [tester, + user/domain roles] | test-design-protocol.md |
+| test-execute | execute | [orchestrator] | executor-protocol.md |
 | gate-test | gate | — | gate-protocol.md |
 | acceptance | review | [pm, designer] | role-evaluator-prompt.md |
 | gate-acceptance | gate | — | gate-protocol.md |
@@ -392,6 +396,7 @@ All templates live in `./pipeline/`:
 - `discussion-protocol.md` — Multi-agent discussion (round-robin, 3 rounds, facilitator)
 - `gate-protocol.md` — Verdict aggregation + code-based routing + transition + **findings disposition**
 - `executor-protocol.md` — CLI/GUI execution with evidence requirements
+- `test-design-protocol.md` — **Test case design** (review node, multi-role test planning before execution)
 - `loop-protocol.md` — **Autonomous multi-unit execution** (plan decomposition → cron loop → auto-terminate)
 - `handoff-template.md` — Handshake.json specification
 - `context-brief.md` — Design context brief procedure
