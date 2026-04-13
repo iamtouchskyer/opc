@@ -22,7 +22,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "bash test/test-harness.sh",
+    "test": "bash test/run-all.sh",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "keywords": [

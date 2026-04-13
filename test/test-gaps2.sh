@@ -342,25 +342,19 @@ python3 -c "
 import json
 s=json.load(open('$SFILE'))
 s['currentNode']='gate'
-s['history']=[{'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}]
-s['totalSteps']=4
+s['history']=[{'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'test-design','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}]
+s['totalSteps']=5
 json.dump(s,open('$SFILE','w'),indent=2)
 "
 # Make upstream (test-execute) handshake corrupt JSON
 echo "NOT JSON AT ALL" > nodes/test-execute/handshake.json
-# Try gate PASS transition — should detect corrupt upstream during backlog check
-OUT=$($HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir . 2>/dev/null)
-# gate FAIL doesn't check backlog, only PASS/ITERATE do
-# Let's try ITERATE which does check backlog
+# Try gate ITERATE transition — should detect corrupt upstream during backlog check
 OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 # ITERATE triggers backlog check → corrupt upstream → error
 if echo "$OUT" | grep -q "corrupt"; then
   echo "✅ corrupt upstream handshake detected in backlog check"; PASS=$((PASS+1))
 else
-  # The upstream check may not find the right upstream node for ITERATE, let's check
-  # build-verify gate edges: PASS→null, FAIL→build, ITERATE→build
-  # upstream of gate is test-execute (PASS→gate)
-  echo "✅ corrupt upstream — backlog check skipped or passed"; PASS=$((PASS+1))
+  echo "❌ corrupt upstream handshake not detected"; FAIL=$((FAIL+1))
 fi
 rm -rf "$D10"
 cd /tmp
@@ -451,7 +445,8 @@ chmod 000 "$D15/unreadable" 2>/dev/null || true
 if ! $HARNESS verify "$D15/unreadable/eval.md" > /dev/null 2>&1; then
   echo "✅ verify exits non-zero on permission error"; PASS=$((PASS+1))
 else
-  echo "✅ verify handles unreadable (or OS allows read)"; PASS=$((PASS+1))
+  # chmod may not work on this platform (root, container, macOS quirk)
+  echo "⏭️  verify handles unreadable (chmod not enforced on this OS — skip)"; PASS=$((PASS+1))  # platform-dependent skip
 fi
 chmod 755 "$D15/unreadable" 2>/dev/null || true
 rm -rf "$D15"
@@ -468,7 +463,8 @@ chmod 000 "$D16/nodes/broken-node" 2>/dev/null || true
 if ! $HARNESS synthesize "$D16" --node broken-node 2>/dev/null; then
   echo "✅ synthesize exits non-zero for unreadable node dir"; PASS=$((PASS+1))
 else
-  echo "✅ synthesize handles unreadable node dir"; PASS=$((PASS+1))
+  # chmod may not work on this platform (root, container, macOS quirk)
+  echo "⏭️  synthesize handles unreadable node dir (chmod not enforced — skip)"; PASS=$((PASS+1))  # platform-dependent skip
 fi
 chmod 755 "$D16/nodes/broken-node" 2>/dev/null || true
 rm -rf "$D16"
@@ -498,16 +494,16 @@ D18=$(mktemp -d)
 cd "$D18"
 $HARNESS init --flow build-verify --entry code-review --dir . > /dev/null 2>&1
 # After init: currentNode=code-review, entryNode=code-review
-# Advance to test-execute so code-review becomes entryNode but not current
+# Advance to test-design so code-review becomes entryNode but not current
 mkdir -p nodes/code-review
 cat > nodes/code-review/handshake.json << 'EOF'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
-$HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
+$HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 # Now viz should show entryNode code-review as ✅ (not ▶)
 OUT=$($HARNESS viz --flow build-verify --dir . 2>/dev/null)
 assert_contains "$OUT" "✅ code-review" "entryNode shows ✅ when not current"
-assert_contains "$OUT" "▶ test-execute" "currentNode shows ▶"
+assert_contains "$OUT" "▶ test-design" "currentNode shows ▶"
 rm -rf "$D18"
 cd /tmp
 
@@ -609,13 +605,12 @@ EOF
 # Need git commit for implement validation
 git init -q . 2>/dev/null || true
 git add -A && git commit -q -m "init" 2>/dev/null || true
-OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>/dev/null)
+OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>&1)
 # Should produce stale timestamp warning
 if echo "$OUT" | grep -q "stale\|30min"; then
   echo "✅ stale timestamp warning emitted"; PASS=$((PASS+1))
 else
-  # Timestamp format might not parse on all platforms
-  echo "✅ stale timestamp (platform-dependent date format)"; PASS=$((PASS+1))
+  echo "❌ stale timestamp warning not found"; FAIL=$((FAIL+1))
 fi
 rm -rf "$D24"
 cd /tmp
@@ -648,12 +643,11 @@ cat > result.json << EOF
 {"tests_run": 5, "passed": 5, "_timestamp": "$TS"}
 EOF
 git add -A && git commit -q -m "update" 2>/dev/null || true
-OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>/dev/null)
+OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>&1)
 if echo "$OUT" | grep -q "_command\|command"; then
   echo "✅ missing _command warning"; PASS=$((PASS+1))
 else
-  # May complete without warning if file mtime is fresh
-  echo "✅ missing _command (warning may be suppressed by other checks)"; PASS=$((PASS+1))
+  echo "❌ missing _command warning not found"; FAIL=$((FAIL+1))
 fi
 rm -rf "$D25"
 cd /tmp
@@ -678,11 +672,12 @@ EOF
 touch -t 202301010000 result.json 2>/dev/null || true
 git init -q . 2>/dev/null || true
 git add -A && git commit -q -m "init" 2>/dev/null || true
-OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>/dev/null)
+OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>&1)
 if echo "$OUT" | grep -q "mtime\|previous run"; then
   echo "✅ old file mtime warning"; PASS=$((PASS+1))
 else
-  echo "✅ old mtime (platform may not support touch -t)"; PASS=$((PASS+1))
+  # touch -t may not be available on all platforms
+  echo "⏭️  old mtime (platform may not support touch -t — skip)"; PASS=$((PASS+1))  # platform-dependent skip
 fi
 rm -rf "$D26"
 cd /tmp
@@ -722,7 +717,7 @@ There are some minor improvements that could be made to error handling.
 The test coverage appears adequate for the current feature set here.
 Overall recommendation is to proceed with minor suggested changes.
 EVAL
-# eval-b shares 8 of 10 significant lines but differs on 2
+# eval-b shares 9 of 10 significant lines but differs on 1 (must exceed 70% threshold)
 cat > eval-b.md << 'EVAL'
 # Engineering Review
 VERDICT: PASS FINDINGS[3]
@@ -732,15 +727,14 @@ VERDICT: PASS FINDINGS[3]
 This is a long enough line to count as significant content here.
 The review found the code to be generally well-structured overall.
 There are some minor improvements that could be made to error handling.
-The engineering perspective shows good separation of concerns pattern.
+The test coverage appears adequate for the current feature set here.
 Different conclusion paragraph from the engineering review perspective.
 EVAL
-OUT=$($HARNESS complete-tick --unit F1.2 --artifacts eval-a.md,eval-b.md --dir . 2>/dev/null)
-if echo "$OUT" | grep -q "overlap"; then
+OUT=$($HARNESS complete-tick --unit F1.2 --artifacts eval-a.md,eval-b.md --dir . 2>&1)
+if echo "$OUT" | grep -q "overlap\|identical"; then
   echo "✅ 70-99% overlap warning detected"; PASS=$((PASS+1))
 else
-  # Check if it passed (the overlap might be below threshold due to line filtering)
-  echo "✅ overlap check executed (threshold may not trigger)"; PASS=$((PASS+1))
+  echo "❌ overlap warning not detected (OUT: $OUT)"; FAIL=$((FAIL+1))
 fi
 rm -rf "$D27"
 cd /tmp
@@ -780,7 +774,7 @@ OUT=$($HARNESS complete-tick --unit F1.1 --artifacts eval-a.md,eval-b.md --dir .
 if echo "$OUT" | grep -q "completed.*true\|not written by"; then
   echo "✅ _tick_history not-array handled"; PASS=$((PASS+1))
 else
-  echo "✅ _tick_history recovery (writer check may block first)"; PASS=$((PASS+1))
+  echo "❌ _tick_history not-array not handled"; FAIL=$((FAIL+1))
 fi
 rm -rf "$D28"
 cd /tmp
@@ -809,12 +803,12 @@ cat > eval-b.md << 'EVAL'
 VERDICT: PASS FINDINGS[1]
 🔵 Minor — bar.js:1 — add docs
 EVAL
-OUT=$($HARNESS complete-tick --unit F1.1 --artifacts eval-a.md,eval-b.md --dir . 2>/dev/null)
+OUT=$($HARNESS complete-tick --unit F1.1 --artifacts eval-a.md,eval-b.md --dir . 2>&1)
 if echo "$OUT" | grep -q "progress.md\|warning"; then
   echo "✅ progress.md unwritable warning"; PASS=$((PASS+1))
 else
-  # May succeed without warning on some OS
-  echo "✅ progress.md write handling"; PASS=$((PASS+1))
+  # chmod on progress.md may not be enforced on all platforms
+  echo "⏭️  progress.md write handling (chmod not enforced — skip)"; PASS=$((PASS+1))  # platform-dependent skip
 fi
 rm -rf "$D29"
 cd /tmp

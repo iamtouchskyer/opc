@@ -440,12 +440,30 @@ export function cmdFinalize(args) {
     return;
   }
 
-  state.status = "completed";
-  state.completedAt = new Date().toISOString();
-  state._last_modified = new Date().toISOString();
-  state._written_by = WRITER_SIG;
+  const lock = lockFile(statePath, { command: "finalize" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ finalized: false, error: "could not acquire lock", holder: lock.holder }));
+    return;
+  }
+  try {
+    // Re-read state under lock to prevent TOCTOU
+    const freshState = JSON.parse(readFileSync(statePath, "utf8"));
+    if (freshState.status === "completed") {
+      console.log(JSON.stringify({
+        finalized: true, flow, terminalNode: currentNode, totalSteps: freshState.totalSteps, note: "already finalized",
+      }));
+      return;
+    }
 
-  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    freshState.status = "completed";
+    freshState.completedAt = new Date().toISOString();
+    freshState._last_modified = new Date().toISOString();
+    freshState._written_by = WRITER_SIG;
 
-  console.log(JSON.stringify({ finalized: true, flow, terminalNode: currentNode, totalSteps: state.totalSteps }));
+    atomicWriteSync(statePath, JSON.stringify(freshState, null, 2) + "\n");
+
+    console.log(JSON.stringify({ finalized: true, flow, terminalNode: currentNode, totalSteps: freshState.totalSteps }));
+  } finally {
+    lock.release();
+  }
 }

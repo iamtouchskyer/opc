@@ -184,7 +184,7 @@ assert_field_eq "second skip ok" "$OUT2" "skipped" "\"code-review\""
 # Verify state is consistent
 CUR=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['currentNode'])")
 STEPS=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['totalSteps'])")
-if [ "$CUR" = "test-execute" ] && [ "$STEPS" = "2" ]; then
+if [ "$CUR" = "test-design" ] && [ "$STEPS" = "2" ]; then
   echo "  ✅ state consistent after sequential ops"
   PASS=$((PASS + 1))
 else

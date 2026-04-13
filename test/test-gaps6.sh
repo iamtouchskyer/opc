@@ -56,7 +56,7 @@ assert_field_eq "$OUT" "['next']" "build" "1.1b: next node is build"
 assert_contains "$(cat flow-state.json)" '"version": "1.0"' "1.1c: fresh state has version"
 assert_contains "$(cat flow-state.json)" '"flowTemplate": "build-verify"' "1.1d: fresh state has correct flow"
 assert_contains "$(cat flow-state.json)" '"entryNode": "build"' "1.1e: fresh state entryNode = first template node"
-assert_contains "$(cat flow-state.json)" '"maxTotalSteps": 20' "1.1f: fresh state has limits from template"
+assert_contains "$(cat flow-state.json)" '"maxTotalSteps": 25' "1.1f: fresh state has limits from template"
 
 echo ""
 echo "── 1.2: transition without init — non-gate node blocked by handshake check"
@@ -354,7 +354,7 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --entry build --dir . > /dev/null 2>&1
 # State says currentNode=build, try to transition from code-review
-OUT=$($HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "False" "12.1a: wrong currentNode blocks transition"
 assert_contains "$OUT" "cannot transition from a node you are not at" "12.1b: clear error message"
 cd "$ORIG_DIR"
