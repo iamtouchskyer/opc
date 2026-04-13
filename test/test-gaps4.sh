@@ -3,8 +3,7 @@
 #                  contextSchema edge branches, and remaining defensive gaps
 set -euo pipefail
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -666,9 +665,4 @@ rm -f "$HOME/.claude/flows/test-vc-goodrule.json"
 rm -f "$HOME/.claude/flows/test-vc-objrule.json"
 rm -f "$HOME/.claude/flows/test-vc-arrrule.json"
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

@@ -3,8 +3,7 @@
 # 9 REAL + 12 DEFENSIVE = 21 untested branches
 set -euo pipefail
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -147,7 +146,7 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
 # Manually build state at gate with proper history
-mkdir -p nodes/build nodes/code-review nodes/test-verify
+mkdir -p nodes/build nodes/code-review nodes/test-execute
 # build handshake with warnings (triggers backlog check)
 cat > nodes/build/handshake.json << 'EOF'
 {"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
@@ -155,9 +154,9 @@ EOF
 cat > nodes/code-review/handshake.json << 'EOF'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
-# test-verify handshake is the upstream of gate — make it have warnings then corrupt it
-cat > nodes/test-verify/handshake.json << 'EOF'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null,"findings":{"warning":2}}
+# test-execute handshake is the upstream of gate — make it have warnings then corrupt it
+cat > nodes/test-execute/handshake.json << 'EOF'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null,"findings":{"warning":2}}
 EOF
 # Advance state to gate
 python3 -c "
@@ -167,7 +166,7 @@ s['currentNode']='gate'
 s['history']=[
   {'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
   {'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
-  {'nodeId':'test-verify','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
   {'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}
 ]
 s['totalSteps']=4
@@ -175,8 +174,8 @@ s['edgeCounts']={}
 json.dump(s,open('flow-state.json','w'),indent=2)
 "
 # Now corrupt the upstream handshake AFTER state was built
-echo "CORRUPT JSON {{{{" > nodes/test-verify/handshake.json
-# ITERATE from gate triggers backlog check on upstream test-verify
+echo "CORRUPT JSON {{{{" > nodes/test-execute/handshake.json
+# ITERATE from gate triggers backlog check on upstream test-execute
 OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 assert_contains "$OUT" "corrupt" "corrupt upstream handshake detected"
 assert_field_eq "$OUT" "['allowed']" "False" "transition blocked by corrupt upstream"
@@ -192,14 +191,14 @@ echo "── REAL-5: missing upstream handshake → backlog check skipped"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
-mkdir -p nodes/build nodes/code-review nodes/test-verify
+mkdir -p nodes/build nodes/code-review nodes/test-execute
 cat > nodes/build/handshake.json << 'EOF'
 {"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
 cat > nodes/code-review/handshake.json << 'EOF'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
-# DO NOT create test-verify handshake — upstream is missing
+# DO NOT create test-execute handshake — upstream is missing
 python3 -c "
 import json
 s=json.load(open('flow-state.json'))
@@ -207,7 +206,7 @@ s['currentNode']='gate'
 s['history']=[
   {'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
   {'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
-  {'nodeId':'test-verify','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
   {'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}
 ]
 s['totalSteps']=4
@@ -671,9 +670,4 @@ rm -f "$HOME/.claude/flows/test-orphan-gate.json"
 rm -f "$HOME/.claude/flows/test-str-rule.json"
 rm -f "$HOME/.claude/flows/test-arr-rule.json"
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

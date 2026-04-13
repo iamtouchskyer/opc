@@ -1,9 +1,10 @@
 // Flow graph definitions — nodes, edges, limits per template
-// Pure data, no dependencies.
+// Built-in templates + external flow loading from ~/.claude/flows/
 
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { VALID_NODE_TYPES } from "./util.mjs";
 
 // Harness version — used for opc_compat checking
 export const HARNESS_VERSION = "0.7.0";
@@ -97,7 +98,6 @@ export const FLOW_TEMPLATES = {
 // ── External flow template loading ──
 // Scans ~/.claude/flows/*.json and merges into FLOW_TEMPLATES.
 // Built-in templates take precedence (external cannot override).
-const VALID_TYPES = new Set(["discussion", "build", "review", "execute", "gate"]);
 
 // Simple semver-range check: supports ">=X.Y" format only (good enough for opc_compat)
 function satisfiesVersion(range, version) {
@@ -156,7 +156,7 @@ function loadExternalFlows() {
               valid = false;
               break;
             }
-            if (!VALID_TYPES.has(type)) {
+            if (!VALID_NODE_TYPES.has(type)) {
               console.error(`⚠️  Skipping ${f}: nodeType '${type}' for '${node}' is invalid`);
               valid = false;
               break;

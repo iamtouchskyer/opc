@@ -5,20 +5,35 @@
 #         eval commands (verify, synthesize, diff, report), viz, replay
 set -e
 
-HARNESS="node $(cd "$(dirname "$0")/.." && pwd)/bin/opc-harness.mjs"
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-cd "$TMPDIR"
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
 
-# Need a git repo for transition tests
-git init -q .
-git config user.email "test@test.com"
-git config user.name "Test"
-echo "init" > dummy.txt
-git add dummy.txt && git commit -q -m "init"
-
-PASS=0
-FAIL=0
+# Create idea-factory fixture for testing (not a built-in template)
+mkdir -p "$HOME/.claude/flows"
+cat > "$HOME/.claude/flows/idea-factory.json" << 'FIXTURE'
+{
+  "nodes": ["discover", "validate", "build", "gate", "synthesize", "pitch"],
+  "edges": {
+    "discover": {"PASS": "validate"},
+    "validate": {"PASS": "build"},
+    "build": {"PASS": "gate"},
+    "gate": {"PASS": "pitch", "FAIL": "synthesize", "ITERATE": "build"},
+    "synthesize": {"PASS": "pitch"},
+    "pitch": {"PASS": null}
+  },
+  "limits": {"maxLoopsPerEdge": 3, "maxTotalSteps": 15, "maxNodeReentry": 5},
+  "nodeTypes": {"discover": "discussion", "validate": "review", "build": "build", "gate": "gate", "synthesize": "discussion", "pitch": "discussion"},
+  "softEvidence": true,
+  "opc_compat": ">=0.5",
+  "contextSchema": {
+    "discover": {
+      "required": ["topic"],
+      "rules": {"topic": "non-empty-string"}
+    }
+  }
+}
+FIXTURE
 
 jq_field() {
   echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$2'); print('__NULL__' if v is None else json.dumps(v))" 2>/dev/null
@@ -727,11 +742,7 @@ OUT=$($HARNESS replay --dir .h-replay-no 2>&1) || true
 assert_contains "no state" "$OUT" "No flow-state"
 
 # ═══════════════════════════════════════════════════════════════
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
+# Cleanup idea-factory fixture
+rm -f "$HOME/.claude/flows/idea-factory.json"
 
-if [ $FAIL -gt 0 ]; then
-  exit 1
-fi
+print_results

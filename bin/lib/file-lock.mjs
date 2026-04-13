@@ -48,14 +48,16 @@ export function lockFile(filePath, opts = {}) {
       } catch {
         // Corrupt lock file — treat as stale
         try { unlinkSync(lockPath); } catch { /* race — ok */ }
-        // Fall through to acquire
+        // Retry atomic acquire
+        continue;
       }
 
       if (holder) {
         // Stale lock detection: holder PID is dead
         if (!isPidAlive(holder.pid)) {
           try { unlinkSync(lockPath); } catch { /* race — ok */ }
-          // Fall through to acquire
+          // Retry atomic acquire
+          continue;
         } else {
           // Lock held by a live process — wait or give up
           if (Date.now() >= deadline) {

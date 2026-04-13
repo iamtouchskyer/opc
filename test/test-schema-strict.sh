@@ -2,8 +2,7 @@
 # test-schema-strict.sh — Tests for contextSchema load-time validation and finalize --strict
 set -euo pipefail
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -305,9 +304,4 @@ rm -f "$HOME/.claude/flows/test-cs-badreqtype.json"
 rm -f "$HOME/.claude/flows/test-cs-badrule.json"
 rm -f "$HOME/.claude/flows/test-cs-valid.json"
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

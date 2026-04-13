@@ -79,7 +79,7 @@ cp -r opc ~/.claude/skills/opc
 | Template | Nodes | When |
 |----------|-------|------|
 | **review** | code-review → gate | PR review, audit, "find problems" |
-| **build-verify** | build → code-review → test-verify → gate | "implement X", "fix bug Y" |
+| **build-verify** | build → code-review → test-design → test-execute → gate | "implement X", "fix bug Y" |
 | **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
 | **pre-release** | acceptance → audit → e2e → gates | "verify before release" |
 

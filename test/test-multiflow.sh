@@ -2,20 +2,9 @@
 # Tests for multi-flow isolation: named harness dirs, file locking, ls enhancements
 set -e
 
-HARNESS="node $(cd "$(dirname "$0")/.." && pwd)/bin/opc-harness.mjs"
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-cd "$TMPDIR"
-
-# Need a git repo
-git init -q .
-git config user.email "test@test.com"
-git config user.name "Test"
-echo "init" > dummy.txt
-git add dummy.txt && git commit -q -m "init"
-
-PASS=0
-FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
 
 jq_field() {
   echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$2'); print('__NULL__' if v is None else json.dumps(v))" 2>/dev/null
@@ -157,7 +146,7 @@ assert_file_not_exists "lock removed after stop" ".h-lock2/flow-state.json.lock"
 echo ""
 echo "--- 3.3: Lock file created during goto and removed after ---"
 rm -rf .h-lock3 && $HARNESS init --flow build-verify --dir .h-lock3 >/dev/null 2>/dev/null
-$HARNESS goto test-verify --dir .h-lock3 >/dev/null 2>/dev/null
+$HARNESS goto test-execute --dir .h-lock3 >/dev/null 2>/dev/null
 assert_file_not_exists "lock removed after goto" ".h-lock3/flow-state.json.lock"
 
 echo ""
@@ -189,13 +178,13 @@ rm -rf .h-conc && $HARNESS init --flow build-verify --dir .h-conc >/dev/null 2>/
 # First skip: build → code-review
 OUT1=$($HARNESS skip --dir .h-conc 2>/dev/null)
 assert_field_eq "first skip ok" "$OUT1" "skipped" "\"build\""
-# Second skip: code-review → test-verify
+# Second skip: code-review → test-execute
 OUT2=$($HARNESS skip --dir .h-conc 2>/dev/null)
 assert_field_eq "second skip ok" "$OUT2" "skipped" "\"code-review\""
 # Verify state is consistent
 CUR=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['currentNode'])")
 STEPS=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['totalSteps'])")
-if [ "$CUR" = "test-verify" ] && [ "$STEPS" = "2" ]; then
+if [ "$CUR" = "test-execute" ] && [ "$STEPS" = "2" ]; then
   echo "  ✅ state consistent after sequential ops"
   PASS=$((PASS + 1))
 else
@@ -229,11 +218,4 @@ fi
 $HARNESS skip --dir .h-lockfields >/dev/null 2>/dev/null
 
 # ═══════════════════════════════════════════════════════════════
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-if [ $FAIL -gt 0 ]; then
-  exit 1
-fi
+print_results

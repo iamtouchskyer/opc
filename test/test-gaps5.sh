@@ -4,8 +4,7 @@
 set -uo pipefail
 # NOTE: no set -e — we handle errors explicitly per assertion
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -418,7 +417,7 @@ Test issue
 
 VERDICT: PASS — FINDINGS[1]
 EOF
-OUT=$(node "$HOME/.claude/skills/opc/bin/opc-harness.mjs" report "$D" --mode review --task "test" 2>/dev/null)
+OUT=$($HARNESS report "$D" --mode review --task "test" 2>/dev/null)
 assert_contains "$OUT" "agents" "12.1a: report via CLI entry produces output"
 assert_contains "$OUT" "suggestion" "12.1b: report via CLI has suggestion count"
 
@@ -440,7 +439,7 @@ New text
 
 VERDICT: PASS — FINDINGS[1]
 EOF
-OUT=$(node "$HOME/.claude/skills/opc/bin/opc-harness.mjs" diff "$D/eval-r1.md" "$D/eval-r2.md" 2>/dev/null)
+OUT=$($HARNESS diff "$D/eval-r1.md" "$D/eval-r2.md" 2>/dev/null)
 assert_contains "$OUT" "recurring|new|resolved" "12.2a: diff via CLI entry produces output"
 
 echo ""
@@ -449,7 +448,7 @@ echo "── 12.3: replay via CLI entry point"
 D2=$(mktemp -d)
 cd "$D2"
 $HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
-OUT=$(node "$HOME/.claude/skills/opc/bin/opc-harness.mjs" replay --dir . 2>/dev/null)
+OUT=$($HARNESS replay --dir . 2>/dev/null)
 assert_contains "$OUT" "flowTemplate|nodes|history" "12.3a: replay via CLI entry produces output"
 cd "$ORIG_DIR"
 rm -rf "$D" "$D2"
@@ -625,8 +624,4 @@ rm -f "$HOME/.claude/flows/test-vc-goodrule.json" 2>/dev/null || true
 rm -f "$HOME/.claude/flows/test-allrules.json" 2>/dev/null || true
 rm -f "$HOME/.claude/flows/readme.txt" 2>/dev/null || true
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

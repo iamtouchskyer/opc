@@ -5,19 +5,9 @@
 #         external flow loading, viz/replay errors, help output, and more.
 set -e
 
-HARNESS="node $(cd "$(dirname "$0")/.." && pwd)/bin/opc-harness.mjs"
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-cd "$TMPDIR"
-
-git init -q .
-git config user.email "test@test.com"
-git config user.name "Test"
-echo "init" > dummy.txt
-git add dummy.txt && git commit -q -m "init"
-
-PASS=0
-FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
 
 jq_field() {
   echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$2'); print('__NULL__' if v is None else json.dumps(v))" 2>/dev/null
@@ -247,21 +237,21 @@ assert_contains "parse handshake" "$OUT" "parse"
 echo ""
 echo "--- 5.3: Backlog enforcement with PASS verdict (not just ITERATE) ---"
 rm -rf .h-bp && $HARNESS init --flow build-verify --entry gate --dir .h-bp >/dev/null 2>/dev/null
-mkdir -p .h-bp/nodes/test-verify
-cat > .h-bp/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-bp/nodes/test-execute
+cat > .h-bp/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
 HS
-echo "evidence" > .h-bp/nodes/test-verify/ev.txt
+echo "evidence" > .h-bp/nodes/test-execute/ev.txt
 # gate PASS→null in build-verify, but we need a non-null PASS target
 # Use full-stack: gate-test PASS→acceptance, FAIL→discuss
 rm -rf .h-bp2 && $HARNESS init --flow full-stack --entry gate-test --dir .h-bp2 >/dev/null 2>/dev/null
-mkdir -p .h-bp2/nodes/test-verify
-cat > .h-bp2/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-bp2/nodes/test-execute
+cat > .h-bp2/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
 HS
-echo "evidence" > .h-bp2/nodes/test-verify/ev.txt
+echo "evidence" > .h-bp2/nodes/test-execute/ev.txt
 OUT=$($HARNESS transition --from gate-test --to acceptance --verdict PASS --flow full-stack --dir .h-bp2 2>/dev/null)
 assert_field_eq "PASS backlog check" "$OUT" "allowed" "false"
 assert_contains "PASS backlog msg" "$OUT" "backlog"
@@ -269,13 +259,13 @@ assert_contains "PASS backlog msg" "$OUT" "backlog"
 echo ""
 echo "--- 5.4: Backlog 0 matching entries blocked ---"
 rm -rf .h-bp3 && $HARNESS init --flow full-stack --entry gate-test --dir .h-bp3 >/dev/null 2>/dev/null
-mkdir -p .h-bp3/nodes/test-verify
-cat > .h-bp3/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-bp3/nodes/test-execute
+cat > .h-bp3/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
 HS
-echo "evidence" > .h-bp3/nodes/test-verify/ev.txt
-# Backlog exists but no entries from test-verify
+echo "evidence" > .h-bp3/nodes/test-execute/ev.txt
+# Backlog exists but no entries from test-execute
 cat > .h-bp3/backlog.md << 'BL'
 # Backlog
 - [ ] 🟡 Some other concern [build]
@@ -327,13 +317,13 @@ echo ""
 echo "--- 6.5: pass succeeds on gate with non-null transition ---"
 # full-stack: gate-test PASS→acceptance
 rm -rf .h-esc4 && $HARNESS init --flow full-stack --entry gate-test --dir .h-esc4 >/dev/null 2>/dev/null
-# gate-test upstream = test-verify. Create handshake with no warnings to skip backlog check.
-mkdir -p .h-esc4/nodes/test-verify
-cat > .h-esc4/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+# gate-test upstream = test-execute. Create handshake with no warnings to skip backlog check.
+mkdir -p .h-esc4/nodes/test-execute
+cat > .h-esc4/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":0,"critical":0}}
 HS
-echo "evidence" > .h-esc4/nodes/test-verify/ev.txt
+echo "evidence" > .h-esc4/nodes/test-execute/ev.txt
 OUT=$($HARNESS pass --dir .h-esc4 2>/dev/null)
 assert_field_eq "pass gate→acceptance" "$OUT" "allowed" "true"
 
@@ -1225,9 +1215,4 @@ assert_contains "identical heading" "$OUT" "identical heading"
 # Cleanup
 rm -f package.json
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

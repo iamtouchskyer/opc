@@ -3,20 +3,9 @@
 # Tests all bug fixes from the 24h review sprint
 set -e
 
-HARNESS="node $(cd "$(dirname "$0")/.." && pwd)/bin/opc-harness.mjs"
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-cd "$TMPDIR"
-
-# Need a git repo for some tests
-git init -q .
-git config user.email "test@test.com"
-git config user.name "Test"
-echo "init" > dummy.txt
-git add dummy.txt && git commit -q -m "init"
-
-PASS=0
-FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
 
 # JSON field check via python3
 jq_field() {
@@ -364,11 +353,4 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-if [ $FAIL -gt 0 ]; then
-  exit 1
-fi
+print_results

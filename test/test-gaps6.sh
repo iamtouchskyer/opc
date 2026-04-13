@@ -3,8 +3,7 @@
 # Covers the 1 HIGH + 2 MEDIUM + testable LOW branches from audit.
 set -uo pipefail
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -135,10 +134,10 @@ echo "── 3.1: corrupt upstream handshake blocks gate transition"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --entry gate --dir . > /dev/null 2>&1
-# gate checks upstream. For build-verify, upstream of gate is test-verify.
-# Write corrupt handshake for test-verify (upstream of gate)
-mkdir -p nodes/test-verify
-echo "NOT VALID JSON {{{" > nodes/test-verify/handshake.json
+# gate checks upstream. For build-verify, upstream of gate is test-execute.
+# Write corrupt handshake for test-execute (upstream of gate)
+mkdir -p nodes/test-execute
+echo "NOT VALID JSON {{{" > nodes/test-execute/handshake.json
 # Try to transition gate → build (ITERATE)
 # Wait for idempotency window
 sleep 2
@@ -355,7 +354,7 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --entry build --dir . > /dev/null 2>&1
 # State says currentNode=build, try to transition from code-review
-OUT=$($HARNESS transition --from code-review --to test-verify --verdict PASS --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "False" "12.1a: wrong currentNode blocks transition"
 assert_contains "$OUT" "cannot transition from a node you are not at" "12.1b: clear error message"
 cd "$ORIG_DIR"
@@ -385,8 +384,4 @@ rm -rf "$D"
 
 # ═══════════════════════════════════════════════════════════════════
 # Cleanup
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

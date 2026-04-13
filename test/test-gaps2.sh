@@ -3,8 +3,7 @@
 # Targets: 33 uncovered branches across 14 modules → 100% branch coverage
 set -euo pipefail
 
-HARNESS="node $HOME/.claude/skills/opc/bin/opc-harness.mjs"
-PASS=0; FAIL=0
+source "$(dirname "$0")/test-helpers.sh"
 
 assert_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -331,8 +330,8 @@ D10=$(mktemp -d)
 cd "$D10"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
 # Advance to gate node with proper handshakes
-mkdir -p nodes/build nodes/code-review nodes/test-verify
-for n in build code-review test-verify; do
+mkdir -p nodes/build nodes/code-review nodes/test-execute
+for n in build code-review test-execute; do
   cat > "nodes/$n/handshake.json" << EOF
 {"nodeId":"$n","nodeType":"build","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
@@ -343,12 +342,12 @@ python3 -c "
 import json
 s=json.load(open('$SFILE'))
 s['currentNode']='gate'
-s['history']=[{'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'test-verify','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}]
+s['history']=[{'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'code-review','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},{'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'}]
 s['totalSteps']=4
 json.dump(s,open('$SFILE','w'),indent=2)
 "
-# Make upstream (test-verify) handshake corrupt JSON
-echo "NOT JSON AT ALL" > nodes/test-verify/handshake.json
+# Make upstream (test-execute) handshake corrupt JSON
+echo "NOT JSON AT ALL" > nodes/test-execute/handshake.json
 # Try gate PASS transition — should detect corrupt upstream during backlog check
 OUT=$($HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir . 2>/dev/null)
 # gate FAIL doesn't check backlog, only PASS/ITERATE do
@@ -360,7 +359,7 @@ if echo "$OUT" | grep -q "corrupt"; then
 else
   # The upstream check may not find the right upstream node for ITERATE, let's check
   # build-verify gate edges: PASS→null, FAIL→build, ITERATE→build
-  # upstream of gate is test-verify (PASS→gate)
+  # upstream of gate is test-execute (PASS→gate)
   echo "✅ corrupt upstream — backlog check skipped or passed"; PASS=$((PASS+1))
 fi
 rm -rf "$D10"
@@ -499,16 +498,16 @@ D18=$(mktemp -d)
 cd "$D18"
 $HARNESS init --flow build-verify --entry code-review --dir . > /dev/null 2>&1
 # After init: currentNode=code-review, entryNode=code-review
-# Advance to test-verify so code-review becomes entryNode but not current
+# Advance to test-execute so code-review becomes entryNode but not current
 mkdir -p nodes/code-review
 cat > nodes/code-review/handshake.json << 'EOF'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
-$HARNESS transition --from code-review --to test-verify --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
+$HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 # Now viz should show entryNode code-review as ✅ (not ▶)
 OUT=$($HARNESS viz --flow build-verify --dir . 2>/dev/null)
 assert_contains "$OUT" "✅ code-review" "entryNode shows ✅ when not current"
-assert_contains "$OUT" "▶ test-verify" "currentNode shows ▶"
+assert_contains "$OUT" "▶ test-execute" "currentNode shows ▶"
 rm -rf "$D18"
 cd /tmp
 
@@ -996,9 +995,4 @@ rm -f "$HOME/.claude/flows/test-no-types.json"
 rm -f "$HOME/.claude/flows/test-no-pass-edge.json"
 rm -f "$HOME/.claude/flows/test-gate-no-pass.json"
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results

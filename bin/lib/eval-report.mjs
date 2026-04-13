@@ -6,6 +6,30 @@ import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag } from "./util.mjs";
 
+function processEvalFile(filepath, roleName) {
+  const text = readFileSync(filepath, "utf8");
+  const parsed = parseEvaluation(text);
+  const scope = [...new Set(parsed.findings.map((fd) => fd.file).filter(Boolean))];
+  return {
+    agent: {
+      role: roleName,
+      scope,
+      verdict: parsed.verdict,
+      findings: parsed.findings.map((fd) => ({
+        severity: fd.severity,
+        file: fd.file,
+        line: fd.line,
+        issue: fd.issue,
+        fix: fd.fix,
+        reasoning: fd.reasoning,
+        status: fd.status,
+        dismissReason: fd.dismissReason,
+      })),
+    },
+    accepted: parsed.findings.filter((fd) => fd.status === "accepted"),
+  };
+}
+
 export function cmdReport(args) {
   const dir = args[0];
   if (!dir) {
@@ -50,67 +74,15 @@ export function cmdReport(args) {
   for (const f of roleFiles) {
     const roleMatch = f.match(/^evaluation-wave-\d+-(.+)\.md$/);
     if (!roleMatch) continue;
-    const roleName = roleMatch[1];
-
-    const text = readFileSync(join(harnessDir, f), "utf8");
-    const parsed = parseEvaluation(text);
-
-    const scope = [
-      ...new Set(parsed.findings.map((fd) => fd.file).filter(Boolean)),
-    ];
-
-    agents.push({
-      role: roleName,
-      scope,
-      verdict: parsed.verdict,
-      findings: parsed.findings.map((fd) => ({
-        severity: fd.severity,
-        file: fd.file,
-        line: fd.line,
-        issue: fd.issue,
-        fix: fd.fix,
-        reasoning: fd.reasoning,
-        status: fd.status,
-        dismissReason: fd.dismissReason,
-      })),
-    });
-
-    for (const fd of parsed.findings) {
-      if (fd.status === "accepted") {
-        summary[fd.severity]++;
-      }
-    }
+    const { agent, accepted } = processEvalFile(join(harnessDir, f), roleMatch[1]);
+    agents.push(agent);
+    for (const fd of accepted) summary[fd.severity]++;
   }
 
   for (const f of singleEvalFiles) {
-    const text = readFileSync(join(harnessDir, f), "utf8");
-    const parsed = parseEvaluation(text);
-
-    const scope = [
-      ...new Set(parsed.findings.map((fd) => fd.file).filter(Boolean)),
-    ];
-
-    agents.push({
-      role: "evaluator",
-      scope,
-      verdict: parsed.verdict,
-      findings: parsed.findings.map((fd) => ({
-        severity: fd.severity,
-        file: fd.file,
-        line: fd.line,
-        issue: fd.issue,
-        fix: fd.fix,
-        reasoning: fd.reasoning,
-        status: fd.status,
-        dismissReason: fd.dismissReason,
-      })),
-    });
-
-    for (const fd of parsed.findings) {
-      if (fd.status === "accepted") {
-        summary[fd.severity]++;
-      }
-    }
+    const { agent, accepted } = processEvalFile(join(harnessDir, f), "evaluator");
+    agents.push(agent);
+    for (const fd of accepted) summary[fd.severity]++;
   }
 
   const report = {

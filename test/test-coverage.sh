@@ -6,19 +6,35 @@
 #         loadState corrupt JSON, eval-parser edge cases, cmdSynthesize BLOCKED verdict
 set -e
 
-HARNESS="node $(cd "$(dirname "$0")/.." && pwd)/bin/opc-harness.mjs"
-TMPDIR=$(mktemp -d)
-trap "rm -rf $TMPDIR" EXIT
-cd "$TMPDIR"
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
 
-git init -q .
-git config user.email "test@test.com"
-git config user.name "Test"
-echo "init" > dummy.txt
-git add dummy.txt && git commit -q -m "init"
-
-PASS=0
-FAIL=0
+# Create idea-factory fixture for testing (not a built-in template)
+mkdir -p "$HOME/.claude/flows"
+cat > "$HOME/.claude/flows/idea-factory.json" << 'FIXTURE'
+{
+  "nodes": ["discover", "validate", "build", "gate", "synthesize", "pitch"],
+  "edges": {
+    "discover": {"PASS": "validate"},
+    "validate": {"PASS": "build"},
+    "build": {"PASS": "gate"},
+    "gate": {"PASS": "pitch", "FAIL": "synthesize", "ITERATE": "build"},
+    "synthesize": {"PASS": "pitch"},
+    "pitch": {"PASS": null}
+  },
+  "limits": {"maxLoopsPerEdge": 3, "maxTotalSteps": 15, "maxNodeReentry": 5},
+  "nodeTypes": {"discover": "discussion", "validate": "review", "build": "build", "gate": "gate", "synthesize": "discussion", "pitch": "discussion"},
+  "softEvidence": true,
+  "opc_compat": ">=0.5",
+  "contextSchema": {
+    "discover": {
+      "required": ["topic"],
+      "rules": {"topic": "non-empty-string"}
+    }
+  }
+}
+FIXTURE
 
 jq_field() {
   echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$2'); print('__NULL__' if v is None else json.dumps(v))" 2>/dev/null
@@ -131,8 +147,8 @@ mkdir -p .h-idemp/nodes/code-review
 cat > .h-idemp/nodes/code-review/handshake.json << 'HS'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
-OUT=$($HARNESS transition --from code-review --to test-verify --verdict PASS --flow build-verify --dir .h-idemp 2>/dev/null)
-# Check if the second one succeeds (it should, because to=test-verify != last history entry=code-review)
+OUT=$($HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir .h-idemp 2>/dev/null)
+# Check if the second one succeeds (it should, because to=test-execute != last history entry=code-review)
 # To trigger idempotency we need to try same target: let's force code-review again via gate FAIL
 rm -rf .h-idemp2 && $HARNESS init --flow build-verify --entry gate --dir .h-idemp2 >/dev/null 2>/dev/null
 $HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir .h-idemp2 >/dev/null 2>/dev/null
@@ -154,15 +170,15 @@ echo "=== CG-4: Backlog enforcement ==="
 # ═══════════════════════════════════════════════════════════════
 
 echo "--- CG-4.1: Gate ITERATE blocked when upstream has warnings but no backlog ---"
-# build-verify: test-verify→PASS→gate, gate→ITERATE→build
-# Upstream of gate is test-verify
+# build-verify: test-execute→PASS→gate, gate→ITERATE→build
+# Upstream of gate is test-execute
 rm -rf .h-backlog && $HARNESS init --flow build-verify --entry gate --dir .h-backlog >/dev/null 2>/dev/null
-mkdir -p .h-backlog/nodes/test-verify
-cat > .h-backlog/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-backlog/nodes/test-execute
+cat > .h-backlog/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":2,"critical":0}}
 HS
-echo "test evidence" > .h-backlog/nodes/test-verify/evidence.txt
+echo "test evidence" > .h-backlog/nodes/test-execute/evidence.txt
 OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir .h-backlog 2>/dev/null)
 assert_field_eq "backlog required" "$OUT" "allowed" "false"
 assert_contains "backlog missing msg" "$OUT" "backlog"
@@ -170,16 +186,16 @@ assert_contains "backlog missing msg" "$OUT" "backlog"
 echo ""
 echo "--- CG-4.2: Gate passes when backlog has matching entries ---"
 rm -rf .h-backlog2 && $HARNESS init --flow build-verify --entry gate --dir .h-backlog2 >/dev/null 2>/dev/null
-mkdir -p .h-backlog2/nodes/test-verify
-cat > .h-backlog2/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-backlog2/nodes/test-execute
+cat > .h-backlog2/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":2,"critical":0}}
 HS
-echo "test evidence" > .h-backlog2/nodes/test-verify/evidence.txt
+echo "test evidence" > .h-backlog2/nodes/test-execute/evidence.txt
 cat > .h-backlog2/backlog.md << 'BL'
 # Backlog
-- [ ] 🟡 Missing input validation [test-verify]
-- [ ] 🟡 Error handling too broad [test-verify]
+- [ ] 🟡 Missing input validation [test-execute]
+- [ ] 🟡 Error handling too broad [test-execute]
 BL
 OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir .h-backlog2 2>/dev/null)
 assert_field_eq "backlog satisfied" "$OUT" "allowed" "true"
@@ -187,14 +203,14 @@ assert_field_eq "backlog satisfied" "$OUT" "allowed" "true"
 echo ""
 echo "--- CG-4.3: Insufficient backlog entries rejected ---"
 rm -rf .h-backlog3 && $HARNESS init --flow build-verify --entry gate --dir .h-backlog3 >/dev/null 2>/dev/null
-mkdir -p .h-backlog3/nodes/test-verify
-cat > .h-backlog3/nodes/test-verify/handshake.json << 'HS'
-{"nodeId":"test-verify","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
+mkdir -p .h-backlog3/nodes/test-execute
+cat > .h-backlog3/nodes/test-execute/handshake.json << 'HS'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
  "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":3,"critical":0}}
 HS
-echo "test evidence" > .h-backlog3/nodes/test-verify/evidence.txt
+echo "test evidence" > .h-backlog3/nodes/test-execute/evidence.txt
 cat > .h-backlog3/backlog.md << 'BL'
-- [ ] 🟡 Only one entry [test-verify]
+- [ ] 🟡 Only one entry [test-execute]
 BL
 OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir .h-backlog3 2>/dev/null)
 assert_field_eq "insufficient entries" "$OUT" "allowed" "false"
@@ -803,10 +819,6 @@ rm -f "$HOME/.claude/flows/bad-nodetype.json"
 rm -f "$HOME/.claude/flows/__proto__.json"
 rm -f "$HOME/.claude/flows/bad-missing.json"
 rm -f "$HOME/.claude/flows/future-ver.json"
+rm -f "$HOME/.claude/flows/idea-factory.json"
 
-echo ""
-echo "==========================================="
-echo "  Results: $PASS passed, $FAIL failed"
-echo "==========================================="
-
-[ "$FAIL" -eq 0 ] || exit 1
+print_results
