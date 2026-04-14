@@ -13,6 +13,48 @@ export const HEDGING_RE = /\bmight\b|\bcould potentially\b|\bconsider\b/i;
 export const VERDICT_RE = /VERDICT:\s*(.+)/i;
 export const FINDINGS_N_RE = /FINDINGS\s*\[(\d+)\]/i;
 
+/**
+ * Check eval file distinctness — shared by flow-core validate and loop-tick.
+ * Takes array of { path, content } objects (at least 2).
+ * Returns { errors: [], warnings: [] }.
+ */
+export function checkEvalDistinctness(evalContents) {
+  const errors = [];
+  const warnings = [];
+  if (!Array.isArray(evalContents) || evalContents.length < 2) return { errors, warnings };
+
+  for (let i = 0; i < evalContents.length; i++) {
+    for (let j = i + 1; j < evalContents.length; j++) {
+      const a = evalContents[i], b = evalContents[j];
+
+      // Byte-identical → error
+      if (a.content === b.content) {
+        errors.push(`eval files '${a.path}' and '${b.path}' are identical — reviews must be independent`);
+        continue;
+      }
+
+      // >70% line overlap → warning
+      const linesA = a.content.split("\n").filter(l => l.trim().length > 10);
+      const linesB = new Set(b.content.split("\n").filter(l => l.trim().length > 10));
+      if (linesA.length > 0 && linesB.size > 0) {
+        const shared = linesA.filter(l => linesB.has(l)).length;
+        const overlapPct = shared / Math.min(linesA.length, linesB.size);
+        if (overlapPct > 0.7) {
+          warnings.push(`eval files '${a.path}' and '${b.path}' have ${Math.round(overlapPct * 100)}% line overlap — reviews may lack independence`);
+        }
+      }
+
+      // Identical heading → warning
+      const headingA = (a.content.match(/^#\s+(.+)/m) || [])[1] || "";
+      const headingB = (b.content.match(/^#\s+(.+)/m) || [])[1] || "";
+      if (headingA && headingB && headingA === headingB) {
+        warnings.push(`eval files '${a.path}' and '${b.path}' have identical headings — each reviewer should have a distinct angle`);
+      }
+    }
+  }
+  return { errors, warnings };
+}
+
 export function parseEvaluation(text) {
   text = text.replace(/\r\n/g, "\n");
   const lines = text.split("\n");
@@ -127,6 +169,12 @@ export function parseEvaluation(text) {
     verdictCountMatch = null;
   }
 
+  // Thin eval detection: mechanical quality signal
+  const lineCount = lines.length;
+  const thinEval = lineCount < 50;
+  const fileLineRefCount = (text.match(/[\w./-]+\.\w+:\d+/g) || []).length;
+  const noCodeRefs = fileLineRefCount === 0;
+
   return {
     verdict_present: verdictPresent,
     verdict,
@@ -138,5 +186,10 @@ export function parseEvaluation(text) {
     hedging_detected: hedgingDetected,
     verdict_count_match: verdictCountMatch,
     findings,
+    // Thin eval signals (consumed by synthesize)
+    lineCount,
+    thinEval,
+    noCodeRefs,
+    fileLineRefCount,
   };
 }

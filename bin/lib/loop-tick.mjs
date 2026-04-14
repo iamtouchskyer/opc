@@ -5,6 +5,7 @@ import { readFileSync, appendFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import { parsePlan, hashContent, getGitHeadHash } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
+import { checkEvalDistinctness } from "./eval-parser.mjs";
 
 // ─── complete-tick ──────────────────────────────────────────────
 
@@ -265,31 +266,11 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
     }
   }
 
-  // Distinctness check
+  // Distinctness check — delegate to shared function
   if (evalContents.length >= 2) {
-    for (let i = 0; i < evalContents.length; i++) {
-      for (let j = i + 1; j < evalContents.length; j++) {
-        const a = evalContents[i], b = evalContents[j];
-        if (a.content === b.content) {
-          errors.push(`eval files '${a.path}' and '${b.path}' are identical — reviews must be independent`);
-        } else {
-          const linesA = a.content.split("\n").filter(l => l.trim().length > 10);
-          const linesB = new Set(b.content.split("\n").filter(l => l.trim().length > 10));
-          if (linesA.length > 0) {
-            const shared = linesA.filter(l => linesB.has(l)).length;
-            const overlapPct = shared / Math.min(linesA.length, linesB.size);
-            if (overlapPct > 0.7) {
-              warnings.push(`eval files '${a.path}' and '${b.path}' have ${Math.round(overlapPct * 100)}% line overlap — reviews may lack independence`);
-            }
-          }
-        }
-        const headingA = (a.content.match(/^#\s+(.+)/m) || [])[1] || "";
-        const headingB = (b.content.match(/^#\s+(.+)/m) || [])[1] || "";
-        if (headingA && headingB && headingA === headingB) {
-          warnings.push(`eval files '${a.path}' and '${b.path}' have identical headings — each reviewer should have a distinct angle`);
-        }
-      }
-    }
+    const dc = checkEvalDistinctness(evalContents);
+    errors.push(...dc.errors);
+    warnings.push(...dc.warnings);
   }
 
   // Rule 5: hash eval files for tamper detection

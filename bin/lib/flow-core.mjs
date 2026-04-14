@@ -12,6 +12,7 @@ import {
   WRITER_SIG,
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
+import { checkEvalDistinctness } from "./eval-parser.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -168,6 +169,50 @@ export function validateHandshakeData(data, opts = {}) {
         warnings.push("softEvidence: executor node missing standard evidence type (test-result, screenshot, cli-output) — warning only");
       } else {
         errors.push("executor node missing evidence (need at least one artifact with type: test-result, screenshot, or cli-output)");
+      }
+    }
+
+    // Tier-based evidence requirements (zero trust: tier determines minimum evidence)
+    if (opts.tier && Array.isArray(data.artifacts)) {
+      const screenshots = data.artifacts.filter(a => a.type === "screenshot");
+      const cliOrTest = data.artifacts.filter(a => a.type === "cli-output" || a.type === "test-result");
+
+      if (opts.tier === "polished" || opts.tier === "delightful") {
+        if (screenshots.length < 1) {
+          errors.push(`${opts.tier} tier requires ≥1 screenshot evidence, got ${screenshots.length}`);
+        }
+        if (cliOrTest.length < 1) {
+          errors.push(`${opts.tier} tier requires ≥1 cli-output or test-result evidence`);
+        }
+      }
+      if (opts.tier === "delightful" && screenshots.length < 2) {
+        errors.push(`delightful tier requires ≥2 screenshot evidence, got ${screenshots.length}`);
+      }
+    }
+  }
+
+  // ─── Review independence check (zero trust: ≥2 distinct eval artifacts) ───
+  if (data.nodeType === "review" && data.status === "completed" && Array.isArray(data.artifacts)) {
+    const evalArtifacts = data.artifacts.filter(
+      a => a.type === "eval" || a.type === "evaluation"
+    );
+    if (evalArtifacts.length < 2) {
+      errors.push(`review node requires ≥2 eval artifacts from independent agents, got ${evalArtifacts.length}`);
+    } else if (opts.baseDir) {
+      // Content distinctness check — reuse shared function from eval-parser
+      const evalContents = [];
+      for (const a of evalArtifacts) {
+        const fullPath = existsSync(join(opts.baseDir, a.path))
+          ? join(opts.baseDir, a.path)
+          : a.path;
+        try {
+          evalContents.push({ path: a.path, content: readFileSync(fullPath, "utf8") });
+        } catch { /* file not found — already caught by artifact check above */ }
+      }
+      if (evalContents.length >= 2) {
+        const dc = checkEvalDistinctness(evalContents);
+        errors.push(...dc.errors);
+        warnings.push(...dc.warnings);
       }
     }
   }

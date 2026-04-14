@@ -452,10 +452,12 @@ echo ""
 echo "--- 6.2: Finalize terminal node ---"
 # Set up review: skip review → gate, skip gate manually
 rm -rf .h-fin && $HARNESS init --flow review --dir .h-fin >/dev/null 2>/dev/null
-# Write review handshake
-mkdir -p .h-fin/nodes/review
+# Write review handshake with 2 eval artifacts (review independence)
+mkdir -p .h-fin/nodes/review/run_1
+printf '# Review A\nPerspective: Security\nVERDICT: PASS FINDINGS[0]\n' > .h-fin/nodes/review/run_1/eval-a.md
+printf '# Review B\nPerspective: Performance\nVERDICT: PASS FINDINGS[0]\n' > .h-fin/nodes/review/run_1/eval-b.md
 cat > .h-fin/nodes/review/handshake.json << 'HS'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 HS
 sleep 1
 # Transition to gate

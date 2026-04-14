@@ -4,6 +4,25 @@
 
 export const VALID_TIERS = new Set(["functional", "polished", "delightful"]);
 
+// ── Test plan layer keywords (for test-design coverage check) ──
+// Used by synthesize to verify test-plan.md covers all 5 layers.
+// Keyword matching — not LLM judgment. Checks "does the label exist", not "is the content good".
+export const TEST_LAYERS = ["L1", "L2", "L3", "L4", "L5"];
+export const TEST_LAYER_LABELS = {
+  L1: "Unit / Smoke",
+  L2: "Contract / Edge Case",
+  L3: "Integration / E2E Flow",
+  L4: "UI / Visual / A11y",
+  L5: "Tier Baseline / Polish",
+};
+export const TEST_LAYER_KEYWORDS = {
+  L1: ["unit", "smoke", "npm test", "pytest", "vitest", "jest", "mocha"],
+  L2: ["contract", "schema", "error code", "edge case", "boundary", "validation", "invalid input"],
+  L3: ["integration", "end-to-end flow", "multi-step", "workflow", "e2e flow"],
+  L4: ["ui", "visual", "screenshot", "responsive", "a11y", "accessibility", "playwright", "viewport"],
+  L5: ["tier", "baseline", "typography", "dark mode", "navigation", "favicon", "polish"],
+};
+
 // Each baseline item has:
 //   key: machine-readable identifier
 //   label: human-readable name

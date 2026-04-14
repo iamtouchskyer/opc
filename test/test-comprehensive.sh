@@ -42,8 +42,9 @@ check_json() {
 write_review_hs() {
   local DIR="$1" NODE="$2" VERDICT="${3:-PASS}"
   mkdir -p "$DIR/nodes/$NODE/run_1"
-  printf '# Review\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval.md"
-  printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":[{"type":"eval","path":"run_1/eval.md"}],"verdict":"%s"}\n' \
+  printf '# Review A\nPerspective: Security\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval-a.md"
+  printf '# Review B\nPerspective: Performance\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval-b.md"
+  printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":"%s"}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERDICT" > "$DIR/nodes/$NODE/handshake.json"
 }
 

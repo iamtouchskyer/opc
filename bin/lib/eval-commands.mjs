@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag } from "./util.mjs";
-import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS } from "./tier-baselines.mjs";
+import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
 
 export function cmdVerify(args) {
   const file = args[0];
@@ -130,16 +130,17 @@ export function cmdSynthesize(args) {
   }
 
   let files;
+  let nodeId = null;
+  let targetRunDir = null;
 
   if (nodeIdx !== -1) {
-    const nodeId = args[nodeIdx + 1];
+    nodeId = args[nodeIdx + 1];
     if (!nodeId) {
       console.error("--node requires a nodeId");
       process.exit(1);
     }
 
     const runFlag = args.indexOf("--run");
-    let targetRunDir;
 
     if (runFlag !== -1 && args[runFlag + 1]) {
       targetRunDir = join(dir, "nodes", nodeId, `run_${args[runFlag + 1]}`);
@@ -208,6 +209,7 @@ export function cmdSynthesize(args) {
 
   const roles = [];
   const totals = { critical: 0, warning: 0, suggestion: 0 };
+  const thinEvalWarnings = [];
 
   for (const f of files) {
     let roleName;
@@ -230,12 +232,28 @@ export function cmdSynthesize(args) {
     const parsed = parseEvaluation(text);
 
     const blocked = /BLOCKED/i.test(parsed.verdict);
+
+    // ── Thin eval detection (mechanical) ──────────────────────
+    // Eval under 50 lines is too thin to be a real review.
+    if (parsed.thinEval) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: eval is thin (${parsed.lineCount} lines, min 50)`);
+    }
+    // Review evals with zero file:line references → no grounding in code.
+    if (parsed.noCodeRefs && parsed.findings_count > 0) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: eval has 0 file:line references — findings not grounded in code`);
+    }
+
     roles.push({
       role: roleName,
       critical: parsed.critical,
       warning: parsed.warning,
       suggestion: parsed.suggestion,
       blocked,
+      thinEval: parsed.thinEval || false,
+      noCodeRefs: parsed.noCodeRefs || false,
+      lineCount: parsed.lineCount,
     });
 
     totals.critical += parsed.critical;
@@ -295,7 +313,52 @@ export function cmdSynthesize(args) {
     } catch { /* flow-state unreadable — skip tier check */ }
   }
 
-  console.log(JSON.stringify({ roles, totals, verdict, reason, tierCoverage }, null, 2));
+  // ── Test plan layer coverage check (for test-design nodes) ──────
+  // Keyword-based: checks that test-plan.md mentions all 5 test layers.
+  // Honest caveat: LLM can write a section header without real content.
+  // But this is better than 0 check — forces the label to exist.
+  let testPlanCoverage = null;
+  if (nodeId && (nodeId.includes("test-design") || nodeId.includes("test_design"))) {
+    const testPlanPath = targetRunDir ? join(targetRunDir, "test-plan.md") : null;
+    // Also check node-level test-plan.md
+    const nodeTestPlanPath = nodeId ? join(dir, "nodes", nodeId, "test-plan.md") : null;
+    let planText = null;
+
+    if (testPlanPath && existsSync(testPlanPath)) {
+      planText = readFileSync(testPlanPath, "utf8");
+    } else if (nodeTestPlanPath && existsSync(nodeTestPlanPath)) {
+      planText = readFileSync(nodeTestPlanPath, "utf8");
+    }
+
+    if (planText) {
+      const lowerPlan = planText.toLowerCase();
+      const covered = [];
+      const missing = [];
+      for (const layer of TEST_LAYERS) {
+        const keywords = TEST_LAYER_KEYWORDS[layer];
+        const found = keywords.some(kw => lowerPlan.includes(kw));
+        if (found) {
+          covered.push(layer);
+        } else {
+          missing.push({ layer, label: TEST_LAYER_LABELS[layer] });
+          totals.warning += 1;
+        }
+      }
+      testPlanCoverage = { covered, missing };
+      if (missing.length > 0 && verdict === "PASS") {
+        verdict = "ITERATE";
+        reason = `${reason}; test plan missing layers: ${missing.map(m => m.layer).join(", ")}`;
+      } else if (missing.length > 0 && verdict === "ITERATE") {
+        reason = `${reason}; test plan missing layers: ${missing.map(m => m.layer).join(", ")}`;
+      }
+    }
+  }
+
+  console.log(JSON.stringify({
+    roles, totals, verdict, reason, tierCoverage,
+    thinEvalWarnings: thinEvalWarnings.length > 0 ? thinEvalWarnings : undefined,
+    testPlanCoverage: testPlanCoverage || undefined,
+  }, null, 2));
 }
 
 // ─── tier-baseline ──────────────────────────────────────────────
