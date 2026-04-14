@@ -15,6 +15,8 @@ You are implementing work for Node {NODE_ID}.
 ### Build (first pass — no prior evaluation)
 You are building from a plan. Read the wave plan below and implement it.
 
+**Quality Tier: {TIER}** — Read the tier baseline from `./pipeline/quality-tiers.md`. Every baseline checklist item is a requirement, not a nice-to-have. Address them during the first pass alongside functional requirements. The evaluator will score missing baseline items as warnings or criticals depending on tier.
+
 ### Fix (FAIL verdict — things are broken)
 Read the evaluation: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
 Read the original plan: {absolute path to .harness/nodes/{NODE_ID}/plan.md}

@@ -161,6 +161,31 @@ opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} --dir .harness
 
 Before starting, extract **acceptance criteria** — 3-7 concrete, testable bullet points. Evaluators grade against these.
 
+### Quality Tier Selection — Mandatory Pre-Flight
+
+Before the Definition of Done questions, the orchestrator MUST select a **quality tier**. See `./pipeline/quality-tiers.md` for full definitions.
+
+| Tier | When | Baseline |
+|------|------|----------|
+| `functional` | CLI, API, backend, library, infra | No UI craft requirements |
+| `polished` | UI, frontend, website, dashboard, docs | Dark/light, responsive, loading/error/empty states, favicon, focus styles |
+| `delightful` | Showcase, demo, pitch, consumer product | All of polished + transitions, animations, micro-interactions, onboarding |
+
+**Selection rules:**
+1. User explicitly specifies tier → use it
+2. Task involves UI/frontend → default `polished`
+3. Task is CLI/API/backend → default `functional`
+4. Task includes "showcase", "demo", "pitch", "delightful", "beautiful" → `delightful`
+5. Interactive mode → ask the user
+
+Show tier selection:
+```
+🎯 Quality Tier: {tier}
+   Baseline: {N items from tier checklist}
+```
+
+The tier's baseline checklist items are **automatically appended** to acceptance criteria under a "## Quality Baseline ({tier})" section in `.harness/acceptance-criteria.md`. The implementer and evaluator both receive the tier as context.
+
 ### Definition of Done — Mandatory Pre-Flight (all modes)
 
 Before dispatching ANY work, the orchestrator MUST establish a clear definition of done. This applies to **both auto and interactive modes** — the only difference is how the answers are obtained (inferred vs asked).
