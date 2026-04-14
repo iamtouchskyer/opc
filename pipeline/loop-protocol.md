@@ -213,7 +213,11 @@ When `next_unit` is not found in `plan.md`:
    - Units completed
    - Any skipped/blocked units
    - Outstanding items from `.harness/backlog.md`
-4. Notify user: `✅ Pipeline complete. {N} units delivered in {M} ticks.`
+4. Generate HTML report:
+   ```bash
+   node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
+   ```
+5. Notify user: `✅ Pipeline complete. {N} units delivered in {M} ticks. Report: .harness/report.html`
 
 **Do NOT** let the cron continue firing with `next_unit: null`. Auto-terminate.
 

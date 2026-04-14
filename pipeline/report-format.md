@@ -221,6 +221,30 @@ Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
 
 ---
 
+## HTML Report
+
+After any flow completes (single flow or loop pipeline), generate a self-contained HTML report:
+
+```bash
+node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
+```
+
+The tool (`bin/opc-report.mjs`) mechanically parses `.harness/` eval files and produces a dark-theme HTML page with:
+- Header: title, subtitle, date, git hash, overall verdict badge
+- Pipeline: visual node progression (from `loop-state.json` or `flow-state.json`)
+- Stat cards: R1 severity counts (🔴🟡🔵) + R2 fix status (✅⚠️❌)
+- R1 findings: per-reviewer severity breakdown tables
+- R2 fixes: disposition tables grouped by ✅ Fixed / ⚠️ Partial / ❌ Not Fixed
+- R2 verdicts: per-reviewer verdict with fix counts
+
+**Integration points:**
+- Flow completion (`skill.md` § Flow Completion & Replay, step 3)
+- Loop auto-termination (`loop-protocol.md` § Step 7, step 4)
+
+**No LLM judgment** — all counts and verdicts are regex-parsed from eval file content. The tool is a pure mechanical aggregator.
+
+---
+
 ## Replay
 
 Browse past reports with `/opc replay`. See `../replay.md` for the full replay skill.

@@ -305,7 +305,7 @@ The orchestrator uses **cursor-based execution** — `flow-state.json.currentNod
 
 Follow `./pipeline/discussion-protocol.md`.
 
-1. Dispatch agents serially for 3 rounds (Round 1: independent, Round 2: diffs only, Round 3: facilitator convergence).
+1. Dispatch agents for 3 rounds. **Round 1: parallel** (agents are independent — no reason to serialize). Round 2: serial with context injection (each agent sees Round 1 outputs, writes diffs only). Round 3: facilitator convergence.
 2. **Orchestrator writes handshake.json** after collecting all artifacts (agents don't write it).
 3. Discussion nodes produce no verdict — the decision artifact feeds downstream.
 
@@ -556,9 +556,13 @@ When the flow completes (route returns `next=null`):
 
 1. Show final viz: `opc-harness viz --flow {template} --dir .harness`
 2. Show summary: total steps, nodes visited, any loopbacks
-3. **Prompt the user:**
+3. **Generate HTML report:**
+   ```bash
+   node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
    ```
-   ✅ Flow complete! Want to see the replay?
-   Run: /opc replay
+   This produces a self-contained dark-theme HTML report with mechanically parsed stats, pipeline visualization, findings tables, and R2 fix tracking. Open it for the user.
+4. **Prompt the user:**
    ```
-   This opens the HTML Flow Replay viewer with animated playback of the entire execution.
+   ✅ Flow complete! Report: .harness/report.html
+   Want to see the replay? Run: /opc replay
+   ```
