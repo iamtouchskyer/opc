@@ -211,6 +211,9 @@ export function cmdSynthesize(args) {
   const totals = { critical: 0, warning: 0, suggestion: 0 };
   const thinEvalWarnings = [];
 
+  // --base <dir> — project root for validating file:line references in findings
+  const baseDir = getFlag(args, "base", null);
+
   for (const f of files) {
     let roleName;
     if (f.name.startsWith("eval-")) {
@@ -263,6 +266,47 @@ export function cmdSynthesize(args) {
     if (parsed.findingDensityLow) {
       totals.warning += 1;
       thinEvalWarnings.push(`${roleName}: finding density too low — ${parsed.findings_count} findings in ${parsed.lineCount} lines suggests bulk filler`);
+    }
+    // Layer: findings without reasoning — every finding must explain WHY
+    if (parsed.findings_count > 0 && parsed.missingReasoningRatio > 50) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: ${parsed.findingsWithoutReasoning}/${parsed.findings_count} findings lack reasoning — findings must explain why`);
+    }
+    // Layer: findings without fix suggestion — every finding must say HOW
+    if (parsed.findings_count > 0 && parsed.missingFixRatio > 50) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: ${parsed.findingsWithoutFix}/${parsed.findings_count} findings lack fix suggestion — findings must be actionable`);
+    }
+    // Layer: line length variance — uniform line lengths suggest template fill
+    if (parsed.lineLengthVarianceLow) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: suspiciously uniform line lengths — possible template fill`);
+    }
+
+    // Layer: file:line reality check (requires --base) — detect fabricated references
+    // This is the highest-value layer because it requires findings to reference REAL code.
+    let invalidRefCount = 0;
+    if (baseDir && parsed.findings.length > 0) {
+      for (const f of parsed.findings) {
+        if (f.file) {
+          const resolved = f.file.startsWith("/") ? f.file : join(baseDir, f.file);
+          if (!existsSync(resolved)) {
+            invalidRefCount++;
+          } else if (f.line != null) {
+            try {
+              const content = readFileSync(resolved, "utf8");
+              const fileLineCount = content.split("\n").length;
+              if (f.line < 1 || f.line > fileLineCount) {
+                invalidRefCount++;
+              }
+            } catch { invalidRefCount++; }
+          }
+        }
+      }
+      if (invalidRefCount > 0) {
+        totals.warning += invalidRefCount;
+        thinEvalWarnings.push(`${roleName}: ${invalidRefCount} finding(s) reference non-existent or out-of-range file:line — fabricated refs detected`);
+      }
     }
 
     roles.push({

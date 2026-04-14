@@ -657,4 +657,188 @@ assert_not_contains "no single heading" "$OUT" "heading.*multiple sections"
 assert_not_contains "no finding density" "$OUT" "finding density"
 assert_not_contains "no code refs warning" "$OUT" "0 file:line references"
 
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== TEST GROUP 6: Missing reasoning / fix detection ==="
+# ═══════════════════════════════════════════════════════════════
+
+echo "--- 6.1: Findings without reasoning → warning ---"
+mkdir -p .harness/nodes/code-review/run_1
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+cat > .harness/nodes/code-review/run_1/eval-noreason.md <<'EVALEOF'
+# Code Review
+
+## Architecture
+Clean modular structure with proper layering.
+Services abstract business logic from handlers.
+
+## Findings
+
+🔵 src/main.ts:10 — Import ordering inconsistent
+→ Group external imports before internal ones
+
+🔵 src/utils.ts:25 — Unused helper function
+→ Remove dead code
+
+🟡 src/auth.ts:15 — Token expiry not validated
+
+## Security
+No SQL injection. Auth middleware applied.
+CORS configured. Input validated on all endpoints.
+
+## Performance
+Queries indexed. No N+1 patterns found.
+Bundle size within acceptable limits.
+
+## Error Handling
+All async routes have try-catch blocks.
+Error responses include proper status codes.
+
+## Testing
+Unit test coverage is good for core modules.
+Integration tests cover critical user flows.
+
+## Summary
+Found 3 issues: 1 warning, 2 suggestions.
+Warning on token validation needs immediate fix.
+Code follows existing patterns consistently.
+
+VERDICT: ITERATE FINDINGS[3]
+EVALEOF
+
+OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
+assert_contains "missing reasoning detected" "$OUT" "findings lack reasoning"
+
+echo ""
+echo "--- 6.2: Findings WITH reasoning → no warning ---"
+cat > .harness/nodes/code-review/run_1/eval-reasoned.md <<'EVALEOF'
+# Code Review
+
+## Architecture
+Clean modular structure with proper layering.
+Services abstract business logic from handlers.
+
+## Findings
+
+🔵 src/main.ts:10 — Import ordering inconsistent
+→ Group external imports before internal ones
+Reasoning: Following the project's established convention.
+
+🔵 src/utils.ts:25 — Unused helper function
+→ Remove dead code
+Reasoning: Maintenance burden from dead code.
+
+🟡 src/auth.ts:15 — Token expiry not validated
+→ Add expiry check in middleware
+Reasoning: Security issue allowing expired sessions.
+
+## Security
+No SQL injection. Auth middleware applied.
+CORS configured. Input validated on all endpoints.
+
+## Performance
+Queries indexed. No N+1 patterns found.
+Bundle size within acceptable limits.
+
+## Error Handling
+All async routes have try-catch blocks.
+Error responses include proper status codes.
+
+## Testing
+Unit test coverage is good for core modules.
+Integration tests cover critical user flows.
+
+## Summary
+Found 3 issues: 1 warning, 2 suggestions.
+Warning on token validation needs immediate fix.
+Code follows existing patterns consistently.
+
+VERDICT: ITERATE FINDINGS[3]
+EVALEOF
+rm -f .harness/nodes/code-review/run_1/eval-noreason.md
+
+OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
+assert_not_contains "no reasoning warning for complete eval" "$OUT" "findings lack reasoning"
+
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== TEST GROUP 7: File:line reality check via --base ==="
+# ═══════════════════════════════════════════════════════════════
+
+echo "--- 7.1: Fabricated file:line refs caught with --base ---"
+# Create a project dir with short files
+mkdir -p project/src
+echo "// placeholder" > project/src/main.ts
+echo "// placeholder" > project/src/auth.ts
+
+# Eval references line 10 and line 15 — files only have 1 line
+cat > .harness/nodes/code-review/run_1/eval-faker.md <<'EVALEOF'
+# Code Review
+
+## Architecture
+Clean modular structure with proper layering.
+Services abstract business logic from handlers.
+
+## Findings
+
+🔵 src/main.ts:10 — Import ordering inconsistent
+→ Group external imports before internal ones
+Reasoning: Following convention.
+
+🔵 src/auth.ts:15 — Token expiry issue
+→ Add expiry check
+Reasoning: Security.
+
+## Security
+No injection vectors. Auth is solid.
+CORS and CSP properly configured.
+
+## Performance
+Queries use proper indexing throughout.
+No N+1 patterns detected anywhere.
+
+## Testing
+Good unit test coverage on core modules.
+Integration tests cover main flows.
+
+## Error Handling
+Try-catch on all async routes.
+Proper status codes returned.
+
+## Summary
+Two suggestions. Code quality is good overall.
+No critical vulnerabilities found in review.
+Patterns are consistently followed throughout.
+
+VERDICT: PASS FINDINGS[2]
+EVALEOF
+rm -f .harness/nodes/code-review/run_1/eval-reasoned.md
+
+OUT=$($HARNESS synthesize .harness --node code-review --base project 2>/dev/null)
+assert_contains "fabricated refs caught" "$OUT" "fabricated refs"
+assert_field_eq "verdict ITERATE (fake refs)" "$OUT" "verdict" '"ITERATE"'
+
+echo ""
+echo "--- 7.2: Valid file:line refs pass with --base ---"
+# Make files long enough
+python3 -c "
+for i in range(50):
+    print(f'const line{i+1} = \"implementation\";')
+" > project/src/main.ts
+python3 -c "
+for i in range(50):
+    print(f'const auth{i+1} = \"implementation\";')
+" > project/src/auth.ts
+
+OUT=$($HARNESS synthesize .harness --node code-review --base project 2>/dev/null)
+assert_not_contains "no fabricated refs for valid files" "$OUT" "fabricated refs"
+
+echo ""
+echo "--- 7.3: Without --base, file ref check is skipped ---"
+echo "// placeholder" > project/src/main.ts
+echo "// placeholder" > project/src/auth.ts
+
+OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
+assert_not_contains "no ref check without --base" "$OUT" "fabricated refs"
+
 print_results

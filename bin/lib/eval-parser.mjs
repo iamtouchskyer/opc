@@ -193,6 +193,25 @@ export function parseEvaluation(text) {
   const emojiLineCount = lines.filter(l => SEVERITY_RE.test(l)).length;
   const findingDensityLow = findingsCount > 0 && lineCount >= 50 && (emojiLineCount / lineCount) < 0.02;
 
+  // Layer: findings without reasoning — every finding should explain WHY
+  const findingsWithoutReasoning = findings.filter(f => !f.reasoning).length;
+  const missingReasoningRatio = findingsCount > 0 ? findingsWithoutReasoning / findingsCount : 0;
+
+  // Layer: findings without fix — every finding should say HOW to fix
+  const findingsWithoutFix = findings.filter(f => !f.fix).length;
+  const missingFixRatio = findingsCount > 0 ? findingsWithoutFix / findingsCount : 0;
+
+  // Layer: line length variance — real prose has varied line lengths
+  // Template fill-in tends to produce uniform lengths
+  const contentLineLengths = trimmedLines.filter(l => l.length > 5).map(l => l.length);
+  let lineLengthVarianceLow = false;
+  if (contentLineLengths.length >= 15) {
+    const mean = contentLineLengths.reduce((a, b) => a + b, 0) / contentLineLengths.length;
+    const variance = contentLineLengths.reduce((a, b) => a + (b - mean) ** 2, 0) / contentLineLengths.length;
+    const cv = Math.sqrt(variance) / mean; // coefficient of variation
+    lineLengthVarianceLow = cv < 0.15; // very uniform = suspicious
+  }
+
   return {
     verdict_present: verdictPresent,
     verdict,
@@ -215,5 +234,10 @@ export function parseEvaluation(text) {
     headingCount,
     singleHeading,
     findingDensityLow,
+    findingsWithoutReasoning,
+    missingReasoningRatio: Math.round(missingReasoningRatio * 100),
+    findingsWithoutFix,
+    missingFixRatio: Math.round(missingFixRatio * 100),
+    lineLengthVarianceLow,
   };
 }
