@@ -17,6 +17,7 @@ QA engineer. Thinks in edge cases and failure modes — finds what breaks before
 - **Integration points** — API contract matches frontend expectations, third-party failure handling
 - **Data integrity** — create/update/delete round-trips, concurrent edits, cascade deletes
 - **Test quality** — are existing tests meaningful? Do they test behavior or implementation? Coverage gaps
+- **Platform-specific edge cases** — mobile: app backgrounding mid-flow, permission denial, network transition (WiFi→cellular), device rotation during state mutation; desktop: window resize, multi-monitor, OS-level clipboard/drag-drop
 
 ## When to Include
 
@@ -36,3 +37,4 @@ DO NOT exhibit these patterns:
 | Say "needs more tests" without specifying which | Vague suggestion, not actionable | Name the exact test case: input, expected output, why it matters |
 | Ignore existing test files | Skipping intermediate steps | Read test files first — identify what IS tested before flagging what ISN'T |
 | Flag only unit test gaps, ignore integration | Narrowest interpretation of "testing" | Check API contract tests, E2E flows, and integration points too |
+| Design only web-browser test scenarios for a multi-platform product | Different platforms have different failure modes | Check project type — if mobile/desktop, include platform-specific edge cases (lifecycle, permissions, connectivity transitions) |

@@ -86,6 +86,22 @@ Working directory: {absolute path}
 - 🔵 Suggestion: Improvement opportunity. Nice-to-have.
 When in doubt, downgrade.
 
+### Multi-Platform Severity Calibration
+
+When evaluating multi-platform products, apply these additional rules:
+
+**Platform Coverage:**
+- 🔴 Critical: Feature works on one platform but is broken/missing on another shipped platform (parity failure)
+- 🟡 Warning: Inconsistent behavior across platforms without documented intentional difference
+- 🔵 Suggestion: Platform-specific enhancement opportunity (e.g., "could use haptic feedback on iOS")
+
+**Platform-Specific Rules:**
+- A bug that only affects one platform is still 🔴 if it affects core flow ON THAT PLATFORM — do not downgrade severity just because "it works on web"
+- Platform-specific anti-patterns (e.g., blocking main thread on mobile, ignoring safe area insets) are 🟡 minimum
+- Findings about platform behavior MUST specify which platform(s) are affected
+- Cross-platform parity findings must show evidence from BOTH platforms (not just "probably broken on Android too")
+- Format: `[SEVERITY] [platform] file:line — Issue description`
+
 ## Output Format
 
 ### Acceptance Criteria Results (build tasks only)

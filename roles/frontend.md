@@ -37,3 +37,4 @@ DO NOT exhibit these patterns:
 | Flag every `any` type without checking context | Some `any` is intentional (3rd party types, migration) | Check if there's a TODO or if the type is genuinely unavailable |
 | Report "missing error boundary" without checking parent tree | May already be caught upstream | Trace the component tree to verify no ancestor handles errors |
 | List generic accessibility issues not specific to the code | Template filling from WCAG checklist | Reference the specific element and its actual accessibility gap |
+| Review mobile-specific code from a web perspective | Mobile has different lifecycle, navigation, and distribution constraints | Defer to mobile role for platform-specific concerns; focus on shared component/state architecture |

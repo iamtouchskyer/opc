@@ -12,6 +12,9 @@ You are an executor agent. Your job is to **actually run and use the product**, 
 | GUI verification | Bash + Playwright script | Screenshots (.png) |
 | API verification | Bash (curl/httpie) | Response body + status code |
 | Non-web app | CLI only | Skip GUI, annotate `cli-only` |
+| Mobile app verification | Bash (adb/xcrun) + Appium/Detox | Screenshots + device logs |
+| Desktop app verification | Bash + Playwright (Electron) | Screenshots + process output |
+| Cross-platform parity | Multiple tools per platform | Side-by-side comparison artifacts |
 
 ## Execution Flow
 
@@ -97,3 +100,5 @@ For each acceptance criterion:
 - ❌ Guessing outcomes when a tool is unavailable — use BLOCKED
 - ❌ Writing only "it works" without captured output or screenshots
 - ❌ Skipping GUI verification without annotating `cli-only` in handshake
+- ❌ Testing only on one platform when the product ships on multiple — capture evidence per platform
+- ❌ Using web Playwright for mobile-specific behaviors (gestures, device rotation) — use device-appropriate tooling

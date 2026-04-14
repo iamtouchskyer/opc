@@ -16,6 +16,9 @@ Select 2-4 roles from the filtered pool. Recommended combinations:
 | Full-stack web app | tester, new-user, frontend |
 | Data pipeline | tester, backend, compliance |
 | Library/SDK | tester, engineer, devil-advocate |
+| Mobile app (RN/Flutter) | tester, mobile, new-user |
+| Cross-platform app | tester, mobile, frontend |
+| Desktop app (Electron/Tauri) | tester, frontend, engineer |
 
 Each role designs test cases from their angle — the tester thinks in edge cases and coverage; the end-user thinks in real workflows; the security reviewer thinks in attack surface.
 
@@ -34,7 +37,7 @@ You are reviewing the implementation from `{upstream build node}` and designing 
 For each test case, specify:
 
 1. **ID**: `TC-{ROLE}-{N}` (e.g., `TC-TESTER-01`, `TC-NEW-USER-03`)
-2. **Category**: One of: `api`, `e2e-ui`, `integration`, `edge-case`, `security`, `performance`
+2. **Category**: One of: `api`, `e2e-ui`, `integration`, `edge-case`, `security`, `performance`, `platform-mobile`, `platform-desktop`, `cross-platform`
 3. **Priority**: `P0` (must pass for ship) / `P1` (should pass) / `P2` (nice to verify)
 4. **Description**: What to test, in plain language
 5. **Steps**: Concrete steps the executor should follow
@@ -72,6 +75,15 @@ Write to: `.harness/nodes/test-design/run_{RUN}/eval-{role}.md`
 ## Coverage Assessment
 {What this role's cases cover and what they intentionally don't cover}
 
+### Platform Coverage Matrix (multi-platform projects only)
+If the project ships on multiple platforms, include a matrix showing test coverage per platform:
+
+| Feature | Web | iOS | Android | Desktop |
+|---------|-----|-----|---------|---------|
+| {feature} | TC-{ROLE}-{N} | TC-{ROLE}-{N} | TC-{ROLE}-{N} | — |
+
+Cells with "—" must note whether the platform is out of scope or genuinely untested (and if untested, why).
+
 ## VERDICT
 VERDICT: TEST-CASES [N] — N test cases designed
 ```
@@ -84,6 +96,7 @@ VERDICT: TEST-CASES [N] — N test cases designed
 - Aim for 5-15 cases per role. Fewer is fine if scope is narrow. More than 20 suggests you're testing too broadly — split by feature
 - Test cases MUST reference the actual implementation (endpoints, components, functions) — not hypothetical features
 - Include at least one negative test (what should fail/be rejected) per P0 feature
+- For multi-platform projects: at least one test case per role must target a platform-specific failure mode (not just "it renders correctly"). Include cases that verify behavior ACROSS platforms, not just ON each platform independently
 
 ---
 
