@@ -1,10 +1,11 @@
-// Evaluation analysis commands: verify, synthesize
-// Depends on: eval-parser.mjs, util.mjs
+// Evaluation analysis commands: verify, synthesize, tier-baseline
+// Depends on: eval-parser.mjs, tier-baselines.mjs, util.mjs
 
-import { readFileSync, readdirSync } from "fs";
+import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag } from "./util.mjs";
+import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS } from "./tier-baselines.mjs";
 
 export function cmdVerify(args) {
   const file = args[0];
@@ -200,5 +201,60 @@ export function cmdSynthesize(args) {
     reason = "all roles LGTM or suggestions only";
   }
 
-  console.log(JSON.stringify({ roles, totals, verdict, reason }, null, 2));
+  // ── Tier baseline coverage check ──────────────────────────────
+  let tierCoverage = null;
+  if (nodeIdx !== -1) {
+    try {
+      const harnessDir = dir;
+      const statePath = join(harnessDir, "flow-state.json");
+      if (existsSync(statePath)) {
+        const state = JSON.parse(readFileSync(statePath, "utf8"));
+        if (state.tier && VALID_TIERS.has(state.tier)) {
+          // Concatenate all eval text for coverage check
+          const allEvalText = files.map((f) => {
+            try { return readFileSync(f.path, "utf8"); } catch { return ""; }
+          }).join("\n");
+          const coverage = checkBaselineCoverage(allEvalText, state.tier);
+          tierCoverage = {
+            tier: state.tier,
+            covered: coverage.covered.length,
+            uncovered: coverage.uncovered.length,
+            uncoveredItems: coverage.uncovered,
+          };
+          // Uncovered baseline items with severity >= warning become warnings in synthesize output
+          for (const item of coverage.uncovered) {
+            if (item.severity === "warning" || item.severity === "critical") {
+              totals.warning += 1;
+              // Re-evaluate verdict — uncovered tier items are treated as warnings
+              if (verdict === "PASS") {
+                verdict = "ITERATE";
+                reason = `${reason}; tier baseline items uncovered`;
+              }
+            }
+          }
+        }
+      }
+    } catch { /* flow-state unreadable — skip tier check */ }
+  }
+
+  console.log(JSON.stringify({ roles, totals, verdict, reason, tierCoverage }, null, 2));
+}
+
+// ─── tier-baseline ──────────────────────────────────────────────
+
+export function cmdTierBaseline(args) {
+  const tier = getFlag(args, "tier");
+
+  if (!tier) {
+    console.error("Usage: opc-harness tier-baseline --tier <functional|polished|delightful>");
+    process.exit(1);
+  }
+
+  if (!VALID_TIERS.has(tier)) {
+    console.log(JSON.stringify({ error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})`, testCases: [] }));
+    return;
+  }
+
+  const testCases = generateTierTestCases(tier);
+  console.log(JSON.stringify({ tier, total: testCases.length, testCases }, null, 2));
 }

@@ -105,9 +105,10 @@ VERDICT: TEST-CASES [N] — N test cases designed
 1. Dispatch role evaluators in parallel using role-evaluator-prompt.md with the test-design appendix above
 2. Collect all `eval-{role}.md` files
 3. **Merge and deduplicate**: Combine test cases across roles. If two roles designed overlapping cases, keep the more specific one
-4. Write merged test plan to `.harness/nodes/test-design/run_{RUN}/test-plan.md`
-5. Write handshake.json with all eval files as artifacts
-6. The merged test-plan.md is the primary input for the downstream test-execute node
+4. **Auto-inject tier baseline test cases**: If the flow has a quality tier (`flow-state.json → tier`), run `opc-harness tier-baseline --tier {TIER}` and append the output test cases to the merged plan. These are P0 — non-negotiable. Do not deduplicate them away even if a role designed a similar case. The tier cases have standardized IDs (`TC-TIER-01`, `TC-TIER-02`, ...) and must appear verbatim.
+5. Write merged test plan to `.harness/nodes/test-design/run_{RUN}/test-plan.md`
+6. Write handshake.json with all eval files as artifacts
+7. The merged test-plan.md is the primary input for the downstream test-execute node
 
 ### Handshake
 

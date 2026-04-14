@@ -92,14 +92,17 @@ This product targets **{TIER}** quality tier (see `./pipeline/quality-tiers.md`)
 
 | Missing baseline item | `functional` | `polished` | `delightful` |
 |-----------------------|-------------|-----------|-------------|
-| No dark/light theme | — | 🟡 Warning | 🔴 Critical |
+| System font / no typography hierarchy | — | 🟡 Warning | 🔴 Critical |
+| No dark/light theme / hardcoded colors | — | 🟡 Warning | 🔴 Critical |
+| No structured navigation | — | 🔴 Critical | 🔴 Critical |
+| No responsive layout | — | 🔴 Critical | 🔴 Critical |
+| Default-styled code blocks | — | 🟡 Warning | 🔴 Critical |
+| Default-styled tables | — | 🟡 Warning | 🔴 Critical |
 | No loading states | 🔵 Suggestion | 🟡 Warning | 🔴 Critical |
 | No error/empty states | 🔵 Suggestion | 🟡 Warning | 🔴 Critical |
+| No favicon/meta tags | — | 🟡 Warning | 🔴 Critical |
 | No page transitions | — | 🔵 Suggestion | 🟡 Warning |
 | No micro-interactions | — | — | 🟡 Warning |
-| No favicon/meta tags | — | 🟡 Warning | 🔴 Critical |
-| No responsive layout | — | 🔴 Critical | 🔴 Critical |
-| System font only | — | 🟡 Warning | 🔴 Critical |
 | No keyboard focus styles | 🔵 Suggestion | 🟡 Warning | 🔴 Critical |
 
 ### Multi-Platform Severity Calibration

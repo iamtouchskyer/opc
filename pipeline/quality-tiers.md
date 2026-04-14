@@ -17,13 +17,16 @@ Baseline: none beyond acceptance criteria.
 Appropriate for: SaaS products, public-facing websites, SDK documentation sites, developer tools with UI.
 
 Baseline checklist — all items are **expected** at this tier:
-- [ ] Dark/light theme support (respects `prefers-color-scheme` at minimum; toggle preferred)
-- [ ] Responsive layout tested at 320px, 768px, 1024px, 1440px
+- [ ] **Typography** — intentional font stack (not system defaults). Heading/body/mono hierarchy with at least 2 distinct typefaces. Web fonts loaded with `font-display: swap`.
+- [ ] **Color scheme** — dark/light theme support (respects `prefers-color-scheme` at minimum; toggle preferred). Colors defined as CSS custom properties / design tokens, not hardcoded hex values.
+- [ ] **Navigation** — persistent, structured navigation (sidebar, top nav, or tabs — not inline links). Active state indicator. Collapsible on mobile.
+- [ ] **Responsive layout** — tested at 320px, 768px, 1024px, 1440px. Mobile-first breakpoints. No horizontal scroll on any viewport.
+- [ ] **Code blocks** (if applicable) — syntax-highlighted with theme-consistent colors. Horizontal scroll or wrap for long lines. Copy button.
+- [ ] **Tables** (if applicable) — styled rows (striped or bordered), hover effect, proper cell padding, horizontal scroll on mobile for wide tables.
 - [ ] Loading states for every async operation (skeleton or spinner, not blank)
 - [ ] Error states with recovery action (not just "something went wrong")
 - [ ] Empty states with guidance (not blank screens)
 - [ ] Favicon and meta tags (title, description, og:image)
-- [ ] Consistent spacing and typography scale (no magic numbers)
 - [ ] Focus-visible styles for keyboard navigation
 - [ ] Page title updates on navigation
 - [ ] Smooth scroll behavior
@@ -75,12 +78,16 @@ Tier adjusts severity for missing baseline items:
 
 | Missing baseline item | `functional` | `polished` | `delightful` |
 |-----------------------|-------------|-----------|-------------|
-| No dark/light theme | — (not expected) | 🟡 Warning | 🔴 Critical |
+| System font / no typography hierarchy | — | 🟡 Warning | 🔴 Critical |
+| No dark/light theme / hardcoded colors | — | 🟡 Warning | 🔴 Critical |
+| No structured navigation | — | 🔴 Critical | 🔴 Critical |
+| No responsive layout | — | 🔴 Critical | 🔴 Critical |
+| Default-styled code blocks | — | 🟡 Warning | 🔴 Critical |
+| Default-styled tables | — | 🟡 Warning | 🔴 Critical |
 | No loading states | 🔵 Suggestion | 🟡 Warning | 🔴 Critical |
+| No favicon/meta tags | — | 🟡 Warning | 🔴 Critical |
 | No page transitions | — | 🔵 Suggestion | 🟡 Warning |
 | No micro-interactions | — | — | 🟡 Warning |
-| No favicon/meta tags | — | 🟡 Warning | 🔴 Critical |
-| No responsive layout | — | 🔴 Critical | 🔴 Critical |
 
 The evaluator prompt includes: "This product targets **{tier}** quality tier. Apply the severity calibration from quality-tiers.md."
 

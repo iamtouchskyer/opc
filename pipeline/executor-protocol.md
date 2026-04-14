@@ -93,6 +93,35 @@ For each acceptance criterion:
 - Any scenario FAIL blocking core flow → verdict: FAIL
 - Tool unavailable → status: blocked (not a verdict)
 
+## Tier-Aware Verification (Zero Trust)
+
+If the flow has a quality tier set (`flow-state.json → tier`), the executor MUST capture Playwright screenshot evidence for each applicable baseline item. This is mechanical — not optional.
+
+**Before executing tier verification**, run:
+```bash
+opc-harness tier-baseline --tier {TIER}
+```
+This outputs the exact P0 test cases to execute. Each case has concrete steps.
+
+**Required evidence per baseline item (polished/delightful):**
+
+| Baseline item | Required evidence |
+|---|---|
+| Typography hierarchy | Screenshot showing heading + body with different typefaces |
+| Dark/light theme | Two screenshots: light mode + dark mode |
+| Structured navigation | Screenshot showing nav with active state indicator |
+| Responsive layout | Four screenshots: 320px, 768px, 1024px, 1440px width |
+| Styled code blocks | Screenshot showing syntax-highlighted code with copy button |
+| Styled tables | Screenshot showing styled table with hover row |
+| Loading states | Screenshot captured during async load (skeleton/spinner visible) |
+| Error states | Screenshot of error state with recovery action |
+| Favicon/meta tags | Screenshot of browser tab showing favicon + page source check |
+| Focus styles | Screenshot showing focus ring during keyboard navigation |
+
+**Evidence file naming**: `screenshot-tier-{baseline-key}.png` (e.g., `screenshot-tier-dark-mode-light.png`, `screenshot-tier-dark-mode-dark.png`)
+
+**If a baseline item cannot be verified** (e.g., no code blocks in the product), annotate in the handshake summary: `"tier-skip: {key} — not applicable (no code blocks in product)"`. The evaluator will check whether the skip is justified.
+
 ## Anti-Patterns
 
 - ❌ Reviewing code instead of running the product

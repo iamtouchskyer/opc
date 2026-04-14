@@ -11,6 +11,7 @@ import {
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
+import { VALID_TIERS } from "./tier-baselines.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -49,11 +50,17 @@ export function cmdRoute(args) {
 export function cmdInit(args) {
   const flow = getFlag(args, "flow");
   const entry = getFlag(args, "entry");
+  const tier = getFlag(args, "tier");
   const dir = resolveDir(args);
 
   if (!flow) {
-    console.error("Usage: opc-harness init --flow <template> --entry <nodeId> --dir <path>");
+    console.error("Usage: opc-harness init --flow <template> --entry <nodeId> [--tier <functional|polished|delightful>] --dir <path>");
     process.exit(1);
+  }
+
+  if (tier && !VALID_TIERS.has(tier)) {
+    console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
+    return;
   }
 
   const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
@@ -82,6 +89,7 @@ export function cmdInit(args) {
     flowTemplate: flow,
     currentNode: entryNode,
     entryNode,
+    tier: tier || null,
     totalSteps: 0,
     maxTotalSteps: template.limits.maxTotalSteps,
     maxLoopsPerEdge: template.limits.maxLoopsPerEdge,
@@ -111,7 +119,7 @@ export function cmdInit(args) {
   vizLines.push("");
   console.error(vizLines.join("\n"));
 
-  console.log(JSON.stringify({ created: true, flow, entry: entryNode }));
+  console.log(JSON.stringify({ created: true, flow, entry: entryNode, tier: tier || null }));
 }
 
 // ─── validate ───────────────────────────────────────────────────

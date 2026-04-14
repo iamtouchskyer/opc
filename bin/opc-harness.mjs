@@ -3,7 +3,7 @@
 // opc-harness — Mechanical verification for OPC evaluations
 // This is the CLI entry point. All logic lives in lib/.
 
-import { cmdVerify, cmdSynthesize } from "./lib/eval-commands.mjs";
+import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.mjs";
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
 import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transition.mjs";
@@ -38,6 +38,7 @@ switch (command) {
   case "stop":         cmdStop(args);          break;
   case "goto":         cmdGoto(args);          break;
   case "ls":           cmdLs(args);            break;
+  case "tier-baseline": cmdTierBaseline(args);  break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -66,6 +67,8 @@ switch (command) {
     console.log("  synthesize <dir> --node <id> [--run N]             Merge evaluations → verdict");
     console.log("  report <dir> --mode <m> --task <t>                 Generate full report JSON");
     console.log("  diff <file1> <file2>                               Compare two evaluation rounds");
+    console.log("  tier-baseline --tier <functional|polished|delightful>");
+    console.log("                                                     Generate P0 test cases for tier");
     console.log();
     console.log("Loop commands (Layer 2 — zero trust):");
     console.log("  init-loop [--plan <file>] [--dir <p>]              Init loop state");
