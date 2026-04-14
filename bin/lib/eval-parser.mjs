@@ -175,6 +175,24 @@ export function parseEvaluation(text) {
   const fileLineRefCount = (text.match(/[\w./-]+\.\w+:\d+/g) || []).length;
   const noCodeRefs = fileLineRefCount === 0;
 
+  // ── Compound defense layers (probability stacking) ──────────────
+  // Each check is independently bypassable, but stacking them multiplies
+  // the effort required to produce garbage that passes all gates.
+
+  // Layer: unique content ratio — detect copy-paste padding
+  const trimmedLines = lines.map(l => l.trim()).filter(l => l.length > 0);
+  const uniqueLines = new Set(trimmedLines);
+  const uniqueRatio = trimmedLines.length > 0 ? uniqueLines.size / trimmedLines.length : 0;
+  const lowUniqueContent = trimmedLines.length >= 20 && uniqueRatio < 0.6;
+
+  // Layer: heading structure — real reviews have multiple sections
+  const headingCount = lines.filter(l => /^#{1,3}\s+\S/.test(l)).length;
+  const singleHeading = headingCount <= 1 && lineCount >= 30;
+
+  // Layer: finding density — if findings declared, emoji lines should be proportional
+  const emojiLineCount = lines.filter(l => SEVERITY_RE.test(l)).length;
+  const findingDensityLow = findingsCount > 0 && lineCount >= 50 && (emojiLineCount / lineCount) < 0.02;
+
   return {
     verdict_present: verdictPresent,
     verdict,
@@ -191,5 +209,11 @@ export function parseEvaluation(text) {
     thinEval,
     noCodeRefs,
     fileLineRefCount,
+    // Compound defense layers
+    uniqueRatio: Math.round(uniqueRatio * 100),
+    lowUniqueContent,
+    headingCount,
+    singleHeading,
+    findingDensityLow,
   };
 }

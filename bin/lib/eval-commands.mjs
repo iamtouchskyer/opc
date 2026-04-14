@@ -245,6 +245,26 @@ export function cmdSynthesize(args) {
       thinEvalWarnings.push(`${roleName}: eval has 0 file:line references — findings not grounded in code`);
     }
 
+    // ── Compound defense layers (probability stacking) ──────
+    // Each is independently ~30% bypassable, but stacked:
+    // 5 layers × 30% each = 0.3^5 = 0.24% bypass probability.
+
+    // Layer: low unique content ratio → copy-paste padding detected
+    if (parsed.lowUniqueContent) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: low unique content (${parsed.uniqueRatio}% unique lines) — possible copy-paste padding`);
+    }
+    // Layer: single heading in a 30+ line eval → no structural diversity
+    if (parsed.singleHeading) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: only ${parsed.headingCount} heading(s) in ${parsed.lineCount} lines — real reviews have multiple sections`);
+    }
+    // Layer: findings declared but emoji density too low → bulk filler
+    if (parsed.findingDensityLow) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: finding density too low — ${parsed.findings_count} findings in ${parsed.lineCount} lines suggests bulk filler`);
+    }
+
     roles.push({
       role: roleName,
       critical: parsed.critical,
@@ -254,6 +274,9 @@ export function cmdSynthesize(args) {
       thinEval: parsed.thinEval || false,
       noCodeRefs: parsed.noCodeRefs || false,
       lineCount: parsed.lineCount,
+      lowUniqueContent: parsed.lowUniqueContent || false,
+      singleHeading: parsed.singleHeading || false,
+      findingDensityLow: parsed.findingDensityLow || false,
     });
 
     totals.critical += parsed.critical;
@@ -332,8 +355,10 @@ export function cmdSynthesize(args) {
 
     if (planText) {
       const lowerPlan = planText.toLowerCase();
+      const planLines = planText.split("\n");
       const covered = [];
       const missing = [];
+      const shallow = [];
       for (const layer of TEST_LAYERS) {
         const keywords = TEST_LAYER_KEYWORDS[layer];
         const found = keywords.some(kw => lowerPlan.includes(kw));
@@ -344,12 +369,61 @@ export function cmdSynthesize(args) {
           totals.warning += 1;
         }
       }
-      testPlanCoverage = { covered, missing };
-      if (missing.length > 0 && verdict === "PASS") {
-        verdict = "ITERATE";
-        reason = `${reason}; test plan missing layers: ${missing.map(m => m.layer).join(", ")}`;
-      } else if (missing.length > 0 && verdict === "ITERATE") {
-        reason = `${reason}; test plan missing layers: ${missing.map(m => m.layer).join(", ")}`;
+
+      // ── Compound defense: section depth check ─────────────
+      // For each covered layer, find the section and verify it has ≥3
+      // non-empty lines of actual content (not just a heading).
+      // Bypass probability: ~20% (must write 3+ real lines per section).
+      for (const layer of covered) {
+        const keywords = TEST_LAYER_KEYWORDS[layer];
+        // Find heading line that contains a layer keyword
+        let sectionStart = -1;
+        for (let i = 0; i < planLines.length; i++) {
+          const lower = planLines[i].toLowerCase();
+          if (/^#{1,3}\s/.test(planLines[i]) && keywords.some(kw => lower.includes(kw))) {
+            sectionStart = i;
+            break;
+          }
+        }
+        if (sectionStart === -1) continue;
+
+        // Count non-empty content lines until next heading or EOF
+        let contentLines = 0;
+        for (let i = sectionStart + 1; i < planLines.length; i++) {
+          if (/^#{1,3}\s/.test(planLines[i])) break;
+          if (planLines[i].trim().length > 0) contentLines++;
+        }
+        if (contentLines < 3) {
+          shallow.push({ layer, label: TEST_LAYER_LABELS[layer], contentLines });
+          totals.warning += 1;
+        }
+      }
+
+      // ── Compound defense: actionable command density ──────
+      // Real test plans contain executable commands. Zero commands = suspicious.
+      // Matches: npm test, npx ..., pytest, vitest, jest, playwright, curl, etc.
+      const CMD_RE = /\b(npm\s+(test|run)|npx\s+\w|pytest|vitest|jest|playwright\s+test|curl\s+|bash\s+|sh\s+|node\s+|python[3]?\s+)/i;
+      const cmdLineCount = planLines.filter(l => CMD_RE.test(l)).length;
+      const noActionableCommands = cmdLineCount === 0 && planLines.length >= 10;
+
+      testPlanCoverage = { covered, missing, shallow: shallow.length > 0 ? shallow : undefined, cmdLineCount, noActionableCommands: noActionableCommands || undefined };
+
+      if (noActionableCommands) {
+        totals.warning += 1;
+      }
+
+      const issues = [];
+      if (missing.length > 0) issues.push(`missing layers: ${missing.map(m => m.layer).join(", ")}`);
+      if (shallow.length > 0) issues.push(`shallow sections: ${shallow.map(s => s.layer).join(", ")}`);
+      if (noActionableCommands) issues.push("0 actionable commands in test plan");
+
+      if (issues.length > 0) {
+        if (verdict === "PASS") {
+          verdict = "ITERATE";
+          reason = `${reason}; test plan: ${issues.join("; ")}`;
+        } else if (verdict === "ITERATE") {
+          reason = `${reason}; test plan: ${issues.join("; ")}`;
+        }
       }
     }
   }
