@@ -189,27 +189,39 @@ assert_field_eq "finalize non-terminal" "$OUT" "finalized" "false"
 assert_contains "non-terminal msg" "$OUT" "not a terminal"
 
 echo ""
-echo "--- 4.4: finalize with missing handshake at terminal ---"
+echo "--- 4.4: finalize with missing handshake at terminal gate (auto-creates) ---"
 rm -rf .h-fin4 && $HARNESS init --flow review --entry gate --dir .h-fin4 >/dev/null 2>/dev/null
-# gate PASS→null so it's terminal, but no handshake.json
+# gate PASS→null so it's terminal. finalize auto-creates gate handshake
+# (commit f61d70e: terminal gate finalize auto-writes handshake).
 OUT=$($HARNESS finalize --dir .h-fin4 2>/dev/null)
-assert_field_eq "finalize no hs" "$OUT" "finalized" "false"
-assert_contains "handshake not found" "$OUT" "handshake.json not found"
+assert_field_eq "finalize auto-creates terminal gate handshake" "$OUT" "finalized" "true"
+if [ -f ".h-fin4/nodes/gate/handshake.json" ]; then
+  echo "  ✅ gate handshake auto-written to disk"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ gate handshake not auto-written"
+  FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "--- 4.5: finalize with non-completed terminal handshake ---"
-mkdir -p .h-fin4/nodes/gate
-cat > .h-fin4/nodes/gate/handshake.json << 'HS'
+# Use fresh dir — 4.4's successful finalize sets state.status=completed.
+rm -rf .h-fin5 && $HARNESS init --flow review --entry gate --dir .h-fin5 >/dev/null 2>/dev/null
+mkdir -p .h-fin5/nodes/gate
+cat > .h-fin5/nodes/gate/handshake.json << 'HS'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"failed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
-OUT=$($HARNESS finalize --dir .h-fin4 2>/dev/null)
+OUT=$($HARNESS finalize --dir .h-fin5 2>/dev/null)
 assert_field_eq "finalize bad status" "$OUT" "finalized" "false"
 assert_contains "status not completed" "$OUT" "status is"
 
 echo ""
 echo "--- 4.6: finalize with corrupt terminal handshake ---"
-echo "not json" > .h-fin4/nodes/gate/handshake.json
-OUT=$($HARNESS finalize --dir .h-fin4 2>/dev/null)
+# Fresh dir — pre-existing handshake must be corrupted before finalize runs.
+rm -rf .h-fin6 && $HARNESS init --flow review --entry gate --dir .h-fin6 >/dev/null 2>/dev/null
+mkdir -p .h-fin6/nodes/gate
+echo "not json" > .h-fin6/nodes/gate/handshake.json
+OUT=$($HARNESS finalize --dir .h-fin6 2>/dev/null)
 assert_field_eq "finalize corrupt hs" "$OUT" "finalized" "false"
 assert_contains "corrupt hs msg" "$OUT" "cannot parse"
 
@@ -373,10 +385,58 @@ assert_contains "warning reason" "$OUT" "warning"
 echo ""
 echo "--- 7.2: Synthesize PASS verdict (suggestions only) ---"
 rm -rf .h-synth2 && mkdir -p .h-synth2/nodes/code-review/run_1
+# Eval must be fat enough (≥50 lines, multiple sections, diverse content)
+# to clear the compound defense thin-eval / single-heading / variance layers.
 cat > .h-synth2/nodes/code-review/run_1/eval-engineer.md << 'EVAL'
 # Engineer Review
+
+## Context
+Reviewed the stylesheet for maintainability and consistency.
+Checked naming conventions, variable usage, and selector specificity.
+The codebase uses a mix of modules with varying maturity levels.
+Primary focus: tokens, layout, responsive behavior, and animation timing.
+Secondary focus: specificity, inheritance, and cascade interactions.
+
+## Methodology
+Walked through the stylesheet file by file noting patterns.
+Each section was examined for repetition that could be abstracted.
+Color values and spacing units received particular attention.
+Browser prefix coverage was cross-checked against caniuse data.
+Animation easing curves were verified against the design tokens.
+
+## Findings
+
+🔵 Consider using CSS variables — style.css:5 — hex color #3366cc appears 7 times
+→ Extract to --color-primary custom property declared at :root
+Reasoning: Centralizing color definitions makes theme updates trivial and prevents drift across components.
+
+## Positive Observations
+The selector specificity is generally well-controlled throughout the file.
+No !important declarations were found outside the reset block.
+Media queries are consistently ordered mobile-first with logical breakpoints.
+Animation durations use a reasonable set of values (100ms, 200ms, 400ms).
+Z-index values are clustered in recognizable ranges by layer role.
+Font stack declarations include appropriate fallbacks for all major platforms.
+Focus styles are present on every interactive element.
+Hover states respect the prefers-reduced-motion media query.
+
+## Areas Reviewed
+Color and typography tokens were audited against the design system.
+Layout and spacing systems use a consistent 4px base unit throughout.
+Component class naming follows a BEM-inspired convention reliably.
+Responsive breakpoint usage is consistent across pages and components.
+Animation and transition timing matches the documented motion tokens.
+Browser prefix coverage is appropriate for the stated support matrix.
+Custom scrollbar styles are gated behind feature detection.
+Print stylesheet is minimal but covers the critical reset cases.
+
+## Conclusion
+The stylesheet is in good shape overall and ready for the next release cycle.
+One minor optimization suggestion was noted above in the findings section.
+No blocking issues were identified during this pass of the codebase.
+The team has clearly invested in CSS architecture and it shows in the quality.
+
 VERDICT: PASS FINDINGS[1]
-🔵 Minor — style.css:5 — consider using variables
 EVAL
 OUT=$($HARNESS synthesize .h-synth2 --node code-review)
 assert_contains "PASS verdict" "$OUT" "PASS"
@@ -419,7 +479,61 @@ assert_contains "evaluator role" "$OUT" "evaluator"
 echo ""
 echo "--- 7.7: Synthesize ROUND_RE filter ---"
 rm -rf .h-wave && mkdir -p .h-wave/.harness
+# Fat eval to clear compound defense — legacy --wave mode still runs
+# synthesize against eval-parser which applies thin-eval checks.
 cat > .h-wave/.harness/evaluation-wave-1-security.md << 'EVAL'
+# Security Review
+
+## Scope
+Reviewed authentication, authorization, input validation, and data storage.
+Scanned for OWASP Top 10 categories with a focus on injection and broken access control.
+Verified session and token lifecycle end-to-end for the critical user journeys.
+
+## Methodology
+Walked through each request handler end-to-end from entry to response.
+Cross-referenced with the existing security headers configuration file.
+Verified that secrets do not appear in logs or error messages on any path.
+Ran a static analysis sweep focused on taint sources and sinks in handlers.
+Checked that all outbound HTTP calls validate the target host before dispatch.
+
+## Areas Reviewed
+Session management and token handling across all authenticated endpoints.
+SQL query construction and parameterization in the data access layer.
+User input sanitization on all public-facing and internal-public endpoints.
+File upload handling, MIME validation, and storage path containment.
+Rate limiting configuration on authentication and password-reset endpoints.
+Outbound request validation to prevent server-side request forgery attacks.
+Cookie attributes including Secure, HttpOnly, SameSite, and Domain scope.
+Content Security Policy headers and their effective directives.
+
+## Positive Observations
+Password hashing uses a modern algorithm with appropriate cost factor.
+JWT tokens are signed with an asymmetric key and include sensible expiration.
+All database queries use parameterized statements via the ORM layer.
+CORS is configured narrowly to the known production and staging origins.
+Secrets are loaded from environment variables and are never logged.
+Security headers are applied consistently via middleware on every response.
+Error responses avoid leaking stack traces or internal identifiers.
+Session invalidation on logout clears both server and client state.
+
+## Cross-Cutting Concerns
+The team maintains a security posture document updated each release.
+Dependency scanning runs in CI and blocks merges on critical advisories.
+Penetration test findings from the last engagement have all been resolved.
+A threat model exists for the authentication subsystem and is current.
+
+## No Findings
+No critical, warning, or suggestion-level issues were found during this pass.
+The codebase demonstrates mature security hygiene across all surfaces reviewed.
+No follow-up actions are required from this review cycle at this time.
+
+## Summary
+The security review concluded without identifying any defects.
+The combination of architectural discipline and tooling investment shows.
+Recommendation is to proceed to the next stage of the release process.
+Continue current practices for dependency hygiene and CI security gates.
+A follow-up review of the new microservice is scheduled for next sprint.
+
 VERDICT: PASS FINDINGS[0]
 EVAL
 # This round file should be excluded

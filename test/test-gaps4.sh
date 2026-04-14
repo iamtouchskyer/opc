@@ -543,17 +543,23 @@ rm -rf "$D"
 echo ""
 echo "── 4.4: synthesize — run flag selects specific run directory"
 # eval-commands.mjs L85-86: --run flag
+# Evals must be fat (≥50 lines) to clear compound defense thin-eval layer.
 D=$(mktemp -d)
 mkdir -p "$D/nodes/code-review/run_1"
 mkdir -p "$D/nodes/code-review/run_2"
-cat > "$D/nodes/code-review/run_1/eval-old.md" << 'EVAL'
-🔴 critical — old finding
-VERDICT: FAIL FINDINGS[1]
-EVAL
-cat > "$D/nodes/code-review/run_2/eval-new.md" << 'EVAL'
-🔵 suggestion — minor thing
-VERDICT: PASS FINDINGS[1]
-EVAL
+# Generate fat evals programmatically to avoid heredoc bloat
+python3 -c "
+header = '# Code Review\n\n## Scope\nThe review covered the entire module with focus on correctness and reliability.\n\n## Methodology\n'
+body = '\n'.join(['Walked through step {} of the data flow and verified the expected behavior.'.format(i) for i in range(1, 40)])
+footer = '\n\n## Findings\n🔴 critical — old.js:1 — old finding from run_1\n→ Fix the issue immediately\nReasoning: This is a regression from the previous version and blocks release.\n\n## Conclusion\nOne critical issue found.\n\nVERDICT: FAIL FINDINGS[1]\n'
+open('$D/nodes/code-review/run_1/eval-old.md', 'w').write(header + body + footer)
+"
+python3 -c "
+header = '# Code Review\n\n## Scope\nThe review examined the fix applied in the second run of this unit.\n\n## Methodology\n'
+body = '\n'.join(['Validated that layer {} now behaves correctly after the fix.'.format(i) for i in range(1, 40)])
+footer = '\n\n## Findings\n🔵 suggestion — new.js:2 — minor style thing\n→ Use a more descriptive variable name here\nReasoning: The name does not communicate intent to readers unfamiliar with the module.\n\n🔵 suggestion — new.js:8 — add a brief comment above the helper function\n→ Document the pre-condition the caller must uphold\nReasoning: The function assumes sorted input but this is not obvious from the signature.\n\n## Conclusion\nTwo minor style suggestions remain.\n\nVERDICT: PASS FINDINGS[2]\n'
+open('$D/nodes/code-review/run_2/eval-new.md', 'w').write(header + body + footer)
+"
 OUT=$($HARNESS synthesize "$D" --node code-review --run 2 2>/dev/null)
 assert_field_eq "$OUT" "['verdict']" "PASS" "4.4a: --run 2 uses run_2 (PASS verdict)"
 # Verify run_1 would give FAIL
@@ -593,9 +599,20 @@ echo "── 5.1: getMarker — entryNode visited but not current → ✅"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow review --dir . > /dev/null 2>&1
-mkdir -p nodes/review
+# Review node needs ≥2 distinct eval artifacts for transition to succeed.
+mkdir -p nodes/review/run_1
+cat > nodes/review/run_1/eval-a.md << 'EVAL'
+# Reviewer A
+Checked the implementation for correctness and style.
+No blocking issues found in this pass.
+EVAL
+cat > nodes/review/run_1/eval-b.md << 'EVAL'
+# Reviewer B
+Traced the data flow through the core module.
+Identified no regressions relative to the prior version.
+EVAL
 cat > nodes/review/handshake.json << 'HS'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 HS
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 OUT=$($HARNESS viz --flow review --dir . 2>/dev/null)

@@ -46,11 +46,13 @@ echo "=== PART 1: 🔴 HIGH — flow-core.mjs findings non-numeric ==="
 echo ""
 echo "── 1.1: findings.critical with non-numeric string value"
 # flow-core.mjs L167-170: (data.findings.critical || 0) > 0
+# Use nodeType=build to isolate this test from review independence check
+# (the test is about findings.critical numeric validation, not review logic).
 D=$(mktemp -d)
 cat > "$D/hs.json" << 'EOF'
 {
   "nodeId": "test",
-  "nodeType": "review",
+  "nodeType": "build",
   "runId": "run_1",
   "status": "completed",
   "summary": "test",
@@ -65,7 +67,7 @@ assert_field_eq "$OUT" "['valid']" "True" "1.1a: non-numeric findings.critical d
 cat > "$D/hs2.json" << 'EOF'
 {
   "nodeId": "test",
-  "nodeType": "review",
+  "nodeType": "build",
   "runId": "run_1",
   "status": "completed",
   "summary": "test",
@@ -297,10 +299,20 @@ echo "── 8.2: transition stderr viz output contains markers"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
-mkdir -p nodes/review
-# Must include ALL required fields including runId and artifacts for pre-transition check
+# Review node needs ≥2 distinct eval artifacts for transition pre-check to pass.
+mkdir -p nodes/review/run_1
+cat > nodes/review/run_1/eval-alpha.md << 'EVAL'
+# Reviewer Alpha
+Examined the module boundaries and public interface.
+No issues found with the current contract.
+EVAL
+cat > nodes/review/run_1/eval-beta.md << 'EVAL'
+# Reviewer Beta
+Audited error handling paths and exception propagation.
+All error cases have appropriate recovery logic.
+EVAL
 cat > nodes/review/handshake.json << 'EOF'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-alpha.md"},{"type":"eval","path":"run_1/eval-beta.md"}]}
 EOF
 sleep 2
 STDERR_FILE=$(mktemp)

@@ -166,11 +166,59 @@ echo ""
 echo "=== PART 2: finalize --strict ==="
 # ═══════════════════════════════════════════════════════════════════
 
-# Helper: write a valid handshake for a node
+# Helper: write a valid handshake for a node.
+# For review nodes, also creates 2 distinct eval files to satisfy
+# the review independence check (≥2 distinct eval artifacts).
 write_handshake() {
   local dir="$1" node="$2" ntype="$3" status="$4"
   mkdir -p "$dir/nodes/$node"
-  cat > "$dir/nodes/$node/handshake.json" << HSEOF
+  if [ "$ntype" = "review" ]; then
+    mkdir -p "$dir/nodes/$node/run_1"
+    cat > "$dir/nodes/$node/run_1/eval-security.md" << 'EVAL'
+# Security Review
+## Summary
+Reviewed the authentication flow for common vulnerabilities.
+Checked for SQL injection, XSS, CSRF, and session fixation issues.
+
+## Findings
+🔵 suggestion — auth.js:42 — prefer const for immutable bindings
+→ Change `let user = ...` to `const user = ...`
+Reasoning: const signals immutability and enables compile-time checks.
+
+## Conclusion
+No critical security issues found. One style suggestion only.
+EVAL
+    cat > "$dir/nodes/$node/run_1/eval-performance.md" << 'EVAL'
+# Performance Review
+## Approach
+Profiled the hot path under typical load. Reviewed algorithmic complexity.
+Measured allocation patterns and database query counts.
+
+## Findings
+🔵 suggestion — handler.js:20 — cache the result of expensive computation
+→ Wrap the function in a memoize helper
+Reasoning: The same input is queried many times per request cycle.
+
+## Conclusion
+No performance regressions. One optimization opportunity noted.
+EVAL
+    cat > "$dir/nodes/$node/handshake.json" << HSEOF
+{
+  "nodeId": "$node",
+  "nodeType": "$ntype",
+  "runId": "run_1",
+  "status": "$status",
+  "summary": "done",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "artifacts": [
+    {"type": "eval", "path": "run_1/eval-security.md"},
+    {"type": "eval", "path": "run_1/eval-performance.md"}
+  ],
+  "verdict": null
+}
+HSEOF
+  else
+    cat > "$dir/nodes/$node/handshake.json" << HSEOF
 {
   "nodeId": "$node",
   "nodeType": "$ntype",
@@ -182,6 +230,7 @@ write_handshake() {
   "verdict": null
 }
 HSEOF
+  fi
 }
 
 # ─────────────────────────────────────────────────────────────────
