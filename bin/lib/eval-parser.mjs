@@ -43,14 +43,19 @@ export function parseEvaluation(text) {
       hasFileRefs = true;
     }
 
-    // Severity / finding detection (skip markdown headings)
+    // Severity / finding detection (skip markdown headings and section labels)
     const sevMatch = trimmed.match(SEVERITY_RE);
     if (sevMatch && !trimmed.startsWith("#")) {
-      const severity = SEVERITY_MAP[sevMatch[1]];
-      severityCounts[severity]++;
-
       const fileMatch = trimmed.match(FILE_REF_RE);
       const dashIdx = trimmed.indexOf("—");
+
+      // Skip section labels like "🔴 Must Fix:" — require em-dash or file ref to count as finding
+      if (dashIdx === -1 && !fileMatch && trimmed.endsWith(":")) {
+        continue;
+      }
+
+      const severity = SEVERITY_MAP[sevMatch[1]];
+      severityCounts[severity]++;
       const issue = dashIdx !== -1 ? trimmed.slice(dashIdx + 1).trim() : trimmed;
 
       let filePath = null;
