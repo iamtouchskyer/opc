@@ -15,7 +15,12 @@ function arg(name, fallback) {
 const DIR = arg('dir', null);
 const OUTPUT = arg('output', null);
 const TITLE = arg('title', 'OPC Report');
+if (args.includes('--help') || args.includes('-h')) {
+  console.log('Usage: opc-report.mjs --dir <harness-dir> [--output file.html] [--title "..."]');
+  process.exit(0);
+}
 if (!DIR) { console.error('Usage: opc-report.mjs --dir <harness-dir> [--output file.html] [--title "..."]'); process.exit(1); }
+if (!existsSync(DIR)) { console.error(`Error: directory not found: ${DIR}`); process.exit(1); }
 
 // --- Helpers ---
 function tryReadJSON(p) { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } }
@@ -40,7 +45,7 @@ function collectEvals(dir) {
         if (!result[nodeId]) result[nodeId] = [];
         const isR2 = f.endsWith('-r2.md');
         // Skip non-R2 eval files in R2 node directories (meta-reviews)
-        if (!isR2 && nodeId.toLowerCase().startsWith('r2')) continue;
+        if (!isR2 && /^r2\./i.test(nodeId)) continue;
         result[nodeId].push({ file: f, content, isR2, nodeId });
       }
     }
@@ -65,6 +70,12 @@ function parseFindings(content) {
     if (m) {
       if (current) findings.push(current);
       current = { num: m[1], title: m[2].trim(), severity: null, location: null, status: null };
+      continue;
+    }
+    // Non-finding heading (## without numbered pattern) — reset current to avoid status leakage
+    if (/^#{2,3}\s+/.test(line) && !m) {
+      if (current) findings.push(current);
+      current = null;
       continue;
     }
     if (!current) continue;
