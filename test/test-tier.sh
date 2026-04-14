@@ -197,6 +197,8 @@ Focus-visible styles: custom focus ring on all interactive elements. Keyboard na
 
 Page transitions: smooth fade between views — not hard cuts.
 
+TESTING.md present with feature inventory, setup instructions, and cleanup steps.
+
 ## VERDICT
 VERDICT: LGTM — nothing found after thorough review
 EVAL

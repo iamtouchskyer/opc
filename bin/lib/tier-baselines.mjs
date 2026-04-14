@@ -124,6 +124,25 @@ export const TIER_BASELINES = [
     },
   },
   {
+    key: "testing-md",
+    label: "TESTING.md with feature inventory",
+    keywords: ["testing.md", "testing doc", "feature inventory", "qa doc", "test documentation"],
+    severity: { functional: null, polished: "warning", delightful: "critical" },
+    testCase: {
+      category: "integration",
+      description: "Verify TESTING.md exists with environment setup, feature inventory, and cleanup instructions for someone who has never seen the source code.",
+      steps: [
+        "Check that TESTING.md exists in project root",
+        "Verify it contains: environment setup with exact commands",
+        "Verify it contains: feature inventory table (feature, command/entry point, expected behavior)",
+        "Verify it contains: cleanup/reset instructions between test runs",
+        "Verify instructions are copy-paste-able by someone without source code access",
+      ],
+      expected: "TESTING.md exists with setup, feature inventory, and cleanup sections. All instructions work from a clean environment.",
+      failureImpact: "QA and new contributors cannot test the product without reading source code — black-box testing impossible.",
+    },
+  },
+  {
     key: "loading-states",
     label: "Loading states",
     keywords: ["loading", "spinner", "skeleton", "async", "loading state"],
