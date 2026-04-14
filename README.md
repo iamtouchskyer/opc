@@ -40,7 +40,11 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 npm install -g @touchskyer/opc
 ```
 
-Skill files are automatically copied to `~/.claude/skills/opc/`.
+Skill files are automatically copied to `~/.claude/skills/opc/`. If the postinstall fails, run `opc install` manually.
+
+#### Claude Code plugin (edge-agents marketplace)
+
+OPC can also be installed as an edge-agents marketplace plugin. The `.claude-plugin/` directory in this repo provides the plugin manifest. To use it, add OPC as a plugin source in your edge-agents marketplace configuration.
 
 #### Manual install (no npm)
 
