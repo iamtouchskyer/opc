@@ -120,7 +120,32 @@ This outputs the exact P0 test cases to execute. Each case has concrete steps.
 
 **Evidence file naming**: `screenshot-tier-{baseline-key}.png` (e.g., `screenshot-tier-dark-mode-light.png`, `screenshot-tier-dark-mode-dark.png`)
 
-**If a baseline item cannot be verified** (e.g., no code blocks in the product), annotate in the handshake summary: `"tier-skip: {key} — not applicable (no code blocks in product)"`. The evaluator will check whether the skip is justified.
+**If a baseline item cannot be verified** (e.g., no code blocks in the product), annotate it in the `tierCoverage.skipped` array of the handshake with a specific reason.
+
+### Required handshake field: `tierCoverage`
+
+When `flow-state.json` has a `tier`, the execute node handshake MUST include:
+
+```json
+{
+  "...": "...other handshake fields...",
+  "tierCoverage": {
+    "covered": ["typography", "color-scheme", "navigation", "responsive", "code-blocks", "tables", "loading-states", "error-states", "favicon-meta", "focus-styles"],
+    "skipped": [
+      { "key": "page-transitions", "reason": "tier is polished — transitions only required at delightful" }
+    ]
+  }
+}
+```
+
+**Enforced by `opc-harness validate`:**
+- `tierCoverage.covered` and `tierCoverage.skipped` are required arrays
+- Every required baseline key for the tier (severity ≥ warning) must appear in `covered` OR `skipped`
+- Each `skipped` entry must have `{ key, reason }` where `reason` is ≥10 characters
+- Unknown baseline keys are rejected
+- Missing or malformed `tierCoverage` → handshake rejected
+
+**Why this is zero trust:** The executor cannot silently pretend a baseline item was tested. Every item must be explicitly enumerated — either with evidence (covered) or with a justified skip (skipped). No hand-waving allowed.
 
 ## Anti-Patterns
 

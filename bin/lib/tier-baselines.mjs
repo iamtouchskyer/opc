@@ -267,6 +267,27 @@ export function generateTierTestCases(tier) {
 }
 
 /**
+ * Get the set of baseline keys required at warning or critical severity.
+ * These are the keys an execute node MUST declare in tierCoverage.
+ */
+export function getRequiredBaselineKeys(tier) {
+  if (!VALID_TIERS.has(tier)) return new Set();
+  return new Set(
+    getBaselineForTier(tier)
+      .filter((item) => item.severity[tier] === "warning" || item.severity[tier] === "critical")
+      .map((item) => item.key)
+  );
+}
+
+/**
+ * Get all valid baseline keys for a tier (including suggestion-severity items).
+ */
+export function getAllBaselineKeys(tier) {
+  if (!VALID_TIERS.has(tier)) return new Set();
+  return new Set(getBaselineForTier(tier).map((item) => item.key));
+}
+
+/**
  * Check evaluator text for coverage of tier baseline items.
  * Returns { covered: [...], uncovered: [...] } where each entry has { key, label, severity }.
  */

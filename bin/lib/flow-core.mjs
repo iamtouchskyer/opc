@@ -11,7 +11,7 @@ import {
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
-import { VALID_TIERS } from "./tier-baselines.mjs";
+import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -172,6 +172,64 @@ export function validateHandshakeData(data, opts = {}) {
     }
   }
 
+  // ─── Gap 2: tier coverage check for execute nodes ───────────
+  // When a flow has a quality tier, the execute node must explicitly
+  // declare which baseline items were covered and which were skipped.
+  // This prevents the executor from silently skipping polish requirements.
+  if (opts.tier && data.nodeType === "execute" && data.status === "completed") {
+    const requiredKeys = getRequiredBaselineKeys(opts.tier);
+    const allKeys = getAllBaselineKeys(opts.tier);
+
+    if (requiredKeys.size > 0) {
+      const tc = data.tierCoverage;
+      if (tc == null || typeof tc !== "object") {
+        errors.push(`execute node must have tierCoverage object when flow tier is '${opts.tier}'`);
+      } else {
+        const covered = Array.isArray(tc.covered) ? tc.covered : null;
+        const skipped = Array.isArray(tc.skipped) ? tc.skipped : null;
+        if (covered == null) errors.push("tierCoverage.covered must be an array");
+        if (skipped == null) errors.push("tierCoverage.skipped must be an array");
+
+        if (covered && skipped) {
+          // Validate each skipped entry has {key, reason}
+          for (let i = 0; i < skipped.length; i++) {
+            const s = skipped[i];
+            if (s == null || typeof s !== "object") {
+              errors.push(`tierCoverage.skipped[${i}] must be an object`);
+              continue;
+            }
+            if (!s.key || typeof s.key !== "string") {
+              errors.push(`tierCoverage.skipped[${i}] missing 'key'`);
+            }
+            if (!s.reason || typeof s.reason !== "string" || s.reason.length < 10) {
+              errors.push(`tierCoverage.skipped[${i}] missing 'reason' (min 10 chars — explain why the item is not applicable)`);
+            }
+          }
+
+          // Validate every covered/skipped key is a real baseline key
+          for (const k of covered) {
+            if (!allKeys.has(k)) {
+              errors.push(`tierCoverage.covered contains unknown baseline key: '${k}'`);
+            }
+          }
+          for (const s of skipped) {
+            if (s && s.key && !allKeys.has(s.key)) {
+              errors.push(`tierCoverage.skipped contains unknown baseline key: '${s.key}'`);
+            }
+          }
+
+          // Every required key must be in covered or skipped
+          const declared = new Set([...covered, ...skipped.map((s) => s && s.key).filter(Boolean)]);
+          for (const k of requiredKeys) {
+            if (!declared.has(k)) {
+              errors.push(`tierCoverage missing required baseline item: '${k}' (must be in covered or skipped)`);
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (data.findings && typeof data.findings === "object") {
     if ((data.findings.critical || 0) > 0 && data.verdict === "PASS") {
       errors.push("verdict is PASS but findings.critical > 0");
@@ -207,6 +265,7 @@ export function cmdValidate(args) {
   }
 
   let soft = false;
+  let tier = null;
   try {
     const harnessDir = dirname(dirname(dirname(file)));
     const statePath = join(harnessDir, "flow-state.json");
@@ -216,6 +275,7 @@ export function cmdValidate(args) {
         const tmpl = FLOW_TEMPLATES[state.flowTemplate];
         if (tmpl && tmpl.softEvidence) soft = true;
       }
+      if (state.tier && VALID_TIERS.has(state.tier)) tier = state.tier;
     }
   } catch { /* flow-state.json unreadable — treat as strict */ }
 
@@ -223,6 +283,7 @@ export function cmdValidate(args) {
     checkEvidence: true,
     softEvidence: soft,
     baseDir: dirname(file),
+    tier,
   });
 
   for (const w of warnings) {

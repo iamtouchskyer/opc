@@ -523,6 +523,8 @@ assert_contains "hedging found" "$OUT" "hedging"
 
 echo ""
 echo "--- CG-11.3: Fix and reasoning parsed ---"
+# Create a real app.js with enough lines for the file:line reality check
+python3 -c "open('.h-parse/app.js','w').write('\n'.join(['line '+str(i) for i in range(1,60)]))"
 cat > .h-parse/fix-eval.md << 'EVAL'
 # Review
 VERDICT: FAIL FINDINGS[1]
@@ -530,7 +532,7 @@ VERDICT: FAIL FINDINGS[1]
 → Add null check before dereference
 Reasoning: Input validation missing at boundary
 EVAL
-OUT=$($HARNESS verify .h-parse/fix-eval.md)
+OUT=$($HARNESS verify .h-parse/fix-eval.md --base .h-parse)
 assert_field_eq "has verdict" "$OUT" "verdict_present" "true"
 assert_field_eq "critical 1" "$OUT" "critical" "1"
 # evidence_complete checks for file refs, fix on criticals, reasoning

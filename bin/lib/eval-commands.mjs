@@ -10,9 +10,12 @@ import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS } from "./tie
 export function cmdVerify(args) {
   const file = args[0];
   if (!file) {
-    console.error("Usage: opc-harness verify <file>");
+    console.error("Usage: opc-harness verify <file> [--base <dir>]");
     process.exit(1);
   }
+
+  // --base <dir> — root for resolving finding file:line refs (default: cwd)
+  const base = getFlag(args, "base", process.cwd());
 
   let text;
   try {
@@ -30,6 +33,22 @@ export function cmdVerify(args) {
   const findingsWithoutRefs = [];
   const criticalWithoutFix = [];
   const findingsWithoutReasoning = [];
+  const invalidFileRefs = [];
+
+  // Cache line counts to avoid re-reading the same file
+  const lineCountCache = new Map();
+  const getLineCount = (path) => {
+    if (lineCountCache.has(path)) return lineCountCache.get(path);
+    try {
+      const content = readFileSync(path, "utf8");
+      const count = content.split("\n").length;
+      lineCountCache.set(path, count);
+      return count;
+    } catch {
+      lineCountCache.set(path, -1);
+      return -1;
+    }
+  };
 
   for (let i = 0; i < result.findings.length; i++) {
     const f = result.findings[i];
@@ -44,17 +63,56 @@ export function cmdVerify(args) {
     if (!f.reasoning) {
       findingsWithoutReasoning.push(label);
     }
+
+    // ─── Gap 1: file:line reality check ───────────────────────
+    // An evaluator that invents file:line references is producing fake
+    // findings. We verify the file exists and the line number is valid.
+    if (f.file) {
+      // Resolve relative to --base (skip absolute paths — leave as-is)
+      const resolved = f.file.startsWith("/") ? f.file : join(base, f.file);
+      if (!existsSync(resolved)) {
+        invalidFileRefs.push({
+          index: i + 1,
+          file: f.file,
+          line: f.line,
+          severity: f.severity,
+          reason: "file does not exist",
+        });
+      } else if (f.line != null) {
+        const lineCount = getLineCount(resolved);
+        if (lineCount === -1) {
+          invalidFileRefs.push({
+            index: i + 1,
+            file: f.file,
+            line: f.line,
+            severity: f.severity,
+            reason: "file unreadable",
+          });
+        } else if (f.line < 1 || f.line > lineCount) {
+          invalidFileRefs.push({
+            index: i + 1,
+            file: f.file,
+            line: f.line,
+            severity: f.severity,
+            reason: `line ${f.line} outside file (1-${lineCount})`,
+          });
+        }
+      }
+    }
   }
 
   const evidenceComplete =
     findingsWithoutRefs.length === 0 &&
     criticalWithoutFix.length === 0 &&
-    findingsWithoutReasoning.length === 0;
+    findingsWithoutReasoning.length === 0 &&
+    invalidFileRefs.length === 0;
 
   const { findings, ...output } = result;
   output.findings_without_refs = findingsWithoutRefs;
   output.critical_without_fix = criticalWithoutFix;
   output.findings_without_reasoning = findingsWithoutReasoning;
+  output.invalid_file_refs = invalidFileRefs;
+  output.invalid_file_refs_count = invalidFileRefs.length;
   output.evidence_complete = evidenceComplete;
   console.log(JSON.stringify(output, null, 2));
 }
