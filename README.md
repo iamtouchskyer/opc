@@ -42,9 +42,9 @@ npm install -g @touchskyer/opc
 
 Skill files are automatically copied to `~/.claude/skills/opc/`. If the postinstall fails, run `opc install` manually.
 
-#### Claude Code plugin (edge-agents marketplace)
+#### Claude Code plugin
 
-OPC can also be installed as an edge-agents marketplace plugin. The `.claude-plugin/` directory in this repo provides the plugin manifest. To use it, add OPC as a plugin source in your edge-agents marketplace configuration.
+OPC can also be installed as a Claude Code plugin. The `.claude-plugin/` directory in this repo provides the plugin manifest.
 
 #### Manual install (no npm)
 
