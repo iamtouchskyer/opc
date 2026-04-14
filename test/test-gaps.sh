@@ -189,12 +189,11 @@ assert_field_eq "finalize non-terminal" "$OUT" "finalized" "false"
 assert_contains "non-terminal msg" "$OUT" "not a terminal"
 
 echo ""
-echo "--- 4.4: finalize with missing handshake at terminal ---"
+echo "--- 4.4: finalize auto-creates handshake at terminal ---"
 rm -rf .h-fin4 && $HARNESS init --flow review --entry gate --dir .h-fin4 >/dev/null 2>/dev/null
-# gate PASS→null so it's terminal, but no handshake.json
+# gate PASS→null so it's terminal; no handshake.json yet — finalize auto-creates one
 OUT=$($HARNESS finalize --dir .h-fin4 2>/dev/null)
-assert_field_eq "finalize no hs" "$OUT" "finalized" "false"
-assert_contains "handshake not found" "$OUT" "handshake.json not found"
+assert_field_eq "finalize auto-hs" "$OUT" "finalized" "true"
 
 echo ""
 echo "--- 4.5: finalize with non-completed terminal handshake ---"
@@ -375,8 +374,59 @@ echo "--- 7.2: Synthesize PASS verdict (suggestions only) ---"
 rm -rf .h-synth2 && mkdir -p .h-synth2/nodes/code-review/run_1
 cat > .h-synth2/nodes/code-review/run_1/eval-engineer.md << 'EVAL'
 # Engineer Review
-VERDICT: PASS FINDINGS[1]
-🔵 Minor — style.css:5 — consider using variables
+
+## Summary
+Overall the implementation is clean and well-structured.
+The code follows established patterns from the rest of the codebase.
+No critical or warning-level issues were found during this review.
+The API surface is consistent with the project conventions used elsewhere.
+
+## Code Quality
+The module organization in src/components/Button.tsx:15 is clear.
+Helper functions are properly extracted and reusable throughout.
+Error boundaries are correctly placed at src/app/layout.tsx:42 for recovery.
+Type safety is maintained throughout the component hierarchy properly.
+The use of discriminated unions in src/types/api.ts:30 is appropriate.
+
+## Testing Coverage
+Unit tests cover the main happy path in test/button.test.tsx:10 adequately.
+Integration tests validate the form submission flow at test/form.test.tsx:25.
+Edge cases for empty state are handled in test/empty.test.tsx:8 correctly.
+The test utilities in test/helpers.ts:5 follow established best practices.
+
+## Performance
+No unnecessary re-renders detected in the component tree currently.
+Memoization is applied correctly in src/hooks/useData.ts:18 for expensive calls.
+Bundle size impact is minimal based on the static import analysis.
+Lazy loading is properly configured for route-level code splitting setup.
+
+## Security
+Input sanitization is handled at src/utils/sanitize.ts:12 before rendering.
+CSRF tokens are validated on all mutation endpoints consistently.
+Authentication checks are consistent across all protected routes.
+No SQL injection vectors detected in the parameterized query layer.
+XSS prevention is handled by the output escaping at src/render/escape.ts:20.
+
+## Accessibility
+ARIA labels are present on all interactive elements in the form.
+Keyboard navigation works correctly through the form field sequence.
+Color contrast ratios meet WCAG AA requirements for all text.
+Focus management is handled properly in modal components at src/components/Modal.tsx:22.
+
+## Documentation
+Inline comments explain non-obvious business logic decisions clearly.
+The README was updated to reflect the new component API surface.
+JSDoc annotations are present on all exported function signatures.
+
+## Minor Suggestions
+
+VERDICT: PASS FINDINGS[2]
+🔵 Minor — style.css:5 — consider using CSS custom properties for theme colors
+→ Replace hardcoded hex values with var(--color-primary) throughout
+Reasoning: improves maintainability when theme changes are needed later
+🔵 Minor — src/config/constants.ts:8 — extract magic number to named constant
+→ Define RETRY_LIMIT = 3 in the constants module for clarity
+Reasoning: named constants improve readability and reduce duplication
 EVAL
 OUT=$($HARNESS synthesize .h-synth2 --node code-review)
 assert_contains "PASS verdict" "$OUT" "PASS"
@@ -420,6 +470,57 @@ echo ""
 echo "--- 7.7: Synthesize ROUND_RE filter ---"
 rm -rf .h-wave && mkdir -p .h-wave/.harness
 cat > .h-wave/.harness/evaluation-wave-1-security.md << 'EVAL'
+# Security Review
+
+## Authentication
+All authentication endpoints are properly secured.
+Token validation occurs at the middleware layer in src/middleware/auth.ts:15.
+Session management follows OWASP best practices.
+JWT refresh tokens are rotated correctly on each renewal cycle.
+
+## Authorization
+Role-based access control is correctly implemented throughout.
+Permission checks are consistent at src/guards/rbac.ts:22 across routes.
+Admin-only routes are properly gated with middleware checks.
+API key scoping is validated at src/utils/apiKey.ts:8 before processing.
+
+## Input Validation
+All user inputs are sanitized before database insertion queries.
+SQL parameterization is used throughout the data access layer.
+File upload validation checks MIME type and size at src/upload/validate.ts:30.
+Path traversal prevention is implemented in the file handler module.
+
+## Cryptography
+Password hashing uses bcrypt with appropriate cost factor settings.
+Secrets are stored in environment variables, not hardcoded in source.
+TLS configuration is correctly set at src/config/tls.ts:10 for all endpoints.
+Encryption at rest is properly configured for all sensitive fields.
+
+## Network Security
+CORS policy is restrictive and only allows known trusted origins.
+Rate limiting is applied to all authentication endpoints properly.
+CSP headers are correctly configured in the response middleware layer.
+HSTS is enabled with appropriate max-age and includeSubDomains.
+
+## Dependencies
+No known vulnerabilities found in the current dependency tree.
+Lock file is committed and dependency version pinning is enforced.
+Third-party scripts are loaded with subresource integrity hashes.
+
+## Error Handling
+Error responses do not leak stack traces or internal paths to callers.
+Validation errors at src/validators/input.ts:18 return structured messages.
+Timeout handling at src/middleware/timeout.ts:5 prevents hung connections.
+Unhandled rejections are caught by the global handler at src/app.ts:90.
+Graceful shutdown at src/server.ts:45 drains connections before exiting.
+All error codes follow RFC 7807 problem detail format consistently.
+
+## Conclusion
+The security posture of this module is sound and well-maintained.
+No critical or warning-level vulnerabilities were identified here.
+Minor improvements are noted below for future security hardening.
+All security controls are operating as designed and documented.
+
 VERDICT: PASS FINDINGS[0]
 EVAL
 # This round file should be excluded

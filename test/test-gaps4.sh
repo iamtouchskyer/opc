@@ -551,8 +551,59 @@ cat > "$D/nodes/code-review/run_1/eval-old.md" << 'EVAL'
 VERDICT: FAIL FINDINGS[1]
 EVAL
 cat > "$D/nodes/code-review/run_2/eval-new.md" << 'EVAL'
-🔵 suggestion — minor thing
-VERDICT: PASS FINDINGS[1]
+# Engineer Review
+
+## Summary
+Overall the implementation is clean and well-structured across all modules.
+The code follows established patterns from the rest of the codebase properly.
+No critical or warning-level issues were found during this thorough review.
+The API surface is consistent with the project conventions and documentation.
+
+## Code Quality
+The module organization in src/components/Widget.tsx:15 is clear and readable.
+Helper functions are properly extracted in src/utils/helpers.ts:22 for reuse.
+Type safety is maintained throughout at src/types/domain.ts:30 properly.
+Error handling follows project patterns in src/handlers/error.ts:8 consistently.
+
+## Testing
+Unit tests cover the main paths in test/widget.test.tsx:10 adequately.
+Integration tests validate the data flow at test/api.test.ts:25 correctly.
+Edge cases are handled in test/edge.test.tsx:8 with proper assertions.
+The test setup in test/setup.ts:5 follows established conventions here.
+
+## Performance
+No unnecessary re-renders detected in the component hierarchy today.
+Memoization is applied at src/hooks/useCache.ts:18 for expensive operations.
+Bundle impact is minimal based on the dependency analysis results.
+Lazy loading is configured at src/routes/index.ts:12 for code splitting.
+
+## Security
+Input sanitization at src/utils/sanitize.ts:12 handles all user input safely.
+Authentication tokens are validated before processing any requests.
+CORS and CSP headers are correctly configured in the middleware stack.
+No SQL injection vectors detected in the data access layer queries.
+XSS prevention is handled by the template escaping in src/render/escape.ts:20.
+
+## Accessibility
+ARIA labels are present on all interactive elements in forms and dialogs.
+Keyboard navigation is functional throughout the application interface.
+Color contrast meets WCAG AA requirements for all text elements.
+Screen reader compatibility is verified for all dynamic content areas.
+
+## Documentation
+Inline comments explain non-obvious logic decisions throughout the code.
+The API documentation reflects current behavior and edge cases.
+JSDoc annotations are present on all exported function signatures.
+
+## Minor Suggestions
+
+VERDICT: PASS FINDINGS[2]
+🔵 suggestion — src/styles/theme.ts:5 — minor formatting preference
+→ Use consistent semicolons across all style declarations
+Reasoning: style consistency improves readability across the codebase
+🔵 suggestion — src/config/env.ts:3 — add default for optional env var
+→ Provide a sensible fallback value for the optional configuration
+Reasoning: prevents undefined behavior when env var is not set
 EVAL
 OUT=$($HARNESS synthesize "$D" --node code-review --run 2 2>/dev/null)
 assert_field_eq "$OUT" "['verdict']" "PASS" "4.4a: --run 2 uses run_2 (PASS verdict)"
@@ -594,8 +645,16 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow review --dir . > /dev/null 2>&1
 mkdir -p nodes/review
+cat > nodes/review/eval-agent1.md << 'EOF'
+# Agent 1 Review — code quality
+VERDICT: PASS FINDINGS[0]
+EOF
+cat > nodes/review/eval-agent2.md << 'EOF'
+# Agent 2 Review — security
+VERDICT: PASS FINDINGS[0]
+EOF
 cat > nodes/review/handshake.json << 'HS'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"eval-agent1.md"},{"type":"eval","path":"eval-agent2.md"}]}
 HS
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 OUT=$($HARNESS viz --flow review --dir . 2>/dev/null)

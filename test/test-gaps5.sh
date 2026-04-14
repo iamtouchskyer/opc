@@ -50,7 +50,7 @@ D=$(mktemp -d)
 cat > "$D/hs.json" << 'EOF'
 {
   "nodeId": "test",
-  "nodeType": "review",
+  "nodeType": "build",
   "runId": "run_1",
   "status": "completed",
   "summary": "test",
@@ -298,9 +298,18 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow review --entry review --dir . > /dev/null 2>&1
 mkdir -p nodes/review
+# Create eval artifacts required for review independence
+cat > nodes/review/eval-agent1.md << 'EOF'
+# Agent 1 Review — code quality
+VERDICT: PASS FINDINGS[0]
+EOF
+cat > nodes/review/eval-agent2.md << 'EOF'
+# Agent 2 Review — security
+VERDICT: PASS FINDINGS[0]
+EOF
 # Must include ALL required fields including runId and artifacts for pre-transition check
 cat > nodes/review/handshake.json << 'EOF'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"eval-agent1.md"},{"type":"eval","path":"eval-agent2.md"}]}
 EOF
 sleep 2
 STDERR_FILE=$(mktemp)

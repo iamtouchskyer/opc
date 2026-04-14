@@ -495,9 +495,124 @@ cd "$D18"
 $HARNESS init --flow build-verify --entry code-review --dir . > /dev/null 2>&1
 # After init: currentNode=code-review, entryNode=code-review
 # Advance to test-design so code-review becomes entryNode but not current
-mkdir -p nodes/code-review
+# Review nodes require ≥2 independent eval artifacts to transition
+mkdir -p nodes/code-review/run_1
+cat > nodes/code-review/run_1/eval-security.md << 'EVALFILE1'
+# Security Review Evaluation
+
+## Overview
+This evaluation covers security aspects of the implementation.
+
+## Authentication Analysis
+The authentication module was reviewed for common vulnerabilities.
+
+### Findings
+
+VERDICT: PASS FINDINGS[3]
+
+🔵 Suggestion — auth/login.js:42 — add rate limiting to login endpoint
+The login endpoint currently has no rate limiting which could allow
+brute force attacks against user accounts in production environments.
+Recommend implementing exponential backoff after failed attempts.
+
+🔵 Suggestion — auth/session.js:18 — rotate session tokens on privilege change
+Session tokens should be rotated when user privileges change to prevent
+session fixation attacks from being exploitable after role changes.
+
+🔵 Suggestion — auth/middleware.js:55 — validate JWT issuer claim
+The JWT validation does not check the issuer claim which could allow
+tokens from other services to be accepted as valid authentication.
+
+## Input Validation
+All user-facing endpoints were checked for injection vulnerabilities.
+
+### SQL Injection
+No SQL injection vulnerabilities found in parameterized queries.
+The ORM layer properly escapes all user input before query execution.
+
+### XSS Prevention
+Output encoding is applied consistently across template rendering.
+Content-Security-Policy headers are set on all response objects.
+
+## Cryptography Review
+Password hashing uses bcrypt with appropriate cost factor of 12.
+All sensitive data in transit is protected by TLS 1.3 connections.
+Key rotation procedures are documented and follow best practices.
+
+## Session Management
+Sessions expire after 30 minutes of inactivity as configured.
+Session storage uses secure httpOnly cookies with SameSite attribute.
+
+## Authorization Checks
+Role-based access control is enforced at the middleware layer.
+No privilege escalation paths were identified during this review.
+
+## Summary
+The security posture is adequate with minor suggestions for hardening.
+No critical or high severity issues were identified in this review.
+The codebase follows secure coding practices consistently throughout.
+EVALFILE1
+cat > nodes/code-review/run_1/eval-architecture.md << 'EVALFILE2'
+# Architecture Review Evaluation
+
+## Overview
+This evaluation covers architectural quality and maintainability.
+
+## Module Structure Analysis
+The module boundaries are well-defined with clear separation of concerns.
+
+### Findings
+
+VERDICT: PASS FINDINGS[3]
+
+🟡 Warning — api/routes.js:112 — extract route handlers to separate controller files
+Route handler functions are defined inline which makes the routes file
+over 500 lines long and difficult to navigate or test independently.
+Recommend extracting handlers to dedicated controller modules.
+
+🔵 Suggestion — db/connection.js:28 — implement connection pooling configuration
+The database connection setup uses default pool settings which may not
+be optimal for the expected production load and concurrency patterns.
+
+🔵 Suggestion — services/cache.js:65 — add cache invalidation strategy documentation
+The caching layer works correctly but the invalidation strategy is not
+documented making it hard for new developers to understand cache behavior.
+
+## Dependency Analysis
+Third-party dependencies are up to date with no known vulnerabilities.
+The dependency tree is reasonably shallow avoiding deep nesting issues.
+
+### Circular Dependencies
+No circular dependencies detected between application modules.
+The import graph follows a clean top-down hierarchical structure.
+
+### Bundle Size Impact
+Total bundle size is within acceptable limits for the target platform.
+Tree shaking is properly configured to eliminate unused code paths.
+
+## Error Handling Patterns
+Error handling follows a consistent pattern across all service layers.
+Errors are properly classified and mapped to appropriate HTTP status codes.
+
+## Performance Considerations
+Database queries use appropriate indexes for common access patterns.
+No N+1 query patterns detected in the data access layer code paths.
+
+## API Design Review
+REST endpoints follow consistent naming conventions and HTTP semantics.
+Response formats are standardized using a common envelope structure.
+
+## Testability Assessment
+Code is structured to allow easy unit testing with dependency injection.
+Integration test boundaries are clearly defined at service interfaces.
+
+## Summary
+The architecture is sound with good separation of concerns throughout.
+One warning about route handler organization should be addressed soon.
+Overall code quality and maintainability are at an acceptable level.
+EVALFILE2
 cat > nodes/code-review/handshake.json << 'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-security.md"},{"type":"eval","path":"run_1/eval-architecture.md"}],"verdict":null}
 EOF
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 # Now viz should show entryNode code-review as ✅ (not ▶)

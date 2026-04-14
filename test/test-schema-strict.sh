@@ -170,7 +170,30 @@ echo "=== PART 2: finalize --strict ==="
 write_handshake() {
   local dir="$1" node="$2" ntype="$3" status="$4"
   mkdir -p "$dir/nodes/$node"
-  cat > "$dir/nodes/$node/handshake.json" << HSEOF
+  if [ "$ntype" = "review" ]; then
+    # Review nodes require ≥2 eval artifacts for independence check
+    cat > "$dir/nodes/$node/eval-agent1.md" << EVEOF
+# Agent 1 Review — code quality
+VERDICT: PASS FINDINGS[0]
+EVEOF
+    cat > "$dir/nodes/$node/eval-agent2.md" << EVEOF
+# Agent 2 Review — security
+VERDICT: PASS FINDINGS[0]
+EVEOF
+    cat > "$dir/nodes/$node/handshake.json" << HSEOF
+{
+  "nodeId": "$node",
+  "nodeType": "$ntype",
+  "runId": "run_1",
+  "status": "$status",
+  "summary": "done",
+  "timestamp": "2024-01-01T00:00:00Z",
+  "artifacts": [{"type":"eval","path":"eval-agent1.md"},{"type":"eval","path":"eval-agent2.md"}],
+  "verdict": null
+}
+HSEOF
+  else
+    cat > "$dir/nodes/$node/handshake.json" << HSEOF
 {
   "nodeId": "$node",
   "nodeType": "$ntype",
@@ -182,6 +205,7 @@ write_handshake() {
   "verdict": null
 }
 HSEOF
+  fi
 }
 
 # ─────────────────────────────────────────────────────────────────
