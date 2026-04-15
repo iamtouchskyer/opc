@@ -127,13 +127,22 @@ Unit format: `- ID [type]: description`
 ### 2. Initialize loop with your flow template
 
 ```bash
+# With external flow file (recommended):
 node "$OPC_HARNESS" init-loop \
   --plan plan.md \
   --flow-file "$FLOW_FILE" \
   --dir .harness
 
+# Or with a built-in template:
+node "$OPC_HARNESS" init-loop \
+  --plan plan.md \
+  --flow-template build-verify \
+  --dir .harness
+
 # Output: { "initialized": true, "units": ["F1.1","F1.2",...], "first_unit": "F1.1", "total_units": 5 }
 ```
+
+You can also pass inline unit handlers via `--handlers '{"discover": {"skill": "/my-discover"}}'`.
 
 ### 3. Tick loop
 
@@ -311,6 +320,89 @@ All commands output JSON to stdout. Check the output for error indicators:
 **Exit codes:** Commands return exit 0 for both success and business-logic errors (the JSON tells you which). Exit 1 is reserved for usage errors (missing required flags). This is intentional — machine consumers parse JSON, not exit codes.
 
 **Exception:** `resolveDir` (the `--dir` validator) calls `process.exit(1)` with stderr text if the directory is invalid. This is a hard pre-flight check, not a business error.
+
+---
+
+## Writing handshake.json
+
+Every node (except gates) requires a `handshake.json` before transitioning. Here's a complete example:
+
+```json
+{
+  "nodeId": "build",
+  "nodeType": "build",
+  "runId": "run_1",
+  "status": "completed",
+  "verdict": "PASS",
+  "summary": "Implemented user authentication with email/password login",
+  "timestamp": "2026-04-15T10:30:00.000Z",
+  "artifacts": [
+    { "type": "cli-output", "path": "run_1/build-log.txt" },
+    { "type": "test-result", "path": "run_1/test-output.txt" }
+  ]
+}
+```
+
+**Required fields:** `nodeId`, `nodeType`, `runId`, `status`, `summary`, `timestamp`, `artifacts` (array)
+
+**Artifact types:**
+- `eval` — evaluation from a reviewer role (review nodes need ≥2)
+- `screenshot` — visual evidence (PNG/JPG)
+- `test-result` — test runner output
+- `cli-output` — command output / logs
+
+**Verdict values:** `PASS`, `ITERATE`, `FAIL`, `BLOCKED`, or `null`
+
+**Where to write:** `.harness/nodes/{nodeId}/handshake.json`
+
+**Review node example** (needs ≥2 eval artifacts):
+```json
+{
+  "nodeId": "code-review",
+  "nodeType": "review",
+  "runId": "run_1",
+  "status": "completed",
+  "verdict": "PASS",
+  "summary": "Code review passed with minor suggestions",
+  "timestamp": "2026-04-15T11:00:00.000Z",
+  "artifacts": [
+    { "type": "eval", "role": "frontend", "path": "run_1/eval-frontend.md" },
+    { "type": "eval", "role": "security", "path": "run_1/eval-security.md" }
+  ],
+  "findings": { "critical": 0, "warning": 1, "suggestion": 3 }
+}
+```
+
+**Gate nodes** — don't write handshake.json for gates. The `transition` command auto-creates gate handshakes from `synthesize` output.
+
+---
+
+## Limit Behavior
+
+OPC enforces three limits. When exceeded, `transition` returns `allowed: false`:
+
+| Limit | Default | What happens |
+|-------|---------|-------------|
+| `maxLoopsPerEdge` | 3 | Same edge traversed N times → blocked. "Edge gate→build traversed 3 times" |
+| `maxTotalSteps` | 20 | Total transitions across flow → blocked. "Total steps (20) reached limit" |
+| `maxNodeReentry` | 5 | Same node entered N times → blocked. "Node build entered 5 times" |
+
+**Response when blocked:**
+```json
+{
+  "allowed": false,
+  "reason": "edge 'gate→build' traversed 3 times (limit: 3)",
+  "next": null
+}
+```
+
+**Recovery options:**
+- `/opc skip` — skip current node via PASS edge
+- `/opc pass` — force-pass current gate
+- `/opc stop` — terminate flow, preserve state
+- `/opc goto <nodeId>` — manual jump (limits still enforced)
+
+These escape hatches are CLI commands, not `opc-harness` subcommands — they're invoked via Claude Code skill invocation.
 
 ---
 
