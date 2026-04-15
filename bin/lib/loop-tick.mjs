@@ -5,7 +5,7 @@ import { readFileSync, appendFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import { parsePlan, hashContent, getGitHeadHash } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
-import { checkEvalDistinctness } from "./eval-parser.mjs";
+import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 
 // ─── complete-tick ──────────────────────────────────────────────
 
@@ -85,12 +85,14 @@ export function cmdCompleteTick(args) {
 
   const artifacts = artifactsRaw ? artifactsRaw.split(",").map(a => a.trim()).filter(Boolean) : [];
 
+  let reviewVerdict = undefined;
+
   if (status === "completed") {
     // ── Rule 2+3+6: Evidence validation per unit type ──
     if (unitType.startsWith("implement") || unitType.startsWith("build")) {
       validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("review")) {
-      validateReviewArtifacts(unit, artifacts, errors, warnings, state);
+      reviewVerdict = validateReviewArtifacts(unit, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("fix")) {
       validateFixArtifacts(unit, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("e2e") || unitType.startsWith("accept")) {
@@ -150,6 +152,7 @@ export function cmdCompleteTick(args) {
     unitType,
     next_unit: nextUnit,
     terminate: nextUnit === null,
+    verdict: reviewVerdict || undefined,
     warnings: warnings.length > 0 ? warnings : undefined,
   }));
 }
@@ -281,6 +284,21 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
     }
   }
   state._last_review_evals = evalHashes;
+
+  // Synthesize verdict from eval files (reuse parseEvaluation from eval-parser)
+  let totalCritical = 0, totalWarning = 0, totalSuggestion = 0;
+  for (const { content } of evalContents) {
+    const parsed = parseEvaluation(content);
+    totalCritical += parsed.critical;
+    totalWarning += parsed.warning;
+    totalSuggestion += parsed.suggestion;
+  }
+
+  let verdict = "PASS";
+  if (totalCritical > 0) verdict = "FAIL";
+  else if (totalWarning > 0) verdict = "ITERATE";
+
+  return verdict;
 }
 
 function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
