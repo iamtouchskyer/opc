@@ -13,6 +13,17 @@ export const HEDGING_RE = /\bmight\b|\bcould potentially\b|\bconsider\b/i;
 export const VERDICT_RE = /VERDICT:\s*(.+)/i;
 export const FINDINGS_N_RE = /FINDINGS\s*\[(\d+)\]/i;
 
+// Extract role/agent tag from first 10 lines only (avoids matching prose mentions)
+const ROLE_TAG_RE = /^(?:role|agent|reviewer)\s*:\s*(.+)/i;
+function _extractRoleTag(content) {
+  const lines = content.split("\n").slice(0, 10);
+  for (const line of lines) {
+    const m = line.match(ROLE_TAG_RE);
+    if (m) return m[1].trim().toLowerCase();
+  }
+  return "";
+}
+
 /**
  * Check eval file distinctness — shared by flow-core validate and loop-tick.
  * Takes array of { path, content } objects (at least 2).
@@ -44,17 +55,16 @@ export function checkEvalDistinctness(evalContents) {
         }
       }
 
-      // Identical heading → error (same heading = same agent role)
+      // Identical heading → warning (two reviewers may use a generic heading like "# Code Review")
       const headingA = (a.content.match(/^#\s+(.+)/m) || [])[1] || "";
       const headingB = (b.content.match(/^#\s+(.+)/m) || [])[1] || "";
       if (headingA && headingB && headingA === headingB) {
-        errors.push(`eval files '${a.path}' and '${b.path}' have identical headings '${headingA}' — reviews must come from independent agents with distinct roles`);
+        warnings.push(`eval files '${a.path}' and '${b.path}' have identical headings — each reviewer should have a distinct angle`);
       }
 
-      // Role tag check — extract "Role: X" or "Agent: X" from content
-      const roleTagRe = /^(?:role|agent|reviewer)\s*:\s*(.+)/im;
-      const roleA = (a.content.match(roleTagRe) || [])[1]?.trim().toLowerCase() || "";
-      const roleB = (b.content.match(roleTagRe) || [])[1]?.trim().toLowerCase() || "";
+      // Role tag check — extract "Role: X" or "Agent: X" from first 10 lines (avoid matching prose)
+      const roleA = _extractRoleTag(a.content);
+      const roleB = _extractRoleTag(b.content);
       if (roleA && roleB && roleA === roleB) {
         errors.push(`eval files '${a.path}' and '${b.path}' have identical role tag '${roleA}' — reviews must be from different roles`);
       }
