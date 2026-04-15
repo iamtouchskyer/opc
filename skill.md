@@ -481,7 +481,7 @@ Custom flows can be defined as JSON files in `~/.claude/flows/`. The harness loa
 - `nodes`, `edges`, `limits` are required
 - All edge sources and targets must be in `nodes`
 - `nodeTypes` values must be: `discussion`, `build`, `review`, `execute`, `gate`
-- `opc_compat` uses `>=X.Y` semver range (current harness: 0.6.0)
+- `opc_compat` uses `>=X.Y` semver range (current harness: 0.8.0)
 - Prototype pollution names (`__proto__`, `constructor`, `prototype`) are rejected
 
 **Optional fields:**
