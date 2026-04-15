@@ -3,7 +3,7 @@
 
 import { readFileSync, appendFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { parsePlan, hashContent, getGitHeadHash } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
@@ -242,15 +242,22 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
   }
 
   // Rule 7b: reject .gitkeep-only or trivial commits
+  const HEX_HASH_RE = /^[0-9a-f]{4,40}$/i;
   if (currentHead && state._git_head && currentHead !== state._git_head) {
-    try {
-      const diffStat = execSync(`git diff --name-only ${state._git_head}..${currentHead}`, { encoding: "utf8", timeout: 5000 }).trim();
-      const changedFiles = diffStat.split("\n").filter(Boolean);
-      const substantiveFiles = changedFiles.filter(f => !f.endsWith(".gitkeep") && !f.endsWith(".keep"));
-      if (substantiveFiles.length === 0 && changedFiles.length > 0) {
-        errors.push(`commit only modifies .gitkeep files — implement unit must produce substantive code changes`);
+    if (!HEX_HASH_RE.test(state._git_head) || !HEX_HASH_RE.test(currentHead)) {
+      warnings.push("git HEAD hash failed format validation — skipping commit content check");
+    } else {
+      try {
+        const diffStat = execFileSync("git", ["diff", "--name-only", `${state._git_head}..${currentHead}`], { encoding: "utf8", timeout: 5000 }).trim();
+        const changedFiles = diffStat.split("\n").filter(Boolean);
+        const substantiveFiles = changedFiles.filter(f => !f.endsWith(".gitkeep") && !f.endsWith(".keep"));
+        if (substantiveFiles.length === 0 && changedFiles.length > 0) {
+          errors.push(`commit only modifies .gitkeep files — implement unit must produce substantive code changes`);
+        }
+      } catch {
+        warnings.push("git diff failed (old HEAD may be unreachable after rebase) — .gitkeep guard skipped");
       }
-    } catch { /* git diff fail is non-fatal */ }
+    }
   }
 
   // Rule 9: external validator enforcement
@@ -260,7 +267,8 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
     }
     if (state._external_validators.test_script) {
       // Check if any artifact mentions test runner output markers
-      const testRunnerMarkers = /tests?\s*(passed|failed|run|suites?|specs?)|PASS|FAIL|✓|✗|✘|assertions?|test result/i;
+      // Tightened regex: require numeric context to avoid false positives on "password", "failover" etc.
+      const testRunnerMarkers = /\d+\s*tests?\s*(passed|failed|run)|suites?\s*\d|specs?\s*\d|\d+\s*passing|\d+\s*failing|tests?\s*passed|test result|✓\s*\d|✗\s*\d|✘\s*\d|\d+\s*assertions?/i;
       const hasTestEvidence = artifacts.some(a => {
         if (!existsSync(a)) return false;
         try {
