@@ -338,3 +338,4 @@ function checkOscillation(state, history, statePath) {
   }
   return false;
 }
+# G5.1 context hints — implemented in loop-advance.mjs
