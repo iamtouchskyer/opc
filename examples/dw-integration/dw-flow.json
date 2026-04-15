@@ -1,0 +1,37 @@
+{
+  "opc_compat": ">=0.8",
+  "nodes": ["discover", "build", "code-review", "gate"],
+  "edges": {
+    "discover":    { "PASS": "build" },
+    "build":       { "PASS": "code-review" },
+    "code-review": { "PASS": "gate" },
+    "gate":        { "PASS": null, "FAIL": "build", "ITERATE": "code-review" }
+  },
+  "limits": {
+    "maxLoopsPerEdge": 3,
+    "maxTotalSteps": 20,
+    "maxNodeReentry": 5
+  },
+  "nodeTypes": {
+    "discover": "execute",
+    "build": "build",
+    "code-review": "review",
+    "gate": "gate"
+  },
+  "softEvidence": false,
+  "rolesDir": "./roles",
+  "protocolDir": "./protocols",
+  "unitHandlers": {
+    "discover": {
+      "skill": "/dw-discover",
+      "invocation": "/dw-discover {task}"
+    },
+    "pitch": {
+      "skill": "/dw-pitch",
+      "invocation": "/dw-pitch {id}"
+    },
+    "publish": {
+      "command": "dw publish {id}"
+    }
+  }
+}

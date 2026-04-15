@@ -2,7 +2,7 @@
 // Depends on: loop-helpers.mjs, util.mjs
 
 import { readFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { createHash } from "crypto";
 import {
   parsePlan, validatePlanStructure, hashContent,
@@ -15,6 +15,9 @@ import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 export function cmdInitLoop(args) {
   const dir = resolveDir(args);
   const planFile = getFlag(args, "plan", join(dir, "plan.md"));
+  const flowTemplate = getFlag(args, "flow-template", null);
+  const flowFile = getFlag(args, "flow-file", null);
+  const handlersRaw = getFlag(args, "handlers", null);
 
   if (!existsSync(planFile)) {
     console.log(JSON.stringify({
@@ -111,7 +114,25 @@ export function cmdInitLoop(args) {
     _max_total_ticks: units.length * 3,
     _started_at: new Date().toISOString(),
     _max_duration_hours: 24,
+    _flow_template: flowTemplate || undefined,
+    _flow_file: flowFile ? resolve(flowFile) : undefined,
   };
+
+  // Parse --handlers JSON if provided (unit type → skill/command dispatch)
+  if (handlersRaw) {
+    try {
+      const handlers = JSON.parse(handlersRaw);
+      if (typeof handlers === "object" && handlers !== null && !Array.isArray(handlers)) {
+        state._unit_handlers = handlers;
+      } else {
+        console.log(JSON.stringify({ initialized: false, errors: ["--handlers must be a JSON object"] }));
+        return;
+      }
+    } catch (e) {
+      console.log(JSON.stringify({ initialized: false, errors: [`--handlers is not valid JSON: ${e.message}`] }));
+      return;
+    }
+  }
 
   state._write_nonce = createHash("sha256")
     .update(Date.now().toString() + Math.random().toString())

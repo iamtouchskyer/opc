@@ -3,7 +3,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
-import { FLOW_TEMPLATES } from "./flow-templates.mjs";
+import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getFlag } from "./util.mjs";
 
 export function getMarker(nodeId, state) {
@@ -15,29 +15,28 @@ export function getMarker(nodeId, state) {
 }
 
 export function cmdViz(args) {
-  const flow = getFlag(args, "flow");
   // Read-only command: no resolveDir guard needed (viz reads state but never writes)
   const dir = getFlag(args, "dir");
   const jsonOut = args.includes("--json");
 
-  if (!flow) {
-    console.error("Usage: opc-harness viz --flow <template> [--dir <path>] [--json]");
-    process.exit(1);
-  }
-
-  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
-  if (!template) {
-    console.error(`Unknown flow template: ${flow}`);
-    process.exit(1);
-  }
-
+  // Try to load state first for _flow_file auto-restore
   let state = null;
   if (dir) {
     const sp = join(dir, "flow-state.json");
     if (existsSync(sp)) {
-      try { state = JSON.parse(readFileSync(sp, "utf8")); } catch { /* ignore */ }
+      try {
+        state = JSON.parse(readFileSync(sp, "utf8"));
+        if (state._flow_file) loadFlowFromFile(state._flow_file);
+      } catch { /* ignore */ }
     }
   }
+
+  const resolved = resolveFlowTemplate(args, state);
+  if (resolved.error) {
+    console.error(resolved.error);
+    process.exit(1);
+  }
+  const { template } = resolved;
 
   // Collect loopbacks: gates with FAIL/ITERATE edges
   const loopbacks = [];
@@ -92,7 +91,12 @@ export function cmdReplayData(args) {
     process.exit(1);
   }
 
-  const template = Object.hasOwn(FLOW_TEMPLATES, state.flowTemplate) ? FLOW_TEMPLATES[state.flowTemplate] : null;
+  const template = (() => {
+    // Auto-restore flow template from _flow_file if needed
+    if (state._flow_file) loadFlowFromFile(state._flow_file);
+    const t = Object.hasOwn(FLOW_TEMPLATES, state.flowTemplate) ? FLOW_TEMPLATES[state.flowTemplate] : null;
+    return t;
+  })();
   if (!template) {
     console.error(`Unknown flow template: ${state.flowTemplate}`);
     process.exit(1);

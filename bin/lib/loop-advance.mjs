@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { parsePlan, hashContent } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
+import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 
 // ─── next-tick ──────────────────────────────────────────────────
 
@@ -25,6 +26,14 @@ export function cmdNextTick(args) {
     return;
   }
   const warnings = [];
+
+  // Auto-restore flow template from _flow_file if persisted
+  if (state._flow_file) {
+    const result = loadFlowFromFile(state._flow_file);
+    if (result.error) {
+      warnings.push(`_flow_file restore failed: ${result.error}`);
+    }
+  }
 
   // Tamper: writer chain + nonce
   if (state._written_by !== WRITER_SIG || !state._write_nonce) {
@@ -169,6 +178,19 @@ export function cmdNextTick(args) {
     state._last_modified = new Date().toISOString();
     atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
+    // Look up unitHandler from flow template (if loop was started from a custom flow)
+    let handler = undefined;
+    if (state._flow_template && unitDetails) {
+      const tmpl = Object.hasOwn(FLOW_TEMPLATES, state._flow_template) ? FLOW_TEMPLATES[state._flow_template] : null;
+      if (tmpl && tmpl.unitHandlers && tmpl.unitHandlers[unitDetails.type]) {
+        handler = tmpl.unitHandlers[unitDetails.type];
+      }
+    }
+    // Also check for unitHandlers stored directly in loop-state (set by init-loop --handlers)
+    if (!handler && state._unit_handlers && unitDetails) {
+      handler = state._unit_handlers[unitDetails.type] || undefined;
+    }
+
     console.log(JSON.stringify({
       ready: true,
       terminate: false,
@@ -178,6 +200,7 @@ export function cmdNextTick(args) {
       tick: state.tick + 1,
       previous_unit: state.unit,
       previous_status: prevStatus,
+      handler: handler || undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;

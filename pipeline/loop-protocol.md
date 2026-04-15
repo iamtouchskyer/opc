@@ -156,6 +156,7 @@ Each tick follows this sequence:
    - fix units              → direct implementation targeting review findings
    - e2e-verify units       → executor-protocol (orchestrator runs directly)
    - accept units           → pre-release flow
+   - **custom handler**     → if `next-tick` returns `handler`, dispatch to that skill/command instead of OPC's built-in dispatch (see Unit Handlers below)
 6. Execute the flow
 7. Verify output:
    - Tests pass (pytest, vitest, etc.)
@@ -321,6 +322,65 @@ At `init-loop`, the orchestrator SHOULD probe for available validators:
 ### Key Principle
 
 **The agent that does the work is supervised by tools it doesn't control.** Pre-commit hooks are executed by git, not by the agent. CI is executed by GitHub, not by the agent. This is real independence — not same-model-different-prompt cosplay.
+
+## Unit Handlers — External Skill Dispatch
+
+When a loop is initialized with `--flow-template` or `--handlers`, certain unit types can be dispatched to external skills instead of OPC's built-in flow dispatch.
+
+### How It Works
+
+1. `init-loop --flow-template <name>` stores the template name in `_flow_template`
+2. `next-tick` looks up the unit type in the template's `unitHandlers` (or `_unit_handlers` from `--handlers`)
+3. If a handler is found, `next-tick` returns it in the `handler` field:
+   ```json
+   {
+     "ready": true,
+     "next_unit": "D1.2",
+     "unit_type": "discover",
+     "handler": { "skill": "/dw-discover", "invocation": "/dw-discover {task}" }
+   }
+   ```
+4. The orchestrator invokes the handler's skill/command **instead of** the built-in dispatch table
+
+### Handler Resolution Order
+
+1. Flow template's `unitHandlers` (looked up via `_flow_template` in loop-state)
+2. Inline `_unit_handlers` (set via `--handlers` at init-loop time)
+3. OPC's built-in dispatch (spec→discussion, implement→build-verify, review→review, etc.)
+
+First match wins. If no handler matches, fall back to built-in dispatch.
+
+### Handler Object Schema
+
+```jsonc
+{
+  "skill": "/dw-discover",              // skill invocation (mutually exclusive with command)
+  "invocation": "/dw-discover {task}",   // optional: full invocation string with placeholders
+  "command": "dw publish {id}"           // CLI command alternative (mutually exclusive with skill)
+}
+```
+
+Placeholders: `{task}` = unit description from plan.md, `{id}` = unit ID.
+
+### Example: dreamworks Using OPC Loop with Custom Handlers
+
+```bash
+# dreamworks initializes a loop with its own unit type handlers
+node "$OPC_HARNESS" init-loop \
+  --plan .harness/plan.md \
+  --flow-template pitch-ready \
+  --dir .harness
+
+# Or with inline handlers (no flow template needed):
+node "$OPC_HARNESS" init-loop \
+  --plan .harness/plan.md \
+  --handlers '{"discover":{"skill":"/dw-discover"},"pitch":{"skill":"/dw-pitch"}}' \
+  --dir .harness
+```
+
+When `next-tick` encounters a `discover` unit, it returns the handler. The orchestrator (dreamworks) invokes `/dw-discover` instead of OPC's default `build-verify` flow.
+
+Unit types without a matching handler fall through to OPC's built-in dispatch table — so an orchestrator only needs to override the types it cares about.
 
 ## Backlog Management
 

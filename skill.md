@@ -248,6 +248,18 @@ Specialist:  planner, user-simulator, devil-advocate
 
 Role definitions live in `roles/<name>.md`. Add a `.md` file to `roles/` to create a custom role.
 
+### Role Discovery
+
+The orchestrator searches for role definitions in this order (later sources override earlier ones with the same filename):
+
+1. **Built-in roles** — `roles/<name>.md` in OPC's install directory
+2. **Flow template roles** — if the active flow template specifies `rolesDir`, scan `_resolvedRolesDir/<name>.md`. Custom roles with the same name as a built-in one take precedence for this flow.
+3. **Dynamic roles** — created on-the-fly during execution (see below)
+
+**How to check for custom roles:** After `opc-harness init`, if the flow template was loaded from `~/.claude/flows/`, check `FLOW_TEMPLATES[template]._resolvedRolesDir`. If it exists and is a directory, scan it for `.md` files and merge into the role pool.
+
+**Protocol discovery** works the same way: if the flow template specifies `protocolDir`, protocols in `_resolvedProtocolDir/<name>.md` supplement or override built-in protocols in `pipeline/`.
+
 ### Role Selection
 
 1. **Tag filter** — from the flow template, you know the node type. Map to stage tags:

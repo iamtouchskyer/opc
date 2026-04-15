@@ -4,7 +4,7 @@
 import { readFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { createHash } from "crypto";
-import { FLOW_TEMPLATES } from "./flow-templates.mjs";
+import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
   getFlag, resolveDir, atomicWriteSync,
@@ -19,18 +19,18 @@ import { checkEvalDistinctness } from "./eval-parser.mjs";
 export function cmdRoute(args) {
   const node = getFlag(args, "node");
   const verdict = getFlag(args, "verdict");
-  const flow = getFlag(args, "flow");
 
-  if (!node || !verdict || !flow) {
-    console.error("Usage: opc-harness route --node <gateId> --verdict <PASS|FAIL|ITERATE> --flow <template>");
+  if (!node || !verdict) {
+    console.error("Usage: opc-harness route --node <gateId> --verdict <PASS|FAIL|ITERATE> --flow <template> [--flow-file <path>]");
     process.exit(1);
   }
 
-  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
-  if (!template) {
-    console.log(JSON.stringify({ next: null, valid: false, error: `unknown flow template: ${flow}` }));
+  const resolved = resolveFlowTemplate(args);
+  if (resolved.error) {
+    console.log(JSON.stringify({ next: null, valid: false, error: resolved.error }));
     return;
   }
+  const { template, name: flow } = resolved;
 
   if (!template.nodes.includes(node)) {
     console.log(JSON.stringify({ next: null, valid: false, error: `node '${node}' not in flow '${flow}'` }));
@@ -49,26 +49,21 @@ export function cmdRoute(args) {
 // ─── init ───────────────────────────────────────────────────────
 
 export function cmdInit(args) {
-  const flow = getFlag(args, "flow");
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
   const dir = resolveDir(args);
-
-  if (!flow) {
-    console.error("Usage: opc-harness init --flow <template> --entry <nodeId> [--tier <functional|polished|delightful>] --dir <path>");
-    process.exit(1);
-  }
 
   if (tier && !VALID_TIERS.has(tier)) {
     console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
     return;
   }
 
-  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
-  if (!template) {
-    console.log(JSON.stringify({ created: false, error: `unknown flow template: ${flow}` }));
+  const resolved = resolveFlowTemplate(args);
+  if (resolved.error) {
+    console.log(JSON.stringify({ created: false, error: resolved.error }));
     return;
   }
+  const { template, name: flow } = resolved;
 
   const entryNode = entry || template.nodes[0];
   if (!template.nodes.includes(entryNode)) {
@@ -99,6 +94,7 @@ export function cmdInit(args) {
     edgeCounts: {},
     _written_by: WRITER_SIG,
     _last_modified: new Date().toISOString(),
+    _flow_file: template._source_file || undefined,
     _write_nonce: createHash("sha256")
       .update(Date.now().toString() + Math.random().toString())
       .digest("hex").slice(0, 16),
@@ -316,6 +312,10 @@ export function cmdValidate(args) {
     const statePath = join(harnessDir, "flow-state.json");
     if (existsSync(statePath)) {
       const state = JSON.parse(readFileSync(statePath, "utf8"));
+      // Auto-restore flow template from _flow_file if needed
+      if (state._flow_file) {
+        loadFlowFromFile(state._flow_file); // injects into FLOW_TEMPLATES
+      }
       if (state.flowTemplate) {
         const tmpl = FLOW_TEMPLATES[state.flowTemplate];
         if (tmpl && tmpl.softEvidence) soft = true;
@@ -348,20 +348,20 @@ export const RULE_VALIDATORS = {
 };
 
 export function cmdValidateContext(args) {
-  const flow = getFlag(args, "flow");
   const node = getFlag(args, "node");
   const dir = resolveDir(args);
 
-  if (!flow || !node) {
-    console.error("Usage: opc-harness validate-context --flow <template> --node <nodeId> --dir <path>");
+  if (!node) {
+    console.error("Usage: opc-harness validate-context --flow <template> [--flow-file <path>] --node <nodeId> --dir <path>");
     process.exit(1);
   }
 
-  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
-  if (!template) {
-    console.log(JSON.stringify({ valid: false, errors: [`unknown flow template: ${flow}`] }));
+  const resolved = resolveFlowTemplate(args);
+  if (resolved.error) {
+    console.log(JSON.stringify({ valid: false, errors: [resolved.error] }));
     return;
   }
+  const { template } = resolved;
 
   if (!template.contextSchema) {
     console.log(JSON.stringify({ valid: true, errors: [], note: "no contextSchema in template" }));

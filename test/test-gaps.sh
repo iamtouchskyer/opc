@@ -103,8 +103,9 @@ echo "--- 3.1: route missing flags exits nonzero ---"
 assert_exit_nonzero "route no-args" $HARNESS route
 
 echo ""
-echo "--- 3.2: init missing flow exits nonzero ---"
-assert_exit_nonzero "init no-flow" $HARNESS init
+echo "--- 3.2: init missing flow returns error JSON ---"
+OUT=$($HARNESS init 2>/dev/null)
+assert_field_eq "init no-flow" "$OUT" "created" "false"
 
 echo ""
 echo "--- 3.3: viz missing flow exits nonzero ---"

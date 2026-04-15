@@ -649,7 +649,7 @@ assert_contains "marker symbols" "$OUT" "✅"
 echo ""
 echo "--- 9.4: Viz unknown flow ---"
 OUT=$($HARNESS viz --flow nonexistent 2>&1) || true
-assert_contains "unknown flow" "$OUT" "Unknown"
+assert_contains "unknown flow" "$OUT" "unknown flow template"
 
 # ═══════════════════════════════════════════════════════════════
 echo ""

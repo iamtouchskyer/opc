@@ -3,7 +3,7 @@
 
 import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
-import { FLOW_TEMPLATES } from "./flow-templates.mjs";
+import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
@@ -18,27 +18,32 @@ export function cmdTransition(args) {
   const from = getFlag(args, "from");
   const to = getFlag(args, "to");
   const verdict = getFlag(args, "verdict");
-  const flow = getFlag(args, "flow");
   const dir = resolveDir(args);
 
-  if (!from || !to || !verdict || !flow) {
-    console.error("Usage: opc-harness transition --from <node> --to <node> --verdict <V> --flow <template> --dir <path>");
+  if (!from || !to || !verdict) {
+    console.error("Usage: opc-harness transition --from <node> --to <node> --verdict <V> --flow <template> [--flow-file <path>] --dir <path>");
     process.exit(1);
   }
 
-  const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
-  if (!template) {
-    console.log(JSON.stringify({ allowed: false, reason: `unknown flow template: ${flow}` }));
+  // Try to load _flow_file from existing state before resolving template
+  const statePath = join(dir, "flow-state.json");
+  let existingState = null;
+  if (existsSync(statePath)) {
+    try { existingState = JSON.parse(readFileSync(statePath, "utf8")); } catch { /* will be caught later */ }
+  }
+
+  const resolved = resolveFlowTemplate(args, existingState);
+  if (resolved.error) {
+    console.log(JSON.stringify({ allowed: false, reason: resolved.error }));
     return;
   }
+  const { template, name: flow } = resolved;
 
   const nodeEdges = template.edges[from];
   if (!nodeEdges || nodeEdges[verdict] !== to) {
     console.log(JSON.stringify({ allowed: false, reason: `edge '${from}' --${verdict}--> '${to}' not in flow '${flow}'` }));
     return;
   }
-
-  const statePath = join(dir, "flow-state.json");
 
   // Acquire lock
   const lock = lockFile(statePath, { command: "transition" });
@@ -356,6 +361,12 @@ export function cmdFinalize(args) {
   }
 
   const flow = state.flowTemplate;
+
+  // Auto-restore flow template from _flow_file if needed
+  if (state._flow_file) {
+    loadFlowFromFile(state._flow_file); // injects into FLOW_TEMPLATES
+  }
+
   const template = Object.hasOwn(FLOW_TEMPLATES, flow) ? FLOW_TEMPLATES[flow] : null;
   if (!template) {
     console.log(JSON.stringify({ finalized: false, error: `unknown flow template: ${flow}` }));

@@ -3,7 +3,7 @@
 
 import { readFileSync, readdirSync, statSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
-import { FLOW_TEMPLATES } from "./flow-templates.mjs";
+import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 import { cmdTransition } from "./flow-transition.mjs";
 import {
   getFlag, resolveDir, atomicWriteSync,
@@ -17,7 +17,12 @@ function loadState(dir) {
   const statePath = join(dir, "flow-state.json");
   if (!existsSync(statePath)) return null;
   try {
-    return { state: JSON.parse(readFileSync(statePath, "utf8")), statePath };
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    // Auto-restore flow template from _flow_file if needed
+    if (state._flow_file) {
+      loadFlowFromFile(state._flow_file);
+    }
+    return { state, statePath };
   } catch {
     console.error(`Cannot parse ${statePath}`);
     process.exit(1);
