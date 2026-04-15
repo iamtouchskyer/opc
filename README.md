@@ -113,6 +113,80 @@ What happens:
 | JSON crash recovery | try/catch on all JSON.parse; structured errors, not crashes |
 | External validators | Pre-commit hooks, test suites detected at init and leveraged |
 
+## Harness Commands (v0.10b)
+
+### `ux-verdict` — UX simulation verdict
+
+Aggregates red flags from persona-based observer reports, computes tier-parameterized severity, compares against a baseline run, and produces a mechanical PASS/ITERATE/FAIL gate verdict.
+
+```bash
+opc-harness ux-verdict --dir .harness --run 1
+```
+
+- Reads `observer-*.md` files from `nodes/ux-simulation/run_N/`
+- Validates observer JSON schema (7 reject conditions: missing fields, invalid flag keys, short reasoning, third-person language, etc.)
+- Aggregates red flags across observers, deduplicates by key, takes worst severity
+- Delta comparison against previous run: regressions → FAIL, improvements → PASS/ITERATE
+- Gate logic: any critical = FAIL, warnings over tier threshold = ITERATE
+- Supports `red-flag-overrides.md` to reclassify flag severity per project
+
+Related: `ux-friction-aggregate` generates a friction report grouped by UX stage:
+
+```bash
+opc-harness ux-friction-aggregate --dir .harness --run 1 --output friction.md
+```
+
+### `criteria-lint` — Acceptance criteria quality check
+
+Zero-token-cost structural and content validation for `acceptance-criteria.md` files. Runs 14 checks (7 structural, 4 content, 3 warnings) in a single pass.
+
+```bash
+opc-harness criteria-lint acceptance-criteria.md --tier polished
+```
+
+**Structural checks:** required sections (Outcomes, Verification, Quality Constraints, Out of Scope), outcome count (3–7), verification mapping (every OUT-N has a method), tier baseline section when `--tier` is set.
+
+**Content checks:** vague outcomes without measurement thresholds (`fast`, `clean`, `intuitive`), impossible-to-fail criteria (`should work`, `as expected`), manual-only verification, near-duplicate outcomes (Jaccard >80%).
+
+**Warnings:** empty scope section, no failure-mode outcomes, high outcome count (>5).
+
+Exits 0 on pass, 1 on failure. JSON on stdout, human-readable on stderr.
+
+### Compound Defense — Eval quality probability stacking
+
+Built into `opc-harness synthesize`, compound defense applies 9 independent quality layers to eval files and test plans. Each layer is ~30% bypassable independently; stacked, bypass probability drops to ~0.24%.
+
+**Eval layers** (applied per reviewer file):
+
+| Layer | Detects |
+|-------|---------|
+| Thin eval | <50 lines |
+| No code refs | 0 `file:line` references in findings |
+| Low unique content | >40% duplicate lines (copy-paste padding) |
+| Single heading | 1 heading in 30+ lines (no structural diversity) |
+| Low finding density | Few findings relative to line count (bulk filler) |
+| Missing reasoning | >50% of findings lack "Reasoning:" explanation |
+| Missing fix | >50% of findings lack "→" fix suggestion |
+| Uniform line length | Suspiciously low variance (template fill) |
+| Fabricated refs | `file:line` references that don't exist in `--base` dir |
+
+**Test plan layers** (applied to `test-plan.md`):
+
+| Layer | Detects |
+|-------|---------|
+| Shallow sections | Layer sections with <3 content lines |
+| No actionable commands | 0 backtick-quoted commands in 10+ line plan |
+
+```bash
+# Eval layers run automatically during synthesize:
+opc-harness synthesize .harness --node code-review
+
+# Enable file:line reality check with --base:
+opc-harness synthesize .harness --node code-review --base ./src
+```
+
+Each triggered layer adds a warning to the synthesize verdict. Any warning downgrades the verdict to ITERATE.
+
 ## Built-in Roles
 
 ```
