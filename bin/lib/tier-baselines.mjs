@@ -1,6 +1,7 @@
 // Quality tier baseline definitions — single source of truth.
-// Used by: init (store tier), synthesize (coverage check), tier-baseline (P0 test cases).
-// No I/O, no dependencies.
+// Used by: init (store tier), synthesize (coverage check), tier-baseline (P0 test cases),
+//          ux-verdict (red flag severity mapping).
+// No I/O, no dependencies. Pure data + pure functions.
 
 export const VALID_TIERS = new Set(["functional", "polished", "delightful"]);
 
@@ -265,6 +266,71 @@ export const TIER_BASELINES = [
     },
   },
 ];
+
+// ── Red Flag Enum — UX simulation red flag detection ──────────
+// Each flag has a key, label, and tier-parameterized severity.
+// Source of truth for ux-verdict command severity mapping.
+export const RED_FLAGS = [
+  { key: "default-favicon",      label: "Default favicon",          severity: { functional: null,         polished: "warning",  delightful: "critical" } },
+  { key: "stack-trace-visible",  label: "Stack trace visible",      severity: { functional: "warning",    polished: "critical", delightful: "critical" } },
+  { key: "lorem-ipsum",          label: "Lorem ipsum placeholder",  severity: { functional: "warning",    polished: "critical", delightful: "critical" } },
+  { key: "broken-link",          label: "Broken CTA/nav link",      severity: { functional: "critical",   polished: "critical", delightful: "critical" } },
+  { key: "no-empty-state",       label: "No empty state guidance",  severity: { functional: "suggestion", polished: "warning",  delightful: "critical" } },
+  { key: "no-loading-feedback",  label: "No loading feedback",      severity: { functional: "suggestion", polished: "warning",  delightful: "critical" } },
+  { key: "no-error-recovery",    label: "No error recovery action", severity: { functional: "suggestion", polished: "warning",  delightful: "critical" } },
+  { key: "first-value-over-5min", label: "First value >5 minutes",  severity: { functional: "warning",    polished: "critical", delightful: "critical" } },
+  { key: "data-loss-on-error",   label: "Data loss on error",       severity: { functional: "critical",   polished: "critical", delightful: "critical" } },
+  { key: "auth-before-value",    label: "Auth before value",        severity: { functional: "suggestion", polished: "warning",  delightful: "critical" } },
+];
+
+export const RED_FLAG_KEYS = new Set(RED_FLAGS.map((f) => f.key));
+
+export const TRUST_SIGNAL_KEYS = new Set([
+  "changelog-visible", "error-messages-helpful", "favicon-custom",
+  "meta-tags-present", "keyboard-navigable", "responsive-layout",
+  "dark-mode-support", "loading-states-present", "empty-states-guided",
+  "recovery-actions-present",
+]);
+
+export const TIER_FIT_BUCKETS = new Set(["free-only", "below-tier", "at-tier", "above-tier"]);
+export const DELTA_ASSESSMENTS = new Set(["regression", "same", "improvement", "significant-improvement"]);
+
+export const WARNING_THRESHOLDS = { functional: 3, polished: 2, delightful: 1 };
+
+/**
+ * Get the severity of a red flag for a given tier.
+ * Returns null if not applicable, or "suggestion"/"warning"/"critical".
+ * Applies overrides if provided.
+ */
+export function getRedFlagSeverity(key, tier, overrides = null) {
+  if (!VALID_TIERS.has(tier)) return null;
+  // Check overrides first
+  if (overrides && overrides.has(key)) {
+    const ov = overrides.get(key);
+    return ov === "—" || ov === "-" || ov === "null" ? null : ov;
+  }
+  const flag = RED_FLAGS.find((f) => f.key === key);
+  if (!flag) return key === "other" ? "suggestion" : null;
+  return flag.severity[tier] || null;
+}
+
+/**
+ * Parse red flag severity overrides from text content.
+ * Format: `- key: severity` lines (from red-flag-overrides.md).
+ * Returns a Map<string, string> or null if no valid entries.
+ * I/O is the caller's responsibility — this is pure parsing.
+ */
+export function parseRedFlagOverrides(content) {
+  const overrides = new Map();
+  const lines = content.split("\n");
+  for (const line of lines) {
+    const m = line.match(/^-\s+([\w-]+):\s*(.+)$/);
+    if (m) {
+      overrides.set(m[1].trim(), m[2].trim());
+    }
+  }
+  return overrides.size > 0 ? overrides : null;
+}
 
 /**
  * Get baseline items applicable to a given tier.

@@ -12,6 +12,8 @@ import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
 import { cmdNextTick } from "./lib/loop-advance.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
+import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
+import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -39,6 +41,9 @@ switch (command) {
   case "goto":         cmdGoto(args);          break;
   case "ls":           cmdLs(args);            break;
   case "tier-baseline": cmdTierBaseline(args);  break;
+  case "ux-verdict":            cmdUxVerdict(args);            break;
+  case "ux-friction-aggregate": cmdUxFrictionAggregate(args);  break;
+  case "criteria-lint":         cmdCriteriaLint(args);         break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -69,6 +74,12 @@ switch (command) {
     console.log("  diff <file1> <file2>                               Compare two evaluation rounds");
     console.log("  tier-baseline --tier <functional|polished|delightful>");
     console.log("                                                     Generate P0 test cases for tier");
+    console.log();
+    console.log("UX simulation:");
+    console.log("  ux-verdict --dir <p> --run <N>                     Compute UX verdict from observers");
+    console.log("  ux-friction-aggregate --dir <p> --run <N> --output <p>");
+    console.log("                                                     Aggregate friction points");
+    console.log("  criteria-lint <file> [--tier <t>]                  Lint acceptance criteria DoD");
     console.log();
     console.log("Loop commands (Layer 2 — zero trust):");
     console.log("  init-loop [--plan <file>] [--dir <p>]              Init loop state");
