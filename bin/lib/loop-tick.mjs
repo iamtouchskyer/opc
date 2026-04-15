@@ -132,7 +132,7 @@ export function cmdCompleteTick(args) {
   state._git_head = getGitHeadHash();
 
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
-  state._tick_history.push({ unit, tick: newTick, status });
+  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict });
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
@@ -152,7 +152,7 @@ export function cmdCompleteTick(args) {
     unitType,
     next_unit: nextUnit,
     terminate: nextUnit === null,
-    verdict: reviewVerdict || undefined,
+    verdict: reviewVerdict,
     warnings: warnings.length > 0 ? warnings : undefined,
   }));
 }
@@ -286,6 +286,8 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
   state._last_review_evals = evalHashes;
 
   // Synthesize verdict from eval files (reuse parseEvaluation from eval-parser)
+  if (evalContents.length === 0) return undefined;
+
   let totalCritical = 0, totalWarning = 0, totalSuggestion = 0;
   for (const { content } of evalContents) {
     const parsed = parseEvaluation(content);
