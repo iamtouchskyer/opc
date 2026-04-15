@@ -3,6 +3,7 @@
 
 import { readFileSync, appendFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
+import { execSync } from "child_process";
 import { parsePlan, hashContent, getGitHeadHash } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
@@ -240,8 +241,37 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
     errors.push(`git HEAD unchanged since last tick — implement unit must produce a commit`);
   }
 
-  if (state._external_validators && !state._external_validators.pre_commit_hooks) {
-    warnings.push("no pre-commit hooks detected — git commit has no external quality gate (lint/typecheck/format)");
+  // Rule 7b: reject .gitkeep-only or trivial commits
+  if (currentHead && state._git_head && currentHead !== state._git_head) {
+    try {
+      const diffStat = execSync(`git diff --name-only ${state._git_head}..${currentHead}`, { encoding: "utf8", timeout: 5000 }).trim();
+      const changedFiles = diffStat.split("\n").filter(Boolean);
+      const substantiveFiles = changedFiles.filter(f => !f.endsWith(".gitkeep") && !f.endsWith(".keep"));
+      if (substantiveFiles.length === 0 && changedFiles.length > 0) {
+        errors.push(`commit only modifies .gitkeep files — implement unit must produce substantive code changes`);
+      }
+    } catch { /* git diff fail is non-fatal */ }
+  }
+
+  // Rule 9: external validator enforcement
+  if (state._external_validators) {
+    if (!state._external_validators.pre_commit_hooks) {
+      warnings.push("no pre-commit hooks detected — git commit has no external quality gate (lint/typecheck/format)");
+    }
+    if (state._external_validators.test_script) {
+      // Check if any artifact mentions test runner output markers
+      const testRunnerMarkers = /tests?\s*(passed|failed|run|suites?|specs?)|PASS|FAIL|✓|✗|✘|assertions?|test result/i;
+      const hasTestEvidence = artifacts.some(a => {
+        if (!existsSync(a)) return false;
+        try {
+          const content = readFileSync(a, "utf8");
+          return testRunnerMarkers.test(content);
+        } catch { return false; }
+      });
+      if (!hasTestEvidence) {
+        warnings.push(`test_script '${state._external_validators.test_script}' detected but no artifact contains test runner output — did you run tests?`);
+      }
+    }
   }
 }
 
