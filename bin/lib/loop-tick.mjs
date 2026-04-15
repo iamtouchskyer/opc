@@ -95,7 +95,7 @@ export function cmdCompleteTick(args) {
       reviewVerdict = validateReviewArtifacts(unit, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("fix")) {
       validateFixArtifacts(unit, artifacts, errors, warnings, state);
-    } else if (unitType.startsWith("e2e") || unitType.startsWith("accept")) {
+    } else if (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim") || unitType.startsWith("ux-simulation")) {
       if (artifacts.length === 0) {
         errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
       }
@@ -105,6 +105,11 @@ export function cmdCompleteTick(args) {
   if (errors.length > 0) {
     console.log(JSON.stringify({ completed: false, errors, warnings: warnings.length > 0 ? warnings : undefined }));
     return;
+  }
+
+  // ── Rule 13: Backlog auto-accumulation from review findings ──
+  if (unitType.startsWith("review") && reviewVerdict && reviewVerdict !== "PASS") {
+    _accumulateBacklog(dir, unit, artifacts, warnings);
   }
 
   // Only advance to next unit on successful completion
@@ -338,5 +343,35 @@ function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
   const currentHead = getGitHeadHash();
   if (currentHead && state._git_head && currentHead === state._git_head) {
     errors.push(`git HEAD unchanged — fix unit must produce a commit`);
+  }
+}
+
+// ── Backlog auto-accumulation ──────────────────────────────────
+
+function _accumulateBacklog(dir, unit, artifacts, warnings) {
+  const backlogPath = join(dir, "backlog.md");
+  const iterateLines = [];
+
+  for (const a of artifacts) {
+    if (!a.endsWith(".md") || !existsSync(a)) continue;
+    const content = readFileSync(a, "utf8");
+    // Extract 🟡 lines (ITERATE-level findings)
+    const lines = content.split("\n");
+    for (const line of lines) {
+      if (/🟡/.test(line) && line.trim().length > 0) {
+        iterateLines.push(line.trim());
+      }
+    }
+  }
+
+  if (iterateLines.length === 0) return;
+
+  const header = `\n## From review unit ${unit} — ${new Date().toISOString()}\n`;
+  const items = iterateLines.map(l => `- [ ] ${l}`).join("\n") + "\n";
+
+  try {
+    appendFileSync(backlogPath, header + items);
+  } catch {
+    warnings.push("failed to append to backlog.md");
   }
 }
