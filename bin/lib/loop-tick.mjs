@@ -95,7 +95,7 @@ export function cmdCompleteTick(args) {
       reviewVerdict = validateReviewArtifacts(unit, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("fix")) {
       validateFixArtifacts(unit, artifacts, errors, warnings, state);
-    } else if (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim") || unitType.startsWith("ux-simulation")) {
+    } else if (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim")) {
       if (artifacts.length === 0) {
         errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
       }
@@ -350,27 +350,41 @@ function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
 
 function _accumulateBacklog(dir, unit, artifacts, warnings) {
   const backlogPath = join(dir, "backlog.md");
-  const iterateLines = [];
+  const findingLines = [];
 
   for (const a of artifacts) {
     if (!a.endsWith(".md") || !existsSync(a)) continue;
-    const content = readFileSync(a, "utf8");
-    // Extract 🟡 lines (ITERATE-level findings)
+    let content;
+    try {
+      content = readFileSync(a, "utf8");
+    } catch {
+      warnings.push(`backlog: could not read ${a}`);
+      continue;
+    }
     const lines = content.split("\n");
     for (const line of lines) {
-      if (/🟡/.test(line) && line.trim().length > 0) {
-        iterateLines.push(line.trim());
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      // Extract both 🔴 (critical) and 🟡 (iterate) findings
+      if (/🔴/.test(trimmed) || /🟡/.test(trimmed)) {
+        // Strip leading list markers to avoid double-prefix: "- 🟡 foo" → "🟡 foo"
+        const cleaned = trimmed.replace(/^[-*]\s+/, "");
+        findingLines.push({ text: cleaned, source: a });
       }
     }
   }
 
-  if (iterateLines.length === 0) return;
+  if (findingLines.length === 0) return;
 
-  const header = `\n## From review unit ${unit} — ${new Date().toISOString()}\n`;
-  const items = iterateLines.map(l => `- [ ] ${l}`).join("\n") + "\n";
+  // Ensure file starts with a top-level heading if it doesn't exist yet
+  const needsHeader = !existsSync(backlogPath);
+
+  const sectionHeader = `\n## From review unit ${unit} — ${new Date().toISOString()}\n`;
+  const items = findingLines.map(f => `- [ ] ${f.text} _(from ${f.source})_`).join("\n") + "\n";
 
   try {
-    appendFileSync(backlogPath, header + items);
+    const content = (needsHeader ? "# Backlog\n" : "") + sectionHeader + items;
+    appendFileSync(backlogPath, content);
   } catch {
     warnings.push("failed to append to backlog.md");
   }
