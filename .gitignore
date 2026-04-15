@@ -4,3 +4,4 @@
 node_modules/
 .claude/
 .harness/
+.validation-corpus/

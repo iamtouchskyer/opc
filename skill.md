@@ -1,6 +1,6 @@
 ---
 name: opc
-version: 0.7.0
+version: 0.10.0
 description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Every path ends with evaluation. /opc <task>, /opc -i <task>, /opc <role> [role...]"
 ---
 
@@ -128,7 +128,7 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 | gate-audit | gate | — | gate-protocol.md |
 | e2e-user | execute | [new-user, active-user, churned-user] | executor-protocol.md |
 | gate-e2e | gate | — | gate-protocol.md |
-| post-launch-sim | execute | [user-simulator] | executor-protocol.md |
+| ux-simulation | execute | [new-user, active-user, churned-user] | ux-simulation-protocol.md + ux-observer-protocol.md |
 | gate-final | gate | — | gate-protocol.md |
 
 ### pre-release
@@ -213,6 +213,8 @@ Before dispatching ANY work, the orchestrator MUST establish a clear definition 
 **In loop mode (`/opc loop`)**: these answers go into `plan.md` per unit, so every tick knows how to verify itself even after context compaction.
 
 Write the finalized acceptance criteria to `.harness/acceptance-criteria.md` and include them in every subagent prompt.
+
+**Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint .harness/acceptance-criteria.md`. If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the 14 mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
 
 ### Interactive Mode Details (with `-i`)
 
@@ -426,6 +428,10 @@ All templates live in `./pipeline/`:
 - `handoff-template.md` — Handshake.json specification
 - `context-brief.md` — Design context brief procedure
 - `report-format.md` — Presentation templates + JSON schema + replay
+- `quality-tiers.md` — Tier definitions + baseline checklists + severity calibration
+- `ux-simulation-protocol.md` — **UX simulation gate** (red flag detection, delta comparison, ordinal tier fit)
+- `ux-observer-protocol.md` — **UX observer dispatch** (persona-based pattern observation, closed enum red flags)
+- `criteria-lint.md` — **DoD mechanical lint** (single-pass structure + content checks, pre-init gate)
 
 ---
 
