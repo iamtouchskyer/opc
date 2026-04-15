@@ -44,11 +44,19 @@ export function checkEvalDistinctness(evalContents) {
         }
       }
 
-      // Identical heading → warning
+      // Identical heading → error (same heading = same agent role)
       const headingA = (a.content.match(/^#\s+(.+)/m) || [])[1] || "";
       const headingB = (b.content.match(/^#\s+(.+)/m) || [])[1] || "";
       if (headingA && headingB && headingA === headingB) {
-        warnings.push(`eval files '${a.path}' and '${b.path}' have identical headings — each reviewer should have a distinct angle`);
+        errors.push(`eval files '${a.path}' and '${b.path}' have identical headings '${headingA}' — reviews must come from independent agents with distinct roles`);
+      }
+
+      // Role tag check — extract "Role: X" or "Agent: X" from content
+      const roleTagRe = /^(?:role|agent|reviewer)\s*:\s*(.+)/im;
+      const roleA = (a.content.match(roleTagRe) || [])[1]?.trim().toLowerCase() || "";
+      const roleB = (b.content.match(roleTagRe) || [])[1]?.trim().toLowerCase() || "";
+      if (roleA && roleB && roleA === roleB) {
+        errors.push(`eval files '${a.path}' and '${b.path}' have identical role tag '${roleA}' — reviews must be from different roles`);
       }
     }
   }
