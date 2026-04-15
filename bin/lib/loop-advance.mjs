@@ -2,10 +2,72 @@
 // Depends on: loop-helpers.mjs, util.mjs
 
 import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { parsePlan, hashContent } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const OPC_ROOT = join(__dirname, "..", "..");
+
+// ── Unit type → context hints mapping ─────────────────────────
+const UNIT_TYPE_HINTS = {
+  implement: {
+    protocols: ["implementer-prompt.md"],
+    roles: ["engineer"],
+    recommended_flow: "build-verify",
+  },
+  build: {
+    protocols: ["implementer-prompt.md"],
+    roles: ["engineer"],
+    recommended_flow: "build-verify",
+  },
+  review: {
+    protocols: ["role-evaluator-prompt.md", "context-brief.md"],
+    roles: ["frontend", "backend", "security"],
+    recommended_flow: "review",
+  },
+  fix: {
+    protocols: ["implementer-prompt.md"],
+    roles: ["engineer"],
+    recommended_flow: "build-verify",
+  },
+  e2e: {
+    protocols: ["executor-protocol.md"],
+    roles: ["tester"],
+    recommended_flow: "build-verify",
+  },
+  accept: {
+    protocols: ["role-evaluator-prompt.md"],
+    roles: ["pm", "designer"],
+    recommended_flow: "pre-release",
+  },
+  "ux-sim": {
+    protocols: ["ux-simulation-protocol.md", "ux-observer-protocol.md"],
+    roles: ["new-user", "active-user", "churned-user"],
+    recommended_flow: "full-stack",
+  },
+  "ux-simulation": {
+    protocols: ["ux-simulation-protocol.md", "ux-observer-protocol.md"],
+    roles: ["new-user", "active-user", "churned-user"],
+    recommended_flow: "full-stack",
+  },
+};
+
+function getContextHints(unitType) {
+  // Match by prefix: "implement-ui" → "implement"
+  const baseType = Object.keys(UNIT_TYPE_HINTS).find(k => unitType.startsWith(k));
+  if (!baseType) {
+    return { protocols: [], roles: [], recommended_flow: "build-verify" };
+  }
+  const hints = UNIT_TYPE_HINTS[baseType];
+  return {
+    protocols: hints.protocols.map(p => join(OPC_ROOT, "pipeline", p)).filter(p => existsSync(p)),
+    roles: hints.roles.map(r => join(OPC_ROOT, "roles", `${r}.md`)).filter(r => existsSync(r)),
+    recommended_flow: hints.recommended_flow,
+  };
+}
 
 // ─── next-tick ──────────────────────────────────────────────────
 
@@ -191,16 +253,22 @@ export function cmdNextTick(args) {
       handler = state._unit_handlers[unitDetails.type] || undefined;
     }
 
+    // Build context hints for the orchestrator
+    const unitType = unitDetails ? unitDetails.type : "unknown";
+    const contextHints = getContextHints(unitType);
+
     console.log(JSON.stringify({
       ready: true,
       terminate: false,
       next_unit: state.next_unit,
-      unit_type: unitDetails ? unitDetails.type : "unknown",
+      unit_type: unitType,
       unit_description: unitDetails ? unitDetails.description : "",
       tick: state.tick + 1,
       previous_unit: state.unit,
       previous_status: prevStatus,
       handler: handler || undefined,
+      context_hints: contextHints,
+      recommended_flow: contextHints.recommended_flow,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;

@@ -92,14 +92,21 @@ export function cmdReinitLoop(args) {
     return;
   }
 
-  // Check for duplicate IDs with existing units (excluding the target)
+  // Check for duplicate IDs with existing units (excluding the target) AND among sub-units
   const existingIds = new Set(units.filter((_, i) => i !== targetIdx).map(u => u.id));
-  const dupeIds = parsedSubUnits.filter(su => existingIds.has(su.id));
-  if (dupeIds.length > 0) {
-    console.log(JSON.stringify({
-      reinitialized: false,
-      errors: dupeIds.map(d => `sub-unit ID '${d.id}' conflicts with existing unit`),
-    }));
+  const subIds = new Set();
+  const dupeErrors = [];
+  for (const su of parsedSubUnits) {
+    if (existingIds.has(su.id)) {
+      dupeErrors.push(`sub-unit ID '${su.id}' conflicts with existing unit`);
+    }
+    if (subIds.has(su.id)) {
+      dupeErrors.push(`duplicate sub-unit ID '${su.id}'`);
+    }
+    subIds.add(su.id);
+  }
+  if (dupeErrors.length > 0) {
+    console.log(JSON.stringify({ reinitialized: false, errors: dupeErrors }));
     return;
   }
 
@@ -170,12 +177,25 @@ export function cmdReinitLoop(args) {
   state._last_modified = new Date().toISOString();
   state.unit_ids = newUnits.map(u => u.id);
   state.units_total = newUnits.length;
-  state._max_total_ticks = newUnits.length * 3;
+  // Bug fix: account for already-consumed ticks in budget
+  state._max_total_ticks = (state.tick || 0) + newUnits.length * 3;
   state._write_nonce = createHash("sha256")
     .update(Date.now().toString() + Math.random().toString())
     .digest("hex").slice(0, 16);
 
-  // tick history is PRESERVED — not reset
+  // Bug fix: insert reinit marker in tick history to break stall detection pattern
+  // Without this, next-tick's stall detector would see the old repeated unit entries
+  // and immediately re-stall the loop — making reinit useless.
+  if (!Array.isArray(state._tick_history)) state._tick_history = [];
+  state._tick_history.push({
+    unit: "__reinit__",
+    tick: state.tick,
+    status: "reinit",
+    decomposed: targetUnit,
+    sub_units: parsedSubUnits.map(su => su.id),
+  });
+
+  // tick history is PRESERVED (plus reinit marker) — not reset
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   console.log(JSON.stringify({
@@ -184,7 +204,7 @@ export function cmdReinitLoop(args) {
     sub_units: parsedSubUnits.map(su => `${su.id}: ${su.type}`),
     next_unit: parsedSubUnits[0].id,
     total_units: newUnits.length,
-    ticks_preserved: (state._tick_history || []).length,
+    ticks_preserved: state._tick_history.length,
     new_plan_hash: newPlanHash,
   }));
 }
