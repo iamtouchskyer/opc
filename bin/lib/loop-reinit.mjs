@@ -112,7 +112,7 @@ export function cmdReinitLoop(args) {
 
   // Rewrite plan: replace target unit line with sub-unit lines
   const lines = planText.split("\n");
-  const unitLinePattern = /^\s*[-*]\s+(\w+\.\d+)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
+  const unitLinePattern = /^\s*[-*]\s+(\w+\.\d+\w*)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
   const subLinePattern = /^\s+[-*]\s+(verify|eval)\s*:\s*(.*)/i;
 
   // Find the line range of the target unit (including sub-lines)

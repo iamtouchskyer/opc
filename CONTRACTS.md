@@ -5,7 +5,7 @@
 ## Version
 
 OPC Harness version: read from `HARNESS_VERSION` in `bin/lib/flow-templates.mjs`.
-Currently: `0.8.0`.
+Currently: `0.9.0`.
 
 External consumers declare compatibility via `opc_compat: ">=0.8"` — see [Flow Templates](#4-custom-flow-templates) below.
 

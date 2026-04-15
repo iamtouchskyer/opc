@@ -3,14 +3,14 @@
 
 import { readFileSync, existsSync } from "fs";
 import { createHash } from "crypto";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 // ── Plan parsing ────────────────────────────────────────────────
 
 export function parsePlan(planText) {
   const units = [];
   const lines = planText.split("\n");
-  const unitPattern = /^\s*[-*]\s+(\w+\.\d+)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
+  const unitPattern = /^\s*[-*]\s+(\w+\.\d+\w*)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
   const subLinePattern = /^\s+[-*]\s+(verify|eval)\s*:\s*(.*)/i;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(unitPattern);
@@ -69,7 +69,7 @@ export function hashContent(text) {
 
 export function getGitHeadHash() {
   try {
-    return execSync("git rev-parse HEAD", { encoding: "utf8", timeout: 5000 }).trim();
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000 }).trim();
   } catch {
     return null;
   }

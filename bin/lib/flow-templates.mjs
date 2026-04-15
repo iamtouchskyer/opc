@@ -7,7 +7,7 @@ import { homedir } from "os";
 import { VALID_NODE_TYPES, getFlag } from "./util.mjs";
 
 // Harness version — used for opc_compat checking
-export const HARNESS_VERSION = "0.8.0";
+export const HARNESS_VERSION = "0.9.0";
 
 export const FLOW_TEMPLATES = {
   "legacy-linear": {

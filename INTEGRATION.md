@@ -428,7 +428,7 @@ OPC enforces these at transition time:
 ## Version Compatibility
 
 ```
-HARNESS_VERSION: 0.8.0
+HARNESS_VERSION: 0.9.0
 ```
 
 Your flow JSON declares `"opc_compat": ">=0.8"`. OPC checks this at load time:
