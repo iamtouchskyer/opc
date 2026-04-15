@@ -9,6 +9,7 @@ import {
   getGitHeadHash, detectPreCommitHooks, detectTestScript,
 } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
+import { runLint } from "./criteria-lint.mjs";
 
 // ─── init-loop ──────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ export function cmdInitLoop(args) {
   const flowTemplate = getFlag(args, "flow-template", null);
   const flowFile = getFlag(args, "flow-file", null);
   const handlersRaw = getFlag(args, "handlers", null);
+  const skipLint = args.includes("--skip-lint");
 
   if (!existsSync(planFile)) {
     console.log(JSON.stringify({
@@ -76,10 +78,33 @@ export function cmdInitLoop(args) {
     return;
   }
 
-  mkdirSync(dir, { recursive: true });
-
-  // Check for verify/eval coverage in plan
+  // ── G3: Criteria-lint gate ────────────────────────────────────
+  const criteriaFile = join(dir, "acceptance-criteria.md");
   const initWarnings = [];
+
+  if (!existsSync(criteriaFile)) {
+    initWarnings.push("no acceptance-criteria.md found — loop has no definition of done");
+  } else if (skipLint) {
+    initWarnings.push("criteria-lint skipped via --skip-lint — acceptance criteria not mechanically validated");
+  } else {
+    const criteriaText = readFileSync(criteriaFile, "utf8");
+    const lintResult = runLint(criteriaText);
+    if (lintResult.failures.length > 0) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: lintResult.failures.map(f => `criteria-lint [${f.check}]: ${f.message}`),
+        hint: "fix acceptance-criteria.md or pass --skip-lint to bypass",
+      }));
+      return;
+    }
+    if (lintResult.warnings.length > 0) {
+      for (const w of lintResult.warnings) {
+        initWarnings.push(`criteria-lint [${w.check}]: ${w.message}`);
+      }
+    }
+  }
+
+  mkdirSync(dir, { recursive: true });
   const unitsWithoutVerify = units.filter(u =>
     !u.verify && (u.type.startsWith("implement") || u.type.startsWith("build") || u.type.startsWith("fix") || u.type.startsWith("e2e"))
   );

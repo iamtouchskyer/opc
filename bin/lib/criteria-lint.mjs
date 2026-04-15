@@ -52,7 +52,7 @@ const HAS_CONCRETE_TEST = /\b(returns|outputs|responds with|status code|HTTP \d|
 const MANUAL_ONLY = /\b(manual inspection|code review|looks correct|it should be obvious|visually inspect)\b/i;
 
 // ── Run all checks ─────────────────────────────────────────────
-function runLint(text, tier) {
+export function runLint(text, tier) {
   const sections = extractSections(text);
   const failures = [];
   const warnings = [];
