@@ -11,6 +11,7 @@ import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs
 import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
 import { cmdNextTick } from "./lib/loop-advance.mjs";
+import { cmdReinitLoop } from "./lib/loop-reinit.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
@@ -33,6 +34,7 @@ switch (command) {
   case "viz":          cmdViz(args);           break;
   case "replay":       cmdReplayData(args);    break;
   case "init-loop":    cmdInitLoop(args);      break;
+  case "reinit-loop":  cmdReinitLoop(args);    break;
   case "complete-tick": cmdCompleteTick(args);  break;
   case "next-tick":    cmdNextTick(args);      break;
   case "skip":         cmdSkip(args);          break;
@@ -87,6 +89,8 @@ switch (command) {
     console.log("Loop commands (Layer 2 — zero trust):");
     console.log("  init-loop [--plan <file>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]");
     console.log("                                                     Init loop state");
+    console.log("  reinit-loop --unit <id> --sub-units <csv> [--dir <p>]");
+    console.log("                                                     Decompose stalled unit into sub-units");
     console.log("  complete-tick --unit <id> --artifacts <a,b> --description <text> [--dir <p>]");
     console.log("                                                     Complete tick with evidence");
     console.log("  next-tick [--dir <p>]                              Get next unit or terminate");
