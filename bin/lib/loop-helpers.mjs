@@ -65,6 +65,10 @@ export function validatePlanStructure(units) {
     warnings.push(
       `plan has ${implementCount} implement/build unit(s) but 0 test/e2e/accept units — consider adding verification units`
     );
+  } else if (testCount > 0 && implementCount >= 3 * testCount) {
+    warnings.push(
+      `plan has ${implementCount} implement/build unit(s) but only ${testCount} test/e2e/accept unit(s) (ratio ${implementCount}:${testCount}) — consider adding more verification units`
+    );
   }
 
   return { errors, warnings };

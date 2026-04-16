@@ -229,32 +229,32 @@ echo ""
 echo "=== E3: Summary lint — deferral language detection ==="
 # ═══════════════════════════════════════════════════════════════
 
-echo "--- E3.1: 'deferred' triggers warning ---"
+echo "--- E3.1: 'deferred' blocks completion ---"
 setup_last_unit .e8
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e8/evals/eval-fe.md,.e8/evals/eval-be.md" --description "Completed review, deferred auth fix to next sprint" --dir .e8 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "deferral warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "deferral error" "$OUT" "deferral language"
 
 echo ""
-echo "--- E3.2: 'next loop' triggers warning ---"
+echo "--- E3.2: 'next loop' blocks completion ---"
 setup_last_unit .e9
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e9/evals/eval-fe.md,.e9/evals/eval-be.md" --description "Done, left TODO for next loop" --dir .e9 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "next loop warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "next loop error" "$OUT" "deferral language"
 
 echo ""
-echo "--- E3.3: 'future work' triggers warning ---"
+echo "--- E3.3: 'future work' blocks completion ---"
 setup_last_unit .e10
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e10/evals/eval-fe.md,.e10/evals/eval-be.md" --description "All done, future work needed for perf" --dir .e10 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "future work warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "future work error" "$OUT" "deferral language"
 
 echo ""
-echo "--- E3.4: 'punted' triggers warning ---"
+echo "--- E3.4: 'punted' blocks completion ---"
 setup_last_unit .e11
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e11/evals/eval-fe.md,.e11/evals/eval-be.md" --description "Review passed, punted edge cases" --dir .e11 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "punted warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "punted error" "$OUT" "deferral language"
 
 echo ""
 echo "--- E3.5: Normal description produces no warning ---"
@@ -284,18 +284,32 @@ assert_field_eq "mid-pipeline tick completes" "$OUT" "completed" "true"
 assert_not_contains "no warning on mid-tick" "$OUT" "deferral language"
 
 echo ""
-echo "--- E3.7: 'follow-up loop' triggers warning ---"
+echo "--- E3.7: 'follow-up loop' blocks completion ---"
 setup_last_unit .e14
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e14/evals/eval-fe.md,.e14/evals/eval-be.md" --description "Completed, follow-up loop needed for auth" --dir .e14 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "follow-up loop warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "follow-up loop error" "$OUT" "deferral language"
 
 echo ""
-echo "--- E3.8: 'TODO: next' triggers warning ---"
+echo "--- E3.8: 'TODO: next' blocks completion ---"
 setup_last_unit .e15
 OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e15/evals/eval-fe.md,.e15/evals/eval-be.md" --description "Done, TODO: next need to add tests" --dir .e15 2>/dev/null)
-assert_field_eq "tick completes" "$OUT" "completed" "true"
-assert_contains "TODO next warning" "$OUT" "deferral language"
+assert_field_eq "tick rejected" "$OUT" "completed" "false"
+assert_contains "TODO next error" "$OUT" "deferral language"
+
+echo ""
+echo "--- E3.9: Negation allowlist — 'not deferred' passes ---"
+setup_last_unit .e18
+OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e18/evals/eval-fe.md,.e18/evals/eval-be.md" --description "All items resolved, nothing deferred" --dir .e18 2>/dev/null)
+assert_field_eq "negation passes" "$OUT" "completed" "true"
+assert_not_contains "no deferral error on negation" "$OUT" "deferral language"
+
+echo ""
+echo "--- E3.10: 'no deferral needed' passes ---"
+setup_last_unit .e19
+OUT=$($HARNESS complete-tick --unit F1.2 --artifacts ".e19/evals/eval-fe.md,.e19/evals/eval-be.md" --description "Complete, no deferral needed" --dir .e19 2>/dev/null)
+assert_field_eq "no deferral passes" "$OUT" "completed" "true"
+assert_not_contains "no error on no-deferral" "$OUT" "deferral language"
 
 # ═══════════════════════════════════════════════════════════════
 echo ""
@@ -323,6 +337,48 @@ PLAN
 OUT=$($HARNESS init-loop --plan .e17/plan.md --dir .e17 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_contains "eval warning" "$OUT" "no eval"
+
+echo ""
+echo "--- E4.3: High implement:test ratio warns ---"
+rm -rf .e20 && mkdir -p .e20
+cat > .e20/plan.md << 'PLAN'
+- F1.1: implement — build auth
+  - verify: echo ok
+- F1.2: review — review auth
+- F1.3: implement — build api
+  - verify: echo ok
+- F1.4: review — review api
+- F1.5: implement — build ui
+  - verify: echo ok
+- F1.6: review — review ui
+- F1.7: e2e — smoke test
+  - verify: echo e2e
+- F1.8: review — final review
+PLAN
+OUT=$($HARNESS init-loop --plan .e20/plan.md --dir .e20 2>/dev/null)
+assert_field_eq "init succeeds" "$OUT" "initialized" "true"
+assert_contains "ratio warning" "$OUT" "ratio"
+
+echo ""
+echo "--- E4.4: Balanced implement:test ratio no warning ---"
+rm -rf .e21 && mkdir -p .e21
+cat > .e21/plan.md << 'PLAN'
+- F1.1: implement — build auth
+  - verify: echo ok
+- F1.2: review — review auth
+- F1.3: e2e — test auth
+  - verify: echo e2e
+- F1.4: review — review tests
+- F1.5: implement — build api
+  - verify: echo ok
+- F1.6: review — review api
+- F1.7: e2e — test api
+  - verify: echo e2e
+- F1.8: review — final review
+PLAN
+OUT=$($HARNESS init-loop --plan .e21/plan.md --dir .e21 2>/dev/null)
+assert_field_eq "init succeeds" "$OUT" "initialized" "true"
+assert_not_contains "no ratio warning" "$OUT" "ratio"
 
 # ═══════════════════════════════════════════════════════════════
 

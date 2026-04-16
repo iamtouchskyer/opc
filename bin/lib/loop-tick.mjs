@@ -126,12 +126,19 @@ export function cmdCompleteTick(args) {
 
   // ── Summary lint: reject deferral language on final tick ──
   if (nextUnit === null && description) {
+    const DEFERRAL_NEGATION = /\b(not?\s+defer|no\s+deferral|nothing\s+defer|without\s+defer|zero\s+defer|isn't\s+defer)/i;
     const DEFERRAL_PATTERNS = /\b(defer(?:red)?|next\s+loop|future\s+work|follow[\s-]?up\s+loop|punt(?:ed)?|later\s+loop|TODO\s*:?\s*next)\b/i;
-    if (DEFERRAL_PATTERNS.test(description)) {
-      warnings.push(
-        `final tick description contains deferral language ("${description.match(DEFERRAL_PATTERNS)[0]}") — the loop should finish what it starts. If items remain, explain specifically what and why.`
+    if (DEFERRAL_PATTERNS.test(description) && !DEFERRAL_NEGATION.test(description)) {
+      errors.push(
+        `final tick description contains deferral language ("${description.match(DEFERRAL_PATTERNS)[0]}") — the loop must finish what it starts. Rewrite without deferral or explain specifically what remains and why.`
       );
     }
+  }
+
+  // Check for errors accumulated by summary lint
+  if (errors.length > 0) {
+    console.log(JSON.stringify({ completed: false, errors, warnings: warnings.length > 0 ? warnings : undefined }));
+    return;
   }
 
   // Update state
