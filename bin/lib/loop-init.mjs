@@ -40,7 +40,9 @@ export function cmdInitLoop(args) {
     return;
   }
 
-  const structureErrors = validatePlanStructure(units);
+  const structureResult = validatePlanStructure(units);
+  const structureErrors = structureResult.errors;
+  const structureWarnings = structureResult.warnings || [];
 
   // Duplicate ID check
   const idCounts = {};
@@ -80,7 +82,7 @@ export function cmdInitLoop(args) {
 
   // ── G3: Criteria-lint gate ────────────────────────────────────
   const criteriaFile = join(dir, "acceptance-criteria.md");
-  const initWarnings = [];
+  const initWarnings = [...structureWarnings];
 
   if (!existsSync(criteriaFile)) {
     initWarnings.push("no acceptance-criteria.md found — loop has no definition of done");

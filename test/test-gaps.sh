@@ -1141,7 +1141,7 @@ assert_field_eq "4x no oscillation" "$OUT" "ready" "true"
 assert_not_contains "no osc msg" "$OUT" "oscillation"
 
 echo ""
-echo "--- 14.5: Backlog summary at pipeline completion ---"
+echo "--- 14.5: Backlog drain gate at pipeline completion ---"
 rm -rf .h-la5 && mkdir -p .h-la5
 cat > .h-la5/plan.md << 'PLAN'
 - F1.1: implement — build
@@ -1158,7 +1158,7 @@ d['status'] = 'idle'
 d['_written_by'] = 'opc-harness'
 json.dump(d, open('.h-la5/loop-state.json', 'w'), indent=2)
 "
-# Create backlog with open items
+# Create backlog with open items — drain gate should block termination
 cat > .h-la5/backlog.md << 'BL'
 # Backlog
 - [ ] Fix input validation
@@ -1166,8 +1166,13 @@ cat > .h-la5/backlog.md << 'BL'
 - [ ] Improve test coverage
 BL
 OUT=$($HARNESS next-tick --dir .h-la5 2>/dev/null)
-assert_field_eq "pipeline complete" "$OUT" "terminate" "true"
+assert_field_eq "drain blocks termination" "$OUT" "terminate" "false"
+assert_field_eq "drain required flag" "$OUT" "drain_required" "true"
 assert_contains "backlog surfaced" "$OUT" "backlog\|open_items"
+
+# Force-terminate bypasses drain gate
+OUT=$($HARNESS next-tick --dir .h-la5 --force-terminate 2>/dev/null)
+assert_field_eq "force-terminate works" "$OUT" "terminate" "true"
 
 echo ""
 echo "--- 14.6: next-tick no plan file ---"

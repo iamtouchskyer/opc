@@ -32,6 +32,7 @@ export function parsePlan(planText) {
 
 export function validatePlanStructure(units) {
   const errors = [];
+  const warnings = [];
   let pendingImplement = null;
 
   for (let i = 0; i < units.length; i++) {
@@ -56,7 +57,17 @@ export function validatePlanStructure(units) {
     );
   }
 
-  return errors;
+  // Plan completeness: implement units without verification coverage
+  const implementCount = units.filter(u => u.type.startsWith("implement") || u.type.startsWith("build")).length;
+  const testCount = units.filter(u => u.type.startsWith("e2e") || u.type.startsWith("accept") || u.type.startsWith("test")).length;
+
+  if (implementCount > 0 && testCount === 0) {
+    warnings.push(
+      `plan has ${implementCount} implement/build unit(s) but 0 test/e2e/accept units — consider adding verification units`
+    );
+  }
+
+  return { errors, warnings };
 }
 
 // ── Content hashing ─────────────────────────────────────────────

@@ -124,6 +124,16 @@ export function cmdCompleteTick(args) {
     nextUnit = unit;
   }
 
+  // ── Summary lint: reject deferral language on final tick ──
+  if (nextUnit === null && description) {
+    const DEFERRAL_PATTERNS = /\b(defer(?:red)?|next\s+loop|future\s+work|follow[\s-]?up\s+loop|punt(?:ed)?|later\s+loop|TODO\s*:?\s*next)\b/i;
+    if (DEFERRAL_PATTERNS.test(description)) {
+      warnings.push(
+        `final tick description contains deferral language ("${description.match(DEFERRAL_PATTERNS)[0]}") — the loop should finish what it starts. If items remain, explain specifically what and why.`
+      );
+    }
+  }
+
   // Update state
   const newTick = (state.tick || 0) + 1;
   state.tick = newTick;

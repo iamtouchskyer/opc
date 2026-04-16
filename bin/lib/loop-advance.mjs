@@ -166,13 +166,9 @@ export function cmdNextTick(args) {
     }
   }
 
-  // No next unit → terminate
+  // No next unit → check backlog drain before terminating
   if (!state.next_unit) {
-    state.status = "pipeline_complete";
-    state.description = `Pipeline complete at tick ${state.tick}`;
-    state._written_by = WRITER_SIG;
-    state._last_modified = new Date().toISOString();
-    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    const forceTerminate = args.includes("--force-terminate");
 
     // Rule 13: surface backlog at termination
     const backlogPath = join(dir, "backlog.md");
@@ -183,6 +179,37 @@ export function cmdNextTick(args) {
       const openItems = (backlogText.match(/^- \[ \]/gm) || []).length;
       backlogSummary = { file: backlogPath, open_items: openItems };
     }
+
+    // Drain gate: if backlog has open items and no force-terminate, block termination
+    const hasDrained = state._drain_completed || false;
+    if (backlogSummary && backlogSummary.open_items > 0 && !forceTerminate && !hasDrained) {
+      // Parse actionable items (🔴 and 🟡) from backlog
+      const backlogText = readFileSync(backlogPath, "utf8");
+      const actionableItems = [];
+      for (const line of backlogText.split("\n")) {
+        if (/^- \[ \]/.test(line) && (/🔴/.test(line) || /🟡/.test(line))) {
+          actionableItems.push(line.replace(/^- \[ \]\s*/, "").trim());
+        }
+      }
+
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: false,
+        drain_required: true,
+        reason: `pipeline reached end but ${backlogSummary.open_items} open backlog items remain — drain required before termination`,
+        backlog: backlogSummary,
+        actionable_items: actionableItems.slice(0, 6),
+        total_actionable: actionableItems.length,
+        hint: "address backlog items via reinit-loop or new plan, then re-run next-tick. Use --force-terminate to skip drain.",
+      }));
+      return;
+    }
+
+    state.status = "pipeline_complete";
+    state.description = `Pipeline complete at tick ${state.tick}`;
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
     console.log(JSON.stringify({
       ready: false,
