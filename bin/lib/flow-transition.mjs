@@ -3,6 +3,7 @@
 
 import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
+import os from "os";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -300,6 +301,16 @@ export function cmdValidateChain(args) {
   const errors = [];
   const executedPath = [];
 
+  // Load config to get requiredExtensions
+  let requiredExtensions = [];
+  try {
+    const configPath = join(os.homedir(), ".opc", "config.json");
+    if (existsSync(configPath)) {
+      const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+      requiredExtensions = Array.isArray(cfg.requiredExtensions) ? cfg.requiredExtensions : [];
+    }
+  } catch { /* best effort */ }
+
   for (const entry of state.history) {
     const handshakePath = join(dir, "nodes", entry.nodeId, "handshake.json");
     executedPath.push(entry.nodeId);
@@ -324,6 +335,15 @@ export function cmdValidateChain(args) {
             if (!data.nodeId) errors.push(`${nd}/handshake.json: missing nodeId`);
             if (!data.nodeType) errors.push(`${nd}/handshake.json: missing nodeType`);
             if (!data.status) errors.push(`${nd}/handshake.json: missing status`);
+            // Check extensionsApplied for required extensions
+            if (requiredExtensions.length > 0) {
+              const applied = Array.isArray(data.extensionsApplied) ? data.extensionsApplied : [];
+              for (const req of requiredExtensions) {
+                if (!applied.includes(req)) {
+                  errors.push(`${nd}/handshake.json: required extension '${req}' missing from extensionsApplied`);
+                }
+              }
+            }
           } catch (err) {
             errors.push(`${nd}/handshake.json: parse error: ${err.message}`);
           }

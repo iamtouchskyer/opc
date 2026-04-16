@@ -7,6 +7,7 @@ import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.m
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
 import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transition.mjs";
+import { cmdPromptContext, cmdExtensionTest } from "./lib/ext-commands.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
@@ -46,7 +47,8 @@ switch (command) {
   case "ux-verdict":            cmdUxVerdict(args);            break;
   case "ux-friction-aggregate": cmdUxFrictionAggregate(args);  break;
   case "criteria-lint":         cmdCriteriaLint(args);         break;
-  default:
+  case "prompt-context":        await cmdPromptContext(args);  break;
+  case "extension-test":        await cmdExtensionTest(args);  break;  default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
     console.log("Flow commands:");

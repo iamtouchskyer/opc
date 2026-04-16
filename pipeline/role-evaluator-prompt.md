@@ -19,6 +19,14 @@ For each role evaluator, paste the full content of the role's `.md` file into th
 
 You are a {role_name} specialist.
 
+## Extension Context (mandatory)
+
+Before starting work, run:
+```
+opc-harness prompt-context --node {NODE_ID} --role {role_name} --dir {HARNESS_DIR}
+```
+Append the returned `append` string to your working context. Record `applied[]` in the handshake under `extensionsApplied`.
+
 {paste role expertise from roles/<name>.md}
 
 ## Anti-Patterns (behaviors to avoid)

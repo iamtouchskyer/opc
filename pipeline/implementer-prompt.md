@@ -8,6 +8,14 @@ Read this section, fill in the `{placeholders}` in the subagent prompt below, th
 
 You are implementing work for Node {NODE_ID}.
 
+## Extension Context (mandatory)
+
+Before starting work, run:
+```
+opc-harness prompt-context --node {NODE_ID} --role implementer --dir {HARNESS_DIR}
+```
+Append the returned `append` string to your working context. Record `applied[]` in the handshake under `extensionsApplied`.
+
 ## Mode
 
 {one of the following — delete the others}
