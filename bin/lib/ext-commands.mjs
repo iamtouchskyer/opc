@@ -1,7 +1,8 @@
 // ext-commands.mjs — CLI commands for extension system
 // prompt-context, extension-test, and extension-verdict commands
 
-import { readFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "fs";
+import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import os from "os";
 import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache } from "./extensions.mjs";
@@ -59,6 +60,26 @@ export async function cmdPromptContext(args) {
   };
 
   const append = await firePromptAppend(registry, context);
+
+  // Stamp extensionsApplied into this node's latest run handshake (if run dir exists)
+  const nodeDir = resolve(dir, "nodes", node);
+  if (existsSync(nodeDir)) {
+    try {
+      const entries = readdirSync(nodeDir, { withFileTypes: true });
+      const runDirs = entries
+        .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+        .map(e => e.name)
+        .sort((a, b) => parseInt(b.replace("run_", ""), 10) - parseInt(a.replace("run_", ""), 10));
+      if (runDirs.length > 0) {
+        const latestRunDir = join(nodeDir, runDirs[0]);
+        const handshakePath = join(latestRunDir, 'handshake.json');
+        let handshake = {};
+        try { handshake = JSON.parse(readFileSync(handshakePath, 'utf8')); } catch { /* no handshake yet */ }
+        handshake.extensionsApplied = registry.applied;
+        writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
+      }
+    } catch { /* best effort */ }
+  }
 
   // Persist registry cache so validate-chain and debug can read applied extensions
   saveRegistryCache(resolve(dir), registry);
@@ -232,5 +253,15 @@ export async function cmdExtensionVerdict(args) {
   };
 
   await fireVerdictAppend(registry, context);
+
+  // Stamp extensionsApplied into the run dir's handshake.json
+  const handshakePath = join(runDir, 'handshake.json');
+  let handshake = {};
+  try {
+    handshake = JSON.parse(await readFile(handshakePath, 'utf8'));
+  } catch { /* no handshake yet, start fresh */ }
+  handshake.extensionsApplied = registry.applied;
+  await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
+
   console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied }));
 }

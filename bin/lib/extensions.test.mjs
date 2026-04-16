@@ -155,6 +155,17 @@ describe("firePromptAppend", () => {
     const result = await firePromptAppend(registry, { node: "build", role: "x", task: "t", flowDir: tmpBase, runDir: tmpBase });
     assert.equal(result, "");
   });
+
+  test("extension prompt.append throws → warns and continues, returns partial result", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "ext-ok"), `export default { hooks: { 'prompt.append': async () => "## OK\\nworks fine" } };`);
+    writeExtension(join(extDir, "ext-throw"), `export default { hooks: { 'prompt.append': async () => { throw new Error("boom"); } } };`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const ctx = { node: "build", role: "frontend", task: "test", flowDir: tmpBase, runDir: tmpBase };
+    const result = await firePromptAppend(registry, ctx);
+    assert.ok(result.includes("## OK"));
+    assert.ok(result.includes("works fine"));
+  });
 });
 
 describe("fireVerdictAppend", () => {
@@ -190,6 +201,35 @@ describe("fireVerdictAppend", () => {
     await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
     const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
     assert.ok(content.includes("🔵 extensions: No extension findings"));
+  });
+
+  test("fireVerdictAppend with missing runDir → creates dir and writes successfully", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `export default { hooks: { 'verdict.append': async () => [{ severity: "🔵", category: "test", message: "all good" }] } };`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "nonexistent-run", "nested");
+    // runDir does NOT exist — fireVerdictAppend must create it
+    assert.ok(!existsSync(runDir));
+    await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
+    assert.ok(existsSync(join(runDir, "eval-extensions.md")));
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    assert.ok(content.includes("🔵 test: all good"));
+  });
+
+  test("verdict.append throw-path → warns and continues with partial findings", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "good"), `export default { hooks: { 'verdict.append': async () => [{ severity: "🔵", category: "c", message: "ok" }] } };`);
+    writeExtension(join(extDir, "throws"), `export default { hooks: { 'verdict.append': async () => { throw new Error("exploded"); } } };`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "throw-run");
+    mkdirSync(runDir);
+    // Should NOT throw — throw-path is caught and warned
+    await assert.doesNotReject(() =>
+      fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir })
+    );
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    // good extension's finding should still be present
+    assert.ok(content.includes("🔵 c: ok"));
   });
 
   test("empty registry → still creates eval-extensions.md", async () => {
