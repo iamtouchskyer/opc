@@ -173,12 +173,12 @@ describe("fireVerdictAppend", () => {
   beforeEach(() => { tmpBase = makeTmpDir(); });
   afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
 
-  test("writes ext-findings.md with correct emoji format", async () => {
+  test("writes eval-extensions.md with correct emoji format (canonical severity)", async () => {
     const extDir = join(tmpBase, "extensions");
     const findings = [
-      { severity: "🔴", category: "design-system", message: "Missing design token" },
-      { severity: "🟡", category: "design-lint", message: "Color contrast issue", file: "/src/Button.tsx" },
-      { severity: "🔵", category: "design-system", message: "All good" },
+      { severity: "error", category: "design-system", message: "Missing design token" },
+      { severity: "warning", category: "design-lint", message: "Color contrast issue", file: "/src/Button.tsx" },
+      { severity: "info", category: "design-system", message: "All good" },
     ];
     writeExtension(join(extDir, "linter"), `export default { hooks: { 'verdict.append': async () => ${JSON.stringify(findings)} } };`);
     const registry = await loadExtensions({ extensionsDir: extDir });
@@ -203,9 +203,9 @@ describe("fireVerdictAppend", () => {
     assert.ok(content.includes("🔵 extensions: No extension findings"));
   });
 
-  test("fireVerdictAppend with missing runDir → creates dir and writes successfully", async () => {
+  test("fireVerdictAppend with missing runDir → creates dir and writes successfully (canonical severity)", async () => {
     const extDir = join(tmpBase, "extensions");
-    writeExtension(join(extDir, "linter"), `export default { hooks: { 'verdict.append': async () => [{ severity: "🔵", category: "test", message: "all good" }] } };`);
+    writeExtension(join(extDir, "linter"), `export default { hooks: { 'verdict.append': async () => [{ severity: "info", category: "test", message: "all good" }] } };`);
     const registry = await loadExtensions({ extensionsDir: extDir });
     const runDir = join(tmpBase, "nonexistent-run", "nested");
     // runDir does NOT exist — fireVerdictAppend must create it
@@ -216,9 +216,9 @@ describe("fireVerdictAppend", () => {
     assert.ok(content.includes("🔵 test: all good"));
   });
 
-  test("verdict.append throw-path → warns and continues with partial findings", async () => {
+  test("verdict.append throw-path → warns and continues with partial findings (canonical severity)", async () => {
     const extDir = join(tmpBase, "extensions");
-    writeExtension(join(extDir, "good"), `export default { hooks: { 'verdict.append': async () => [{ severity: "🔵", category: "c", message: "ok" }] } };`);
+    writeExtension(join(extDir, "good"), `export default { hooks: { 'verdict.append': async () => [{ severity: "info", category: "c", message: "ok" }] } };`);
     writeExtension(join(extDir, "throws"), `export default { hooks: { 'verdict.append': async () => { throw new Error("exploded"); } } };`);
     const registry = await loadExtensions({ extensionsDir: extDir });
     const runDir = join(tmpBase, "throw-run");
@@ -258,5 +258,136 @@ describe("saveRegistryCache / readRegistryApplied", () => {
   test("readRegistryApplied returns [] when file missing", () => {
     const result = readRegistryApplied(join(tmpBase, "nonexistent"));
     assert.deepEqual(result, []);
+  });
+});
+
+describe("old-style named export hooks (backwards compat)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("old-style promptAppend named export is called", async () => {
+    const extDir = join(tmpBase, "extensions");
+    // Old-style: export async function promptAppend(ctx)
+    writeExtension(join(extDir, "old-style"), `
+export async function promptAppend(ctx) { return "## Old Style\\nworks"; }
+export async function verdictAppend(ctx) { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    assert.equal(registry.applied.length, 1);
+    const result = await firePromptAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir: tmpBase });
+    assert.ok(result.includes("## Old Style"));
+    assert.ok(result.includes("works"));
+  });
+
+  test("old-style verdictAppend named export is called and finding schema normalized", async () => {
+    const extDir = join(tmpBase, "extensions");
+    // Old-style hook with old-style { emoji, text, file } findings
+    writeExtension(join(extDir, "old-verdict"), `
+export async function verdictAppend(ctx) {
+  return [{ emoji: "🔴", text: "[old-verdict] font-consistency: Body uses 3 fonts", file: "/index" }];
+}
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "old-run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    // Should be normalized and written with correct emoji
+    assert.ok(content.includes("🔴"), `Expected 🔴 in:\n${content}`);
+    assert.ok(content.includes("font-consistency"), `Expected category in:\n${content}`);
+  });
+
+  test("old-style startupCheck named export is called on load", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "checks"), `
+export async function startupCheck(ctx) { throw new Error("env missing"); }
+export async function promptAppend(ctx) { return "should not reach"; }
+`);
+    // Not required → startup failure is a warn, not a throw
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    // Extension should NOT be in applied since startup check failed
+    assert.equal(registry.applied.length, 0);
+  });
+});
+
+describe("meta.nodes routing", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("extension with meta.nodes is skipped on non-matching nodes", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "lint"), `
+export const meta = { nodes: ["code-review", "review"] };
+export async function promptAppend(ctx) { return "## Lint active"; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    // On "build" node — not in meta.nodes
+    const result = await firePromptAppend(registry, { node: "build", role: "x", task: "t", flowDir: tmpBase, runDir: tmpBase });
+    assert.equal(result, "");
+  });
+
+  test("extension with meta.nodes is called on matching node", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "lint"), `
+export const meta = { nodes: ["code-review", "review"] };
+export async function promptAppend(ctx) { return "## Lint active"; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    // On "code-review" node — in meta.nodes
+    const result = await firePromptAppend(registry, { node: "code-review", role: "x", task: "t", flowDir: tmpBase, runDir: tmpBase });
+    assert.ok(result.includes("## Lint active"));
+  });
+
+  test("extension without meta.nodes is always called (no filter)", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "global"), `
+export async function promptAppend(ctx) { return "## Global always"; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    // No meta.nodes → runs on any node
+    const result = await firePromptAppend(registry, { node: "build", role: "x", task: "t", flowDir: tmpBase, runDir: tmpBase });
+    assert.ok(result.includes("## Global always"));
+  });
+
+  test("meta.nodes routing works for verdictAppend too", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "accept-only"), `
+export const meta = { nodes: ["acceptance"] };
+export async function verdictAppend(ctx) { return [{ severity: "info", category: "ux", message: "looks good" }]; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "meta-run");
+    mkdirSync(runDir);
+    // On "code-review" — should be skipped
+    await fireVerdictAppend(registry, { node: "code-review", role: "x", task: "t", flowDir: tmpBase, runDir });
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    assert.ok(content.includes("No extension findings"), `Expected no findings on wrong node:\n${content}`);
+  });
+});
+
+describe("finding normalization (old emoji format)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("old-style { emoji, text } findings are normalized to canonical form", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "old-findings"), `
+export default { hooks: { 'verdict.append': async () => [
+  { emoji: "🔴", text: "[ext] contrast: Low contrast ratio" },
+  { emoji: "🟡", text: "[ext] spacing: Inconsistent margins", file: "/home" },
+  { emoji: "🔵", text: "[ext] fonts: One font family" },
+] } };
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "norm-run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    assert.ok(content.includes("🔴 contrast: Low contrast ratio"), `Missing 🔴 in:\n${content}`);
+    assert.ok(content.includes("🟡 spacing: Inconsistent margins in /home"), `Missing 🟡 in:\n${content}`);
+    assert.ok(content.includes("🔵 fonts: One font family"), `Missing 🔵 in:\n${content}`);
   });
 });

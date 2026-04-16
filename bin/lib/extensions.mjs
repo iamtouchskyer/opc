@@ -1,6 +1,24 @@
 // extensions.mjs — OPC Extension System
 // Loads user extensions from ~/.opc/extensions/, fires hooks at call sites.
 // No module-level singletons — loadExtensions returns a registry object.
+//
+// Hook interface (hook.mjs can use either format):
+//
+//   New-style (recommended):
+//     export const meta = { nodes: ["code-review", "review"], name: "my-ext" };
+//     export async function promptAppend(ctx) { return "## Section\n..."; }
+//     export async function verdictAppend(ctx) { return [{ severity, category, message }]; }
+//     export async function startupCheck(ctx) { /* throw to abort load */ }
+//
+//   Legacy new-style (hooks object):
+//     export default { hooks: { "prompt.append": fn, "verdict.append": fn } }
+//
+//   Legacy named exports (still supported, auto-normalized):
+//     export async function promptAppend(ctx) { ... }
+//     export async function verdictAppend(ctx) { ... }
+//
+// Finding shape: { severity: "error"|"warning"|"info", category: string, message: string, file?: string }
+// Old-style findings { emoji, text, file } are auto-normalized.
 
 import { readFileSync, existsSync, mkdirSync } from "fs";
 import { readdir } from "fs/promises";
@@ -16,6 +34,64 @@ function resolveExtensionsDir(config = {}) {
     config.extensionsDir ||
     join(os.homedir(), ".opc", "extensions")
   );
+}
+
+// ─── Hook normalization ──────────────────────────────────────────
+
+/**
+ * Normalize any hook format to { hooks: { "prompt.append"?, "verdict.append"?, "startup.check"? } }.
+ * Supports:
+ *   1. New named exports: export async function promptAppend(ctx)
+ *   2. Legacy hooks object: export default { hooks: { "prompt.append": fn } }
+ *   3. CamelCase startup: export async function startupCheck(ctx)
+ */
+function normalizeHook(raw, mod) {
+  // Format 2: hooks object on default export
+  if (raw && raw.hooks && typeof raw.hooks === "object") {
+    return raw;
+  }
+
+  // Format 1 / 3: named exports on module namespace
+  const hooks = {};
+  // Check both the raw object and the original module namespace
+  const src = mod || raw;
+  if (typeof src.promptAppend === "function")   hooks["prompt.append"]   = src.promptAppend;
+  if (typeof src.verdictAppend === "function")  hooks["verdict.append"]  = src.verdictAppend;
+  if (typeof src.startupCheck === "function")   hooks["startup.check"]   = src.startupCheck;
+  // Also accept dot-notation keys directly on named exports
+  if (typeof src["prompt.append"] === "function")   hooks["prompt.append"]   = src["prompt.append"];
+  if (typeof src["verdict.append"] === "function")  hooks["verdict.append"]  = src["verdict.append"];
+  if (typeof src["startup.check"] === "function")   hooks["startup.check"]   = src["startup.check"];
+
+  return { hooks };
+}
+
+/**
+ * Normalize a finding to canonical shape { severity, category, message, file? }.
+ * Handles old-style { emoji, text, file } automatically.
+ */
+function normalizeFinding(f) {
+  if (!f || typeof f !== "object") return null;
+
+  // Already canonical
+  if (typeof f.severity === "string" && typeof f.category === "string" && typeof f.message === "string") {
+    return f;
+  }
+
+  // Old-style: { emoji, text, file }
+  if (typeof f.text === "string") {
+    let severity = "info";
+    if (f.emoji === "🔴") severity = "error";
+    else if (f.emoji === "🟡") severity = "warning";
+    // text format: "[ext-name] category: message"
+    const textContent = f.text.replace(/^\[.*?\]\s*/, ""); // strip [ext-name] prefix
+    const colonIdx = textContent.indexOf(":");
+    const category = colonIdx > 0 ? textContent.slice(0, colonIdx).trim() : "unknown";
+    const message  = colonIdx > 0 ? textContent.slice(colonIdx + 1).trim() : textContent;
+    return { severity, category, message, ...(f.file ? { file: f.file } : {}) };
+  }
+
+  return null;
 }
 
 // ─── loadExtensions ──────────────────────────────────────────────
@@ -82,18 +158,24 @@ export async function loadExtensions(config = {}) {
     const promptPath = join(extDir, "prompt.md");
     const isRequired = required.has(name);
 
-    // Load hook
-    let hook = null;
+    // Load hook module
+    let mod = null;
     try {
-      const mod = await import(hookPath);
-      hook = mod.default || mod;
+      mod = await import(hookPath);
     } catch (err) {
       if (isRequired) {
         throw new Error(`FATAL: required extension '${name}' missing or failed startup.check`);
       }
-      console.error(`WARN: optional extension ${name} startup.check failed:`, err.message);
+      console.error(`WARN: optional extension ${name} failed to load:`, err.message);
       continue;
     }
+
+    // Normalize hook interface (supports all formats)
+    const raw = mod.default || mod;
+    const hook = normalizeHook(raw, mod);
+
+    // Read meta (nodes, name, etc.)
+    const meta = mod.meta || (mod.default && mod.default.meta) || {};
 
     // Read prompt.md (optional)
     let promptMd = "";
@@ -102,7 +184,7 @@ export async function loadExtensions(config = {}) {
     }
 
     // Run startup.check
-    if (hook.hooks && typeof hook.hooks["startup.check"] === "function") {
+    if (typeof hook.hooks["startup.check"] === "function") {
       try {
         await hook.hooks["startup.check"]({});
       } catch (err) {
@@ -114,7 +196,7 @@ export async function loadExtensions(config = {}) {
       }
     }
 
-    extensions.push({ name, promptMd, hook, enabled: true });
+    extensions.push({ name, promptMd, hook, meta, enabled: true });
     applied.push(name);
   }
 
@@ -132,12 +214,15 @@ export async function loadExtensions(config = {}) {
 
 /**
  * Call prompt.append on all enabled extensions in order.
+ * Skips extensions whose meta.nodes does not include context.node (if meta.nodes is set).
  * @returns {Promise<string>} concatenated append strings
  */
 export async function firePromptAppend(registry, context) {
   const parts = [];
   for (const ext of registry.extensions) {
     if (!ext.enabled) continue;
+    // meta.nodes routing: skip if current node not in declared node list
+    if (ext.meta.nodes && context.node && !ext.meta.nodes.includes(context.node)) continue;
     const fn = ext.hook?.hooks?.["prompt.append"];
     if (typeof fn !== "function") continue;
     try {
@@ -156,6 +241,7 @@ export async function firePromptAppend(registry, context) {
 
 /**
  * Call verdict.append on all enabled extensions in order.
+ * Skips extensions whose meta.nodes does not include context.node (if meta.nodes is set).
  * Write findings to {context.runDir}/eval-extensions.md
  */
 export async function fireVerdictAppend(registry, context) {
@@ -163,13 +249,16 @@ export async function fireVerdictAppend(registry, context) {
 
   for (const ext of registry.extensions) {
     if (!ext.enabled) continue;
+    // meta.nodes routing: skip if current node not in declared node list
+    if (ext.meta.nodes && context.node && !ext.meta.nodes.includes(context.node)) continue;
     const fn = ext.hook?.hooks?.["verdict.append"];
     if (typeof fn !== "function") continue;
     try {
       const findings = await fn(context);
       if (Array.isArray(findings)) {
-        for (const f of findings) {
-          allFindings.push({ ...f, _ext: ext.name });
+        for (const raw of findings) {
+          const normalized = normalizeFinding(raw);
+          if (normalized) allFindings.push({ ...normalized, _ext: ext.name });
         }
       }
     } catch (err) {
@@ -182,8 +271,9 @@ export async function fireVerdictAppend(registry, context) {
   // Serialize to eval-extensions.md regardless of count (even if 0, create empty-ish file)
   const lines = ["# Extension Findings", ""];
   for (const f of allFindings) {
+    const emoji = f.severity === "error" ? "🔴" : f.severity === "warning" ? "🟡" : "🔵";
     const filePart = f.file ? ` in ${f.file}` : "";
-    lines.push(`${f.severity} ${f.category}: ${f.message}${filePart}`);
+    lines.push(`${emoji} ${f.category}: ${f.message}${filePart}`);
   }
   if (allFindings.length === 0) {
     lines.push("🔵 extensions: No extension findings");

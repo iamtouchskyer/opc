@@ -51,12 +51,15 @@ export async function cmdPromptContext(args) {
     process.exit(1);
   }
 
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+
   const context = {
     node,
     role,
     task,
     flowDir: resolve(dir),
     runDir: resolve(dir),
+    devServerUrl,
   };
 
   const append = await firePromptAppend(registry, context);
@@ -125,7 +128,19 @@ export async function cmdExtensionTest(args) {
     process.exit(1);
   }
 
-  const hook = mod.default || mod;
+  // Normalize hook interface — support old-style named exports and new-style hooks object
+  const raw = mod.default || mod;
+  let hook;
+  if (raw && raw.hooks && typeof raw.hooks === "object") {
+    hook = raw;
+  } else {
+    const src = mod;
+    const normalizedHooks = {};
+    if (typeof src.promptAppend === "function")   normalizedHooks["prompt.append"]   = src.promptAppend;
+    if (typeof src.verdictAppend === "function")  normalizedHooks["verdict.append"]  = src.verdictAppend;
+    if (typeof src.startupCheck === "function")   normalizedHooks["startup.check"]   = src.startupCheck;
+    hook = { hooks: normalizedHooks };
+  }
   const hooks = hook.hooks || {};
 
   const hooksToRun = allHooks
@@ -244,12 +259,15 @@ export async function cmdExtensionVerdict(args) {
     process.exit(1);
   }
 
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+
   const context = {
     node,
     role: "evaluator",
     task,
     flowDir: resolve(dir),
     runDir,
+    devServerUrl,
   };
 
   await fireVerdictAppend(registry, context);
