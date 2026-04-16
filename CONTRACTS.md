@@ -81,12 +81,14 @@ node "$OPC_HARNESS" init-loop [--plan <file>] [--flow-template <name>] [--flow-f
 # → { initialized: bool, units: string[], first_unit: string, total_units: number }
 
 # Get next unit (or terminate)
-node "$OPC_HARNESS" next-tick --dir <path>
+node "$OPC_HARNESS" next-tick [--force-terminate] --dir <path>
 # → { ready: bool, terminate: bool, next_unit: string, unit_type: string, handler?: object }
+# → (drain gate) { ready: false, terminate: false, drain_required: true, backlog: object, actionable_items: string[] }
 
 # Complete current tick with evidence
-node "$OPC_HARNESS" complete-tick --unit <id> --artifacts <a,b> --description <text> --dir <path>
+node "$OPC_HARNESS" complete-tick --unit <id> --artifacts <a,b> --description <text> [--status <completed|blocked|failed>] --dir <path>
 # → { completed: bool, ... }
+# ⚠ BREAKING (0.9.0): deferral language in --description on the final tick is a hard error (completed: false)
 ```
 
 ### Escape Hatches
@@ -96,6 +98,7 @@ node "$OPC_HARNESS" skip --dir <path>       # Skip current node via PASS edge
 node "$OPC_HARNESS" pass --dir <path>       # Force-pass current gate
 node "$OPC_HARNESS" stop --dir <path>       # Terminate flow, preserve state
 node "$OPC_HARNESS" goto <nodeId> --dir <path>  # Jump to node (limits enforced)
+node "$OPC_HARNESS" next-tick --force-terminate --dir <path>  # Bypass drain gate
 ```
 
 ---
@@ -317,6 +320,36 @@ Statuses:      completed, failed, blocked
 Evidence types: test-result, screenshot, cli-output
 Quality tiers:  functional, polished, delightful
 ```
+
+---
+
+## 7. Mechanical Enforcement (Loop)
+
+Three enforcement mechanisms operate at the harness level — no LLM judgment, pure code.
+
+### Summary Lint (hard error)
+
+`complete-tick` rejects (`completed: false`) the final tick if `--description` contains deferral language: `deferred`, `next loop`, `future work`, `follow-up loop`, `punted`, `later loop`, `TODO: next`.
+
+**Negation allowlist:** phrases like `not deferred`, `no deferral`, `nothing deferred` bypass the check.
+
+**Scope:** Only fires on the final tick (`next_unit === null`). Mid-pipeline ticks are unaffected.
+
+### Drain Gate (hard block)
+
+`next-tick` blocks termination (`terminate: false, drain_required: true`) when `backlog.md` has open items (`- [ ]`). Returns actionable items (those with 🔴 or 🟡) in the response.
+
+**Escape hatches:**
+- `--force-terminate` flag bypasses the drain gate
+- `_drain_completed: true` in loop-state.json bypasses it (set by orchestrator after drain cycle)
+
+### Plan Lint (warnings)
+
+`init-loop` warns (does not block) when:
+- Plan has implement/build units but **zero** test/e2e/accept units
+- Plan has test units but the **implement:test ratio ≥ 3:1** (e.g., 6 implements, 1 e2e)
+- Implement/build units lack `verify:` sub-lines
+- Review/accept units lack `eval:` sub-lines
 
 ---
 
