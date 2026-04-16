@@ -55,10 +55,31 @@ Extensions live in the user's home directory, never in OPC source.
 ln -s ~/.dotfiles/opc ~/.opc
 ```
 
+### Path Override (CI & Multi-user)
+
+The `~/.opc/` path must be overridable via (highest priority first):
+
+1. `OPC_EXTENSIONS_DIR` environment variable
+2. `--extensions-dir <path>` flag on any harness command
+3. `"extensionsDir"` field in `config.json` (machine-level override without env vars)
+4. Default: `~/.opc/`
+
+In `lib/extensions.mjs`, `loadExtensions(config)` resolves the path as:
+
+```js
+const extensionsDir = process.env.OPC_EXTENSIONS_DIR
+  || config.extensionsDir
+  || path.join(os.homedir(), '.opc');
+```
+
+This enables CI pipelines to point at a repo-local fixture directory without touching the developer's home.
+
 ### Global Config: `~/.opc/config.json`
 
 ```json
 {
+  "extensionsDir": "/custom/path",
+  "extensionOrder": ["design-system", "design-lint"],
   "requiredExtensions": ["design-system"],
   "extensions": {
     "design-system": { "enabled": true },
@@ -83,14 +104,19 @@ Each `hook.mjs` exports a default object with `meta` and `hooks`:
 export default {
   meta: {
     name: 'design-system',    // must match directory name
-    version: '1.0.0',
-    required: true            // mirrors config.json; used for self-documentation
+    version: '1.0.0'
+    // Required/optional status is declared in config.json only — single source of truth.
   },
   hooks: {
     /**
      * Returns a string appended to subagent prompt context.
      * Called before any subagent dispatch (build + review nodes).
      * Return empty string if nothing to add.
+     *
+     * Injecting context into a build agent is not a P1 violation — it gives the agent
+     * more information to do its job correctly. P1 prohibits the same agent from both
+     * doing work and evaluating it. Extension context injection serves the 'doing work'
+     * side only.
      */
     'prompt.append': async (context) => string,
 
@@ -164,37 +190,51 @@ Example `ext-findings.md`:
 
 ```js
 /**
- * Scans ~/.opc/extensions/, validates requiredExtensions from config,
+ * Scans the resolved extensions directory (OPC_EXTENSIONS_DIR || config.extensionsDir || ~/.opc/),
+ * validates requiredExtensions from config,
  * runs startup.check on each loaded extension.
  * Throws FATAL if any required extension is missing or fails startup.check.
  * Warns (no throw) for optional extension failures.
+ *
+ * Returns an ExtensionRegistry object — pass this to all fire functions.
+ * Avoids module-level singletons (bad for test isolation, bad for P6 resilience).
  */
-export async function loadExtensions(config)
+export async function loadExtensions(config): Promise<ExtensionRegistry>
 
 /**
- * Calls all enabled extensions' prompt.append hooks in declaration order.
+ * Calls all enabled extensions' prompt.append hooks in extensionOrder (or alphabetical fallback).
  * Returns concatenated string (each extension's output separated by \n\n).
  * Individual extension failures: required = FATAL, optional = warn + skip.
  */
-export async function firePromptAppend(context)
+export async function firePromptAppend(registry, context)
 
 /**
  * Calls all enabled extensions' verdict.append hooks.
  * Serializes findings[] to ext-findings.md in context.runDir.
  * Individual extension failures: required = FATAL, optional = warn + skip.
  */
-export async function fireVerdictAppend(context)
+export async function fireVerdictAppend(registry, context)
 ```
 
-**Why ~50 lines**: `loadExtensions` is file scanning + dynamic import. `firePromptAppend` and `fireVerdictAppend` are map + await + string/file ops. No registry, no plugin protocol, no version negotiation — YAGNI for 20 extensions.
+The orchestrator calls `loadExtensions` once at flow init and passes the registry through:
+
+```js
+const registry = await loadExtensions(config);
+// ...later, per node dispatch:
+await firePromptAppend(registry, context);
+// ...later, after eval files written (review nodes only):
+await fireVerdictAppend(registry, context);
+```
+
+**Why ~50 lines**: `loadExtensions` is file scanning + dynamic import. `firePromptAppend` and `fireVerdictAppend` are map + await + string/file ops. No plugin protocol, no version negotiation — YAGNI for 20 extensions.
 
 ### Three Call Sites in Harness
 
 | Call Site | When | Function |
 |-----------|------|----------|
-| Flow init | After reading config, before any node dispatch | `loadExtensions(config)` |
-| Before subagent dispatch | Build nodes + review nodes | `firePromptAppend(context)` |
-| After eval files written | Review nodes only | `fireVerdictAppend(context)` |
+| Flow init | After reading config, before any node dispatch | `const registry = await loadExtensions(config)` |
+| Before subagent dispatch | Build nodes + review nodes | `await firePromptAppend(registry, context)` |
+| After eval files written | Review nodes only | `await fireVerdictAppend(registry, context)` |
 
 **Principle check**:
 - P1: `fireVerdictAppend` call site is review nodes only — enforced at the call site, not by convention
@@ -268,7 +308,12 @@ The two layers are complementary. The soft layer prevents the issue upstream. Th
 
 ## 5. Extension Ordering & Conflict Handling
 
-**Ordering**: Extensions fire in the order they appear in `config.json` `extensions` object. For `prompt.append`, output is concatenated in order. For `verdict.append`, findings are appended to `ext-findings.md` in order.
+**Ordering**: Extensions fire in the order specified by `extensionOrder` in `config.json`. If `extensionOrder` is absent, extensions fire in alphabetical order (deterministic). Do not rely on JSON object key order — it is not guaranteed stable across serializers.
+
+Example `config.json` with explicit order:
+```json
+"extensionOrder": ["design-system", "design-lint"]
+```
 
 **Conflicts**: Extensions are independent by design. They do not call each other, share state, or produce merged verdicts. If two extensions both flag the same file, both findings appear in `ext-findings.md`. `synthesize` counts emojis — duplicates increase severity signal, which is correct behavior.
 
@@ -293,7 +338,7 @@ opc-harness extension-test \
 opc-harness extension-test \
   --ext ~/.opc/extensions/design-system \
   --all-hooks \
-  --context '{"node":"code-review","role":"frontend","task":"review login page",...}'
+  --context '{"node":"code-review","role":"frontend","task":"review login page","flowDir":"/tmp/test-harness","runDir":"/tmp/test-harness/nodes/code-review/run_1"}'
 ```
 
 **Output**:
@@ -332,7 +377,7 @@ cp hook.mjs prompt.md ~/.opc/extensions/design-system/
 opc-harness extension-test \
   --ext ~/.opc/extensions/design-system \
   --all-hooks \
-  --context '{"node":"code-review","role":"frontend","task":"smoke test",...}'
+  --context '{"node":"code-review","role":"frontend","task":"smoke test","flowDir":"/tmp/test-harness","runDir":"/tmp/test-harness/nodes/code-review/run_1"}'
 ```
 
 **Dotfiles pattern** (recommended for private extensions):
