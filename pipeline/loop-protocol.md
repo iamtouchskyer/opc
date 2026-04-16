@@ -70,6 +70,9 @@ Rules for decomposition:
 - **Implement and review are SEPARATE units.** Never combine build + review in one tick. The builder's context pollutes the reviewer's judgment.
 - **Each unit has verifiable output.** Tests pass, screenshots captured, API responds correctly.
 - **Each unit has one commit.** Atomic commits enable git bisect.
+- **Tests are EXPLICIT units, not afterthoughts.** If an implement unit produces code that needs tests, the tests MUST be a separate unit (or part of the implement unit's verify line). Do not assume "the implement tick will write tests too" — if tests are important, give them their own unit or make them a hard gate in verify.
+- **Meta work is a unit.** Version bumps, documentation sync, changelog entries, config updates — anything that must ship with the feature gets its own unit. If it's not in the plan, it won't get done.
+- **Nothing defers to "next loop."** Every item the plan intends to deliver MUST have a unit. If you find yourself thinking "we'll handle that later" — add a unit now. The loop's job is to finish what it starts.
 
 Standard unit sequence for a feature:
 
@@ -203,9 +206,26 @@ After each tick, write:
 }
 ```
 
-### Step 7 — Auto-Termination
+### Step 7 — Auto-Termination (with Backlog Drain)
 
-When `next_unit` is not found in `plan.md`:
+When `opc-harness next-tick` returns `terminate: true`:
+
+**7a. Check backlog before terminating.**
+
+If `next-tick` returns `backlog.open_items > 0`, the orchestrator MUST attempt a **backlog drain** before declaring the pipeline complete:
+
+1. Read `.harness/backlog.md` — parse all `- [ ]` items
+2. Filter to actionable items (🔴 and 🟡 findings that map to code changes)
+3. Group by theme → generate fix/implement + review unit pairs
+4. Call `opc-harness reinit-loop` (if loop is stalled) or create a **new mini-plan** and call `opc-harness init-loop` with it in a fresh `.harness-drain/` directory
+5. Execute the drain units
+
+**Drain limits (prevent infinite loops):**
+- Maximum **1 drain cycle** per pipeline run. If the drain itself produces new backlog items, those go to the final summary — no second drain.
+- Maximum **6 drain units** (3 implement+review pairs). If backlog has more than 6 actionable items, pick the 🔴 items first, then 🟡 by severity. Remaining items go to final summary.
+- Drain ticks share the parent loop's `_max_total_ticks` budget. If budget is exhausted, skip drain.
+
+**7b. If no backlog or drain complete → terminate.**
 
 1. Set `next_unit: null` and `status: "pipeline_complete"`
 2. Cancel the cron job (CronDelete)
@@ -213,12 +233,19 @@ When `next_unit` is not found in `plan.md`:
    - Total ticks
    - Units completed
    - Any skipped/blocked units
-   - Outstanding items from `.harness/backlog.md`
+   - Outstanding items from `.harness/backlog.md` (should be 0 or only 🔵 suggestions after drain)
 4. Generate HTML report:
    ```bash
    node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
    ```
 5. Notify user: `✅ Pipeline complete. {N} units delivered in {M} ticks. Report: .harness/report.html`
+
+**7c. Final summary must NOT contain "defer to next loop."**
+
+If any actionable items remain after drain (or if drain was skipped due to budget), the summary MUST:
+- List them explicitly with severity
+- Explain WHY they weren't addressed (budget exhausted / drain limit reached / not actionable)
+- Never use vague language like "deferred" or "future work" — say exactly what's left and why
 
 **Do NOT** let the cron continue firing with `next_unit: null`. Auto-terminate.
 
@@ -386,7 +413,7 @@ Unit types without a matching handler fall through to OPC's built-in dispatch ta
 
 During execution, unaddressed findings accumulate. The loop maintains `.harness/backlog.md`:
 
-- Gate 🟡 findings not fixed in the current cycle → append to backlog
+- Gate 🔴/🟡 findings not fixed in the current cycle → auto-accumulated by harness
 - Devil's advocate product concerns → append to backlog
 - Skipped units due to blockers → append to backlog
 - Nice-to-have improvements discovered during implementation → append to backlog
@@ -395,12 +422,15 @@ Format:
 ```markdown
 ## Backlog
 
-- [ ] 🟡 [F4 review] Staircase algorithm only produces 8 outputs per topic — consider IRT or 5-question variant
-- [ ] 🟡 [F4 review] No frontend component tests — parseChoices() and state machine untested
+- [ ] 🔴 [F4 review] SQL injection in user handler _(from eval-security.md)_
+- [ ] 🟡 [F4 review] No frontend component tests — parseChoices() untested _(from eval-quality.md)_
 - [ ] ⏭️ [F4 skip] CoachDashboard diagnostic panel — needs backend API change
 ```
 
-At pipeline completion, the backlog is surfaced in the summary. It becomes input for the next planning cycle.
+**Backlog is not a parking lot.** It's a queue that gets drained at pipeline end (see Step 7a). Items should only survive to the final summary if:
+- They are 🔵 suggestions (nice-to-have, not blocking)
+- The drain budget was exhausted (max 1 cycle, max 6 units)
+- They require external input the loop cannot provide
 
 ## File Layout
 
