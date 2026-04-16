@@ -4,29 +4,13 @@
 
 16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
-## What's Different in v0.8
-
-**Compound eval quality gate (D2).** 11-layer substance check on every eval — thin content, missing code refs, low uniqueness, fabricated references, aspirational claims, change scope coverage, etc. ≥3 layers tripped → hard FAIL (enforce by default); `--no-strict` downgrades to shadow mode. thinEval substance exemption: short evals with complete reasoning/fix/refs are exempt. Evaluator guidance: when D2 triggers, `evaluatorGuidance` output tells the evaluator exactly which layers failed and how to fix.
-
-**Iteration escalation (D3).** Persistent eval warnings across ≥2 iterations auto-escalate to FAIL. No more infinite loops of shallow reviews.
-
-**Task Scope Registry.** Loop mode plans require `## Task Scope` with SCOPE-N items. The harness validates at init and blocks completion if any scope item is uncovered — preventing the #1 failure mode where LLM decomposition silently drops requirements.
-
-**Pipeline E2E lint.** Tasks containing pipeline keywords (cron, webhook, CI/CD) must have an e2e-live-trigger acceptance criterion. Proxy evidence (unit tests) ≠ live evidence.
-
-**Evaluator prompt hardening (D6).** 5 evidence standards baked into the evaluator protocol: cite evidence, address anomalies, no aspirational claims, distinguish root cause vs symptom, cover change scope.
-
-## What's Different in v0.7
-
-**Third-party extension authoring.** `docs/extension-authoring.md` (7800+ words) + `examples/extensions/_starter/` (30-min walkthrough). Hardened via DX litmus: an independent agent built an extension using only the doc + starter.
-
-## What's Different in v0.6
+## What's Different
 
 **Digraph engine.** Tasks flow through typed nodes (build → review → gate → ...) with mechanical verdict routing. No more linear pipelines.
 
 **Autonomous loop.** `opc loop` decomposes a feature into units, schedules a durable cron, and runs 8-16 hours unattended — with code-enforced guardrails that survive context compaction.
 
-**Code-enforced, not honor-system.** 29 test suites verify: tamper detection (write nonce), atomic state writes, review independence, oscillation detection, tick limits, scope coverage, compound defense, and JSON crash recovery.
+**Code-enforced, not honor-system.** Automated tests verify: tamper detection (write nonce), atomic state writes, review independence checks (eval distinctness), oscillation detection, tick limits, and JSON crash recovery.
 
 **External validator integration.** Pre-commit hooks, test suites, Playwright E2E, and CI pipelines are formally part of the quality architecture — the agent is supervised by tools it doesn't control.
 
@@ -64,6 +48,15 @@ Skill files are automatically copied to `~/.claude/skills/opc/`.
 git clone https://github.com/iamtouchskyer/opc.git
 cp -r opc ~/.claude/skills/opc
 ```
+
+### Verify
+
+```bash
+opc-harness viz --flow quick-review
+# Expected: ▶ code-review → ○ gate
+```
+
+If this prints a flow diagram, you're good to go.
 
 ### Use it
 
@@ -113,7 +106,7 @@ quickstart + reference, plus a starter template at `examples/extensions/_starter
 | **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
 | **pre-release** | acceptance → audit → e2e → gates | "verify before release" |
 
-## Autonomous Loop (v0.6)
+## Autonomous Loop
 
 ```bash
 /opc loop build the math tutoring app features F1-F4
