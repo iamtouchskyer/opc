@@ -1,10 +1,10 @@
 // ext-commands.mjs — CLI commands for extension system
-// prompt-context and extension-test commands
+// prompt-context, extension-test, and extension-verdict commands
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, resolve } from "path";
 import os from "os";
-import { loadExtensions, firePromptAppend } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 
 // ─── prompt-context ──────────────────────────────────────────────
@@ -59,6 +59,10 @@ export async function cmdPromptContext(args) {
   };
 
   const append = await firePromptAppend(registry, context);
+
+  // Persist registry cache so validate-chain and debug can read applied extensions
+  saveRegistryCache(resolve(dir), registry);
+
   console.log(JSON.stringify({ append, applied: registry.applied }));
 }
 
@@ -150,4 +154,83 @@ export async function cmdExtensionTest(args) {
   }
 
   process.exit(hadError ? 1 : 0);
+}
+
+// ─── extension-verdict ───────────────────────────────────────────
+
+export async function cmdExtensionVerdict(args) {
+  if (args.includes("--help")) {
+    console.error("Usage: opc-harness extension-verdict --node <id> --dir <harness-dir>");
+    console.error("Loads extensions, fires verdict.append, writes eval-extensions.md to latest run dir.");
+    return;
+  }
+
+  const node = getFlag(args, "node");
+  const dir = getFlag(args, "dir", ".harness");
+
+  if (!node) {
+    console.error("Usage: opc-harness extension-verdict --node <id> --dir <harness-dir>");
+    process.exit(1);
+  }
+
+  // Load config from ~/.opc/config.json
+  let config = {};
+  const configPath = join(os.homedir(), ".opc", "config.json");
+  if (existsSync(configPath)) {
+    try { config = JSON.parse(readFileSync(configPath, "utf8")); } catch { /* best effort */ }
+  }
+
+  // Read task from acceptance-criteria.md
+  let task = "";
+  const acPath = resolve(dir, "acceptance-criteria.md");
+  if (existsSync(acPath)) {
+    try {
+      const firstLine = readFileSync(acPath, "utf8").split("\n")[0];
+      task = firstLine.replace(/^#+\s*/, "").trim();
+    } catch { /* best effort */ }
+  }
+
+  let registry;
+  try {
+    registry = await loadExtensions(config);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  // Find the latest run dir for this node
+  const nodeDir = resolve(dir, "nodes", node);
+  let runDir = null;
+  if (existsSync(nodeDir)) {
+    try {
+      const entries = readdirSync(nodeDir, { withFileTypes: true });
+      const runDirs = entries
+        .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+        .map(e => e.name)
+        .sort((a, b) => {
+          const na = parseInt(a.replace("run_", ""), 10);
+          const nb = parseInt(b.replace("run_", ""), 10);
+          return nb - na; // descending — latest first
+        });
+      if (runDirs.length > 0) {
+        runDir = join(nodeDir, runDirs[0]);
+      }
+    } catch { /* best effort */ }
+  }
+
+  if (!runDir) {
+    console.error(`No run directories found for node '${node}' in ${nodeDir}`);
+    process.exit(1);
+  }
+
+  const context = {
+    node,
+    role: "evaluator",
+    task,
+    flowDir: resolve(dir),
+    runDir,
+  };
+
+  await fireVerdictAppend(registry, context);
+  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied }));
 }

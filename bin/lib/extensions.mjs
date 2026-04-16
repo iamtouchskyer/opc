@@ -156,7 +156,7 @@ export async function firePromptAppend(registry, context) {
 
 /**
  * Call verdict.append on all enabled extensions in order.
- * Write findings to {context.runDir}/ext-findings.md
+ * Write findings to {context.runDir}/eval-extensions.md
  */
 export async function fireVerdictAppend(registry, context) {
   const allFindings = [];
@@ -179,7 +179,7 @@ export async function fireVerdictAppend(registry, context) {
 
   if (!context.runDir) return;
 
-  // Serialize to ext-findings.md regardless of count (even if 0, create empty-ish file)
+  // Serialize to eval-extensions.md regardless of count (even if 0, create empty-ish file)
   const lines = ["# Extension Findings", ""];
   for (const f of allFindings) {
     const filePart = f.file ? ` in ${f.file}` : "";
@@ -191,7 +191,7 @@ export async function fireVerdictAppend(registry, context) {
   lines.push("");
 
   mkdirSync(context.runDir, { recursive: true });
-  atomicWriteSync(join(context.runDir, "ext-findings.md"), lines.join("\n"));
+  atomicWriteSync(join(context.runDir, "eval-extensions.md"), lines.join("\n"));
 }
 
 // ─── Registry cache helpers ──────────────────────────────────────

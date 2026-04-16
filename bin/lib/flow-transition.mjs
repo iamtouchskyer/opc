@@ -335,8 +335,9 @@ export function cmdValidateChain(args) {
             if (!data.nodeId) errors.push(`${nd}/handshake.json: missing nodeId`);
             if (!data.nodeType) errors.push(`${nd}/handshake.json: missing nodeType`);
             if (!data.status) errors.push(`${nd}/handshake.json: missing status`);
-            // Check extensionsApplied for required extensions
-            if (requiredExtensions.length > 0) {
+            // Check extensionsApplied for required extensions — skip gate nodes (auto-generated, no extension context)
+            const isGateNode = data.nodeType === "gate" || !Object.hasOwn(data, "extensionsApplied");
+            if (requiredExtensions.length > 0 && !isGateNode) {
               const applied = Array.isArray(data.extensionsApplied) ? data.extensionsApplied : [];
               for (const req of requiredExtensions) {
                 if (!applied.includes(req)) {

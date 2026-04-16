@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadExtensions, firePromptAppend, fireVerdictAppend } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, readRegistryApplied } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
 
@@ -174,7 +174,7 @@ describe("fireVerdictAppend", () => {
     const runDir = join(tmpBase, "run");
     mkdirSync(runDir);
     await fireVerdictAppend(registry, { node: "review", role: "frontend", task: "t", flowDir: tmpBase, runDir });
-    const content = readFileSync(join(runDir, "ext-findings.md"), "utf8");
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
     assert.ok(content.includes("# Extension Findings"));
     assert.ok(content.includes("🔴 design-system: Missing design token"));
     assert.ok(content.includes("🟡 design-lint: Color contrast issue in /src/Button.tsx"));
@@ -188,17 +188,35 @@ describe("fireVerdictAppend", () => {
     const runDir = join(tmpBase, "run2");
     mkdirSync(runDir);
     await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
-    const content = readFileSync(join(runDir, "ext-findings.md"), "utf8");
+    const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
     assert.ok(content.includes("🔵 extensions: No extension findings"));
   });
 
-  test("empty registry → still creates ext-findings.md", async () => {
+  test("empty registry → still creates eval-extensions.md", async () => {
     const extDir = join(tmpBase, "empty-ext-dir");
     mkdirSync(extDir);
     const registry = await loadExtensions({ extensionsDir: extDir });
     const runDir = join(tmpBase, "run3");
     mkdirSync(runDir);
     await fireVerdictAppend(registry, { node: "review", role: "x", task: "t", flowDir: tmpBase, runDir });
-    assert.ok(existsSync(join(runDir, "ext-findings.md")));
+    assert.ok(existsSync(join(runDir, "eval-extensions.md")));
+  });
+});
+
+describe("saveRegistryCache / readRegistryApplied", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("roundtrip: save then read returns same applied list", () => {
+    const registry = { applied: ["ext-a", "ext-b"], extensions: [] };
+    saveRegistryCache(tmpBase, registry);
+    const result = readRegistryApplied(tmpBase);
+    assert.deepEqual(result, ["ext-a", "ext-b"]);
+  });
+
+  test("readRegistryApplied returns [] when file missing", () => {
+    const result = readRegistryApplied(join(tmpBase, "nonexistent"));
+    assert.deepEqual(result, []);
   });
 });
