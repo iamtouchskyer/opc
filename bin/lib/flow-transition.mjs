@@ -312,12 +312,13 @@ export function cmdValidateChain(args) {
   } catch { /* best effort */ }
 
   for (const entry of state.history) {
-    const handshakePath = join(dir, "nodes", entry.nodeId, "handshake.json");
-    executedPath.push(entry.nodeId);
+    const nd = entry.node || entry.nodeId;
+    const handshakePath = join(dir, "nodes", nd, "handshake.json");
+    executedPath.push(nd);
 
     if (!existsSync(handshakePath)) {
-      if (entry.nodeId === state.currentNode) continue;
-      errors.push(`missing handshake for node '${entry.nodeId}'`);
+      if (nd === state.currentNode) continue;
+      errors.push(`missing handshake for node '${nd}'`);
     }
   }
 
@@ -332,11 +333,10 @@ export function cmdValidateChain(args) {
         if (existsSync(hp)) {
           try {
             const data = JSON.parse(readFileSync(hp, "utf8"));
-            if (!data.nodeId) errors.push(`${nd}/handshake.json: missing nodeId`);
-            if (!data.nodeType) errors.push(`${nd}/handshake.json: missing nodeType`);
+            if (!data.node && !data.nodeId) errors.push(`${nd}/handshake.json: missing node identifier`);
             if (!data.status) errors.push(`${nd}/handshake.json: missing status`);
             // Check extensionsApplied for required extensions — skip gate nodes (auto-generated, no extension context)
-            const isGateNode = data.nodeType === "gate" || nd.startsWith("gate");
+            const isGateNode = nd.startsWith("gate") || data.node === "gate" || data.nodeId === "gate";
             if (requiredExtensions.length > 0 && !isGateNode) {
               if (!Object.hasOwn(data, "extensionsApplied")) {
                 errors.push(`${nd}/handshake.json: extensionsApplied missing — run \`extension-verdict\` after review nodes`);
