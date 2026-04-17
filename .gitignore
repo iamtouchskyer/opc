@@ -4,4 +4,6 @@
 node_modules/
 .claude/
 .harness/
+.harness-*/
+.opc-loop-*/
 .validation-corpus/

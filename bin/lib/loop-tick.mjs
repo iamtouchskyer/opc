@@ -403,6 +403,27 @@ function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
 
 // ── Backlog auto-accumulation ──────────────────────────────────
 
+// Detect lines that contain a severity emoji but carry no actual finding content —
+// e.g. markdown headers ("### 🔴 Critical"), label-only lines ("🟡 Warning:"),
+// and empty-section markers ("🔴 None.", "🟡 N/A"). These should NOT inflate
+// the backlog because the review produced no issue of that severity.
+function _isEmptySeverityLine(trimmed) {
+  if (!trimmed) return true;
+  // Markdown header — structural, not a finding
+  if (/^#{1,6}\s/.test(trimmed)) return true;
+  // Strip severity emojis + list markers + formatting to examine remainder
+  const stripped = trimmed
+    .replace(/^[-*]\s+/, "")
+    .replace(/[🔴🟡🔵]/g, "")
+    .replace(/[*_`\[\]()]/g, "")
+    .trim();
+  // Bare severity labels with optional colon / em-dash / parenthetical source
+  const LABEL_ONLY = /^(critical|warning|suggestion|major|minor|must\s*fix|recommended|nit|info)\s*:?\s*(—.*)?$/i;
+  // Explicit emptiness markers ("None.", "N/A", "N.A.", "—")
+  const EMPTY_MARKER = /^(none|n\/?a|n\.a\.?|nothing|—|-)\s*\.?$/i;
+  return stripped.length === 0 || LABEL_ONLY.test(stripped) || EMPTY_MARKER.test(stripped);
+}
+
 function _accumulateBacklog(dir, unit, artifacts, warnings) {
   const backlogPath = join(dir, "backlog.md");
   const findingLines = [];
@@ -417,11 +438,24 @@ function _accumulateBacklog(dir, unit, artifacts, warnings) {
       continue;
     }
     const lines = content.split("\n");
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
       // Extract both 🔴 (critical) and 🟡 (iterate) findings
       if (/🔴/.test(trimmed) || /🟡/.test(trimmed)) {
+        // Skip empty severity headers / labels / "None." markers
+        if (_isEmptySeverityLine(trimmed)) continue;
+        // Also skip if next non-blank line is an explicit emptiness marker
+        // (e.g. "🟡 Warning:" header followed by "- None.")
+        if (/:\s*$/.test(trimmed)) {
+          let j = i + 1;
+          while (j < lines.length && lines[j].trim().length === 0) j++;
+          if (j < lines.length) {
+            const next = lines[j].trim().replace(/^[-*]\s+/, "");
+            if (/^(none|n\/?a|n\.a\.?)\s*\.?$/i.test(next)) continue;
+          }
+        }
         // Strip leading list markers to avoid double-prefix: "- 🟡 foo" → "🟡 foo"
         const cleaned = trimmed.replace(/^[-*]\s+/, "");
         findingLines.push({ text: cleaned, source: a });

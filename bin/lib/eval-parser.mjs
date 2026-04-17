@@ -111,6 +111,27 @@ export function parseEvaluation(text) {
 
       // Skip section labels like "🔴 Must Fix:" — require em-dash or file ref to count as finding
       if (dashIdx === -1 && !fileMatch && trimmed.endsWith(":")) {
+        // Peek next non-blank line: if it's an emptiness marker ("- None.", "N/A"),
+        // the whole section is empty — don't count OR treat as finding.
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim().length === 0) j++;
+        if (j < lines.length) {
+          const next = lines[j].trim().replace(/^[-*]\s+/, "");
+          if (/^(none|n\/?a|n\.a\.?|nothing)\s*\.?$/i.test(next)) {
+            // Skip both the label line and the emptiness marker
+            i = j;
+          }
+        }
+        continue;
+      }
+
+      // Skip empty-content lines that just carry the emoji + a filler ("🔴 None.", "🟡 N/A")
+      const bareContent = trimmed
+        .replace(/^[-*]\s+/, "")
+        .replace(/[🔴🟡🔵]/g, "")
+        .replace(/[*_`\[\]()]/g, "")
+        .trim();
+      if (/^(none|n\/?a|n\.a\.?|nothing|—|-)\s*\.?$/i.test(bareContent)) {
         continue;
       }
 

@@ -42,6 +42,11 @@ export const FLOW_TEMPLATES = {
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 25, maxNodeReentry: 5 },
     nodeTypes: { build: "build", "code-review": "review", "test-design": "review", "test-execute": "execute", gate: "gate" },
+    // Capability contract: what specialist expertise each node requests.
+    // Extensions with matching `provides` are auto-activated.
+    nodeCapabilities: {
+      "code-review": ["code-quality-check", "visual-consistency-check"],
+    },
   },
   "full-stack": {
     nodes: [
@@ -75,6 +80,14 @@ export const FLOW_TEMPLATES = {
       audit: "review", "gate-audit": "gate", "e2e-user": "execute", "gate-e2e": "gate",
       "post-launch-sim": "execute", "gate-final": "gate",
     },
+    // Capability contract — which specialist expertise each node requests.
+    nodeCapabilities: {
+      "code-review":     ["code-quality-check", "visual-consistency-check"],
+      acceptance:        ["visual-consistency-check", "user-simulation"],
+      audit:             ["security-check", "a11y-check"],
+      "e2e-user":        ["user-simulation"],
+      "post-launch-sim": ["user-simulation"],
+    },
   },
   "pre-release": {
     nodes: ["acceptance", "gate-acceptance", "audit", "gate-audit", "e2e-user", "gate-e2e"],
@@ -91,6 +104,11 @@ export const FLOW_TEMPLATES = {
       acceptance: "review", "gate-acceptance": "gate",
       audit: "review", "gate-audit": "gate",
       "e2e-user": "execute", "gate-e2e": "gate",
+    },
+    nodeCapabilities: {
+      acceptance: ["visual-consistency-check", "user-simulation"],
+      audit:      ["security-check", "a11y-check"],
+      "e2e-user": ["user-simulation"],
     },
   },
 };
@@ -119,7 +137,13 @@ function loadExternalFlows() {
     if (!existsSync(flowDir)) return;
     const files = readdirSync(flowDir).filter((f) => f.endsWith(".json"));
     if (files.length > 0) {
-      console.error(`⚠️  ~/.claude/flows/ is deprecated — use --flow-file instead. Found: ${files.join(", ")}`);
+      // Emit deprecation warning at most once per process, and allow opt-out
+      // via OPC_QUIET_DEPRECATIONS=1 (flow-templates is called from many commands;
+      // repeating the banner on every opc-harness invocation is noise).
+      if (!loadExternalFlows._warned && !process.env.OPC_QUIET_DEPRECATIONS) {
+        console.error(`⚠️  ~/.claude/flows/ is deprecated — use --flow-file instead. Found: ${files.join(", ")}`);
+        loadExternalFlows._warned = true;
+      }
     }
     for (const f of files) {
       const name = f.replace(/\.json$/, "");

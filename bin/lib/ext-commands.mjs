@@ -1,19 +1,69 @@
 // ext-commands.mjs — CLI commands for extension system
 // prompt-context, extension-test, and extension-verdict commands
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import os from "os";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
+import { resolveFlowTemplate } from "./flow-templates.mjs";
+
+// ─── Shared helpers ──────────────────────────────────────────────
+
+function loadOpcConfig() {
+  const configPath = join(os.homedir(), ".opc", "config.json");
+  if (!existsSync(configPath)) return {};
+  try { return JSON.parse(readFileSync(configPath, "utf8")); } catch { return {}; }
+}
+
+function readTaskFromAC(dir) {
+  const acPath = resolve(dir, "acceptance-criteria.md");
+  if (!existsSync(acPath)) return "";
+  try {
+    const firstLine = readFileSync(acPath, "utf8").split("\n")[0];
+    return firstLine.replace(/^#+\s*/, "").trim();
+  } catch { return ""; }
+}
+
+function findLatestRunDir(nodeDir) {
+  if (!existsSync(nodeDir)) return null;
+  try {
+    const entries = readdirSync(nodeDir, { withFileTypes: true });
+    const runDirs = entries
+      .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+      .map(e => e.name)
+      .sort((a, b) => parseInt(b.replace("run_", ""), 10) - parseInt(a.replace("run_", ""), 10));
+    return runDirs.length > 0 ? join(nodeDir, runDirs[0]) : null;
+  } catch { return null; }
+}
+
+/**
+ * Read flow-state.json + resolved flow template, return the current node's
+ * required capabilities. Missing state or missing nodeCapabilities → [].
+ */
+function readNodeCapabilities(dir, node, args) {
+  try {
+    const statePath = resolve(dir, "flow-state.json");
+    let state = null;
+    if (existsSync(statePath)) {
+      try { state = JSON.parse(readFileSync(statePath, "utf8")); } catch { /* state corrupt — treat as absent */ }
+    }
+    const { template } = resolveFlowTemplate(args, state);
+    if (!template || !template.nodeCapabilities) return [];
+    const caps = template.nodeCapabilities[node];
+    return Array.isArray(caps) ? caps : [];
+  } catch {
+    return [];
+  }
+}
 
 // ─── prompt-context ──────────────────────────────────────────────
 
 export async function cmdPromptContext(args) {
   if (args.includes("--help")) {
     console.error("Usage: opc-harness prompt-context --node <id> --role <role> --dir <harness-dir>");
-    console.error("Output: JSON { append: string, applied: string[] }");
+    console.error("Output: JSON { append: string, applied: string[], nodeCapabilities: string[] }");
     return;
   }
 
@@ -26,22 +76,8 @@ export async function cmdPromptContext(args) {
     process.exit(1);
   }
 
-  // Load config from ~/.opc/config.json
-  let config = {};
-  const configPath = join(os.homedir(), ".opc", "config.json");
-  if (existsSync(configPath)) {
-    try { config = JSON.parse(readFileSync(configPath, "utf8")); } catch { /* best effort */ }
-  }
-
-  // Read task from acceptance-criteria.md first line
-  let task = "";
-  const acPath = resolve(dir, "acceptance-criteria.md");
-  if (existsSync(acPath)) {
-    try {
-      const firstLine = readFileSync(acPath, "utf8").split("\n")[0];
-      task = firstLine.replace(/^#+\s*/, "").trim();
-    } catch { /* best effort */ }
-  }
+  const config = loadOpcConfig();
+  const task = readTaskFromAC(dir);
 
   let registry;
   try {
@@ -52,6 +88,7 @@ export async function cmdPromptContext(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const nodeCapabilities = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
@@ -60,34 +97,27 @@ export async function cmdPromptContext(args) {
     flowDir: resolve(dir),
     runDir: resolve(dir),
     devServerUrl,
+    nodeCapabilities,
   };
 
   const append = await firePromptAppend(registry, context);
 
   // Stamp extensionsApplied into this node's latest run handshake (if run dir exists)
   const nodeDir = resolve(dir, "nodes", node);
-  if (existsSync(nodeDir)) {
+  const latestRunDir = findLatestRunDir(nodeDir);
+  if (latestRunDir) {
     try {
-      const entries = readdirSync(nodeDir, { withFileTypes: true });
-      const runDirs = entries
-        .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
-        .map(e => e.name)
-        .sort((a, b) => parseInt(b.replace("run_", ""), 10) - parseInt(a.replace("run_", ""), 10));
-      if (runDirs.length > 0) {
-        const latestRunDir = join(nodeDir, runDirs[0]);
-        const handshakePath = join(latestRunDir, 'handshake.json');
-        let handshake = {};
-        try { handshake = JSON.parse(readFileSync(handshakePath, 'utf8')); } catch { /* no handshake yet */ }
-        handshake.extensionsApplied = registry.applied;
-        writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
-      }
+      const handshakePath = join(latestRunDir, 'handshake.json');
+      let handshake = {};
+      try { handshake = JSON.parse(readFileSync(handshakePath, 'utf8')); } catch { /* no handshake yet */ }
+      handshake.extensionsApplied = registry.applied;
+      writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
     } catch { /* best effort */ }
   }
 
-  // Persist registry cache so validate-chain and debug can read applied extensions
   saveRegistryCache(resolve(dir), registry);
 
-  console.log(JSON.stringify({ append, applied: registry.applied }));
+  console.log(JSON.stringify({ append, applied: registry.applied, nodeCapabilities }));
 }
 
 // ─── extension-test ──────────────────────────────────────────────
@@ -128,19 +158,9 @@ export async function cmdExtensionTest(args) {
     process.exit(1);
   }
 
-  // Normalize hook interface — support old-style named exports and new-style hooks object
+  // Use the canonical normalizer from extensions.mjs
   const raw = mod.default || mod;
-  let hook;
-  if (raw && raw.hooks && typeof raw.hooks === "object") {
-    hook = raw;
-  } else {
-    const src = mod;
-    const normalizedHooks = {};
-    if (typeof src.promptAppend === "function")   normalizedHooks["prompt.append"]   = src.promptAppend;
-    if (typeof src.verdictAppend === "function")  normalizedHooks["verdict.append"]  = src.verdictAppend;
-    if (typeof src.startupCheck === "function")   normalizedHooks["startup.check"]   = src.startupCheck;
-    hook = { hooks: normalizedHooks };
-  }
+  const hook = normalizeHook(raw, mod);
   const hooks = hook.hooks || {};
 
   const hooksToRun = allHooks
@@ -209,22 +229,8 @@ export async function cmdExtensionVerdict(args) {
     process.exit(1);
   }
 
-  // Load config from ~/.opc/config.json
-  let config = {};
-  const configPath = join(os.homedir(), ".opc", "config.json");
-  if (existsSync(configPath)) {
-    try { config = JSON.parse(readFileSync(configPath, "utf8")); } catch { /* best effort */ }
-  }
-
-  // Read task from acceptance-criteria.md
-  let task = "";
-  const acPath = resolve(dir, "acceptance-criteria.md");
-  if (existsSync(acPath)) {
-    try {
-      const firstLine = readFileSync(acPath, "utf8").split("\n")[0];
-      task = firstLine.replace(/^#+\s*/, "").trim();
-    } catch { /* best effort */ }
-  }
+  const config = loadOpcConfig();
+  const task = readTaskFromAC(dir);
 
   let registry;
   try {
@@ -234,32 +240,14 @@ export async function cmdExtensionVerdict(args) {
     process.exit(1);
   }
 
-  // Find the latest run dir for this node
-  const nodeDir = resolve(dir, "nodes", node);
-  let runDir = null;
-  if (existsSync(nodeDir)) {
-    try {
-      const entries = readdirSync(nodeDir, { withFileTypes: true });
-      const runDirs = entries
-        .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
-        .map(e => e.name)
-        .sort((a, b) => {
-          const na = parseInt(a.replace("run_", ""), 10);
-          const nb = parseInt(b.replace("run_", ""), 10);
-          return nb - na; // descending — latest first
-        });
-      if (runDirs.length > 0) {
-        runDir = join(nodeDir, runDirs[0]);
-      }
-    } catch { /* best effort */ }
-  }
-
+  const runDir = findLatestRunDir(resolve(dir, "nodes", node));
   if (!runDir) {
-    console.error(`No run directories found for node '${node}' in ${nodeDir}`);
+    console.error(`No run directories found for node '${node}' in ${resolve(dir, "nodes", node)}`);
     process.exit(1);
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const nodeCapabilities = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
@@ -268,6 +256,7 @@ export async function cmdExtensionVerdict(args) {
     flowDir: resolve(dir),
     runDir,
     devServerUrl,
+    nodeCapabilities,
   };
 
   await fireVerdictAppend(registry, context);
@@ -281,5 +270,5 @@ export async function cmdExtensionVerdict(args) {
   handshake.extensionsApplied = registry.applied;
   await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
 
-  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied }));
+  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied, nodeCapabilities }));
 }
