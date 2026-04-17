@@ -378,7 +378,11 @@ export async function fireVerdictAppend(registry, context) {
 
 export function saveRegistryCache(dir, registry) {
   const cachePath = join(dir, ".ext-registry.json");
-  const data = { applied: registry.applied, timestamp: new Date().toISOString() };
+  const data = {
+    applied: registry.applied,
+    timestamp: new Date().toISOString(),
+    bypass: registry.bypass || null,
+  };
   atomicWriteSync(cachePath, JSON.stringify(data, null, 2) + "\n");
 }
 

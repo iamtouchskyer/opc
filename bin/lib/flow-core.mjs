@@ -13,7 +13,7 @@ import {
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
-import { loadExtensions, saveRegistryCache } from "./extensions.mjs";
+import { loadExtensions, saveRegistryCache, resolveBypass } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
@@ -82,6 +82,20 @@ export async function cmdInit(args) {
 
   mkdirSync(join(dir, "nodes"), { recursive: true });
 
+  // ─── Resolve bypass state BEFORE writing flow-state.json ────────
+  // Record it on flow-state so validate-chain and other downstream
+  // tooling can honor the waiver without re-parsing CLI args. This
+  // is the audit trail: a reviewer reading flow-state later can see
+  // whether the run was executed with extensions disabled/whitelisted.
+  const bypassCfg = parseBypassArgs(args);
+  const bypassDecision = resolveBypass({ ...bypassCfg, quietBypass: true });
+  const bypassRecord =
+    bypassDecision.mode === "default"
+      ? null
+      : bypassDecision.mode === "disable-all"
+        ? { mode: "disable-all", source: bypassDecision.source }
+        : { mode: "whitelist", source: bypassDecision.source, names: bypassDecision.names || [] };
+
   const state = {
     version: "1.0",
     flowTemplate: flow,
@@ -94,6 +108,7 @@ export async function cmdInit(args) {
     maxNodeReentry: template.limits.maxNodeReentry,
     history: [],
     edgeCounts: {},
+    bypassMode: bypassRecord,
     _written_by: WRITER_SIG,
     _last_modified: new Date().toISOString(),
     _flow_file: template._source_file || undefined,
@@ -108,15 +123,26 @@ export async function cmdInit(args) {
   // This is also the observable surface for the benchmark bypass: running
   // `init` under OPC_DISABLE_EXTENSIONS=1 / --no-extensions must produce an
   // empty applied[] so the benchmark harness can assert on the file.
+  // Wrap in try/catch — a failed cache write (readonly dir, disk full) must
+  // NOT crash init. The registry is recomputed at hook fire time anyway.
   try {
-    const bypassCfg = parseBypassArgs(args);
     const registry = await loadExtensions(bypassCfg);
-    saveRegistryCache(dir, registry);
+    // Stamp bypass marker into cache for post-hoc audit
+    registry.bypass = bypassRecord;
+    try {
+      saveRegistryCache(dir, registry);
+    } catch (cacheErr) {
+      console.error(`WARN: could not write .ext-registry.json: ${cacheErr.message}`);
+    }
   } catch (err) {
     // Extension load failures must not block init — they surface at hook
     // fire time. Record the intent (empty applied) so the cache is still
     // written and downstream tooling is consistent.
-    saveRegistryCache(dir, { applied: [], extensions: [] });
+    try {
+      saveRegistryCache(dir, { applied: [], extensions: [], bypass: bypassRecord });
+    } catch (cacheErr) {
+      console.error(`WARN: could not write .ext-registry.json: ${cacheErr.message}`);
+    }
     console.error(`WARN: extensions failed to load during init: ${err.message}`);
   }
 

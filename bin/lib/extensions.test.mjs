@@ -529,6 +529,22 @@ describe("saveRegistryCache / readRegistryApplied", () => {
     const result = readRegistryApplied(join(tmpBase, "nonexistent"));
     assert.deepEqual(result, []);
   });
+
+  test("saveRegistryCache writes bypass marker when present", () => {
+    saveRegistryCache(tmpBase, {
+      applied: [],
+      extensions: [],
+      bypass: { mode: "disable-all", source: "env" },
+    });
+    const cache = JSON.parse(readFileSync(join(tmpBase, ".ext-registry.json"), "utf8"));
+    assert.deepEqual(cache.bypass, { mode: "disable-all", source: "env" });
+  });
+
+  test("saveRegistryCache writes bypass: null when absent", () => {
+    saveRegistryCache(tmpBase, { applied: ["alpha"], extensions: [] });
+    const cache = JSON.parse(readFileSync(join(tmpBase, ".ext-registry.json"), "utf8"));
+    assert.equal(cache.bypass, null);
+  });
 });
 
 // ─── Backwards compat: legacy hook formats ───────────────────────

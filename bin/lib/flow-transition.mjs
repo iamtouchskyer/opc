@@ -12,6 +12,8 @@ import {
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { resolveBypass } from "./extensions.mjs";
+import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── transition ─────────────────────────────────────────────────
 
@@ -310,6 +312,30 @@ export function cmdValidateChain(args) {
       requiredExtensions = Array.isArray(cfg.requiredExtensions) ? cfg.requiredExtensions : [];
     }
   } catch { /* best effort */ }
+
+  // ─── Bypass-aware requiredExtensions enforcement ─────────────────
+  // If the flow was initialized under bypass (recorded in flow-state.bypassMode),
+  // OR if the current invocation is under env/CLI bypass, the requiredExtensions
+  // check is waived. Rationale: the bypass mechanism exists so a benchmark /
+  // reproducible run on a vanilla machine can execute without any private
+  // extensions; enforcing requiredExtensions after the fact would defeat that.
+  // The bypass record persisted on flow-state is the audit trail.
+  let bypassActive = false;
+  let bypassSource = null;
+  if (state.bypassMode && state.bypassMode.mode === "disable-all") {
+    bypassActive = true;
+    bypassSource = `flow-state(${state.bypassMode.source})`;
+  } else {
+    const decision = resolveBypass({ ...parseBypassArgs(args), quietBypass: true });
+    if (decision.mode === "disable-all") {
+      bypassActive = true;
+      bypassSource = `runtime(${decision.source})`;
+    }
+  }
+  if (bypassActive && requiredExtensions.length > 0) {
+    console.error(`[opc] validate-chain: waiving requiredExtensions (${requiredExtensions.join(", ")}) — bypass active via ${bypassSource}`);
+    requiredExtensions = [];
+  }
 
   for (const entry of state.history) {
     const nd = entry.node || entry.nodeId;
