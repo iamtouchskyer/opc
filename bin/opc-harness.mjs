@@ -26,7 +26,7 @@ switch (command) {
   case "report":       cmdReport(args);        break;
   case "diff":         cmdDiff(args);          break;
   case "route":        cmdRoute(args);         break;
-  case "init":         cmdInit(args);          break;
+  case "init":         await cmdInit(args);      break;
   case "validate":     cmdValidate(args);      break;
   case "transition":   cmdTransition(args);    break;
   case "validate-chain": cmdValidateChain(args); break;

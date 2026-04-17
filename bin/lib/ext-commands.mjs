@@ -8,6 +8,7 @@ import os from "os";
 import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
+import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ export async function cmdPromptContext(args) {
   }
 
   const config = loadOpcConfig();
+  Object.assign(config, parseBypassArgs(args));
   const task = readTaskFromAC(dir);
 
   let registry;
@@ -230,6 +232,7 @@ export async function cmdExtensionVerdict(args) {
   }
 
   const config = loadOpcConfig();
+  Object.assign(config, parseBypassArgs(args));
   const task = readTaskFromAC(dir);
 
   let registry;

@@ -43,6 +43,46 @@ function resolveExtensionsDir(config = {}) {
   );
 }
 
+// ─── Bypass resolution (benchmark mode) ──────────────────────────
+//
+// Priority (highest wins):
+//   1. OPC_DISABLE_EXTENSIONS=1 env  → disable-all
+//   2. config.noExtensions === true (from CLI `--no-extensions`) → disable-all
+//   3. Array.isArray(config.extensionWhitelist) (from CLI `--extensions a,b`) → whitelist
+//   4. default → load all found extensions
+//
+// Returns one of:
+//   { mode: "disable-all", source: "env"|"flag" }
+//   { mode: "whitelist",   source: "flag", names: string[] }
+//   { mode: "default" }
+//
+// When mode !== "default", a one-line status is written to stderr unless
+// config.quietBypass === true (useful for tests).
+export function resolveBypass(config = {}) {
+  let decision;
+  if (process.env.OPC_DISABLE_EXTENSIONS === "1") {
+    decision = { mode: "disable-all", source: "env" };
+  } else if (config.noExtensions === true) {
+    decision = { mode: "disable-all", source: "flag" };
+  } else if (Array.isArray(config.extensionWhitelist)) {
+    decision = {
+      mode: "whitelist",
+      source: "flag",
+      names: config.extensionWhitelist.filter(n => typeof n === "string" && n.length > 0),
+    };
+  } else {
+    return { mode: "default" };
+  }
+  if (!config.quietBypass) {
+    if (decision.mode === "disable-all") {
+      console.error(`[opc] extensions disabled via ${decision.source === "env" ? "OPC_DISABLE_EXTENSIONS" : "--no-extensions"}`);
+    } else if (decision.mode === "whitelist") {
+      console.error(`[opc] extensions whitelisted via --extensions: ${decision.names.join(", ") || "(empty)"}`);
+    }
+  }
+  return decision;
+}
+
 // ─── Hook normalization (exported — single source of truth) ──────
 
 /**
@@ -117,9 +157,18 @@ function extensionMatches(requires, provides) {
  * Scans for subdirs that contain hook.mjs. Skips dotfiles silently.
  */
 export async function loadExtensions(config = {}) {
+  // Benchmark bypass: short-circuit BEFORE scanning disk or evaluating required set.
+  // Required extensions are explicitly waived under bypass — this is by design: a
+  // benchmark run must be reproducible without any private extension installed.
+  const bypass = resolveBypass(config);
+  if (bypass.mode === "disable-all") {
+    return { extensions: [], applied: [] };
+  }
+
   const extensionsDir = resolveExtensionsDir(config);
   const required = new Set(Array.isArray(config.requiredExtensions) ? config.requiredExtensions : []);
   const orderOverride = Array.isArray(config.extensionOrder) ? config.extensionOrder : null;
+  const whitelist = bypass.mode === "whitelist" ? new Set(bypass.names) : null;
 
   if (!existsSync(extensionsDir)) {
     if (required.size > 0) {
@@ -143,10 +192,15 @@ export async function loadExtensions(config = {}) {
   // Only consider subdirs that:
   //   1. Are not dotfiles (filter .git, .DS_Store, etc. — not extensions)
   //   2. Contain a hook.mjs file (anything else is not an extension)
-  const found = entries
+  //   3. Are in the whitelist (if --extensions was given)
+  let found = entries
     .filter(e => e.isDirectory() && !e.name.startsWith("."))
     .filter(e => existsSync(join(extensionsDir, e.name, "hook.mjs")))
     .map(e => e.name);
+
+  if (whitelist) {
+    found = found.filter(n => whitelist.has(n));
+  }
 
   for (const name of required) {
     if (!found.includes(name)) {

@@ -13,6 +13,7 @@ import {
   saveRegistryCache,
   readRegistryApplied,
   normalizeHook,
+  resolveBypass,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -578,5 +579,168 @@ export async function verdictAppend() {
     const content = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
     assert.ok(content.includes("🔴 contrast: Low contrast ratio"));
     assert.ok(content.includes("🟡 spacing: Inconsistent margins in /home"));
+  });
+});
+
+// ─── Benchmark bypass (U1.1) ─────────────────────────────────────
+
+describe("resolveBypass", () => {
+  let origEnv;
+  beforeEach(() => { origEnv = process.env.OPC_DISABLE_EXTENSIONS; });
+  afterEach(() => {
+    if (origEnv === undefined) delete process.env.OPC_DISABLE_EXTENSIONS;
+    else process.env.OPC_DISABLE_EXTENSIONS = origEnv;
+  });
+
+  test("env OPC_DISABLE_EXTENSIONS=1 → disable-all/env (highest priority)", () => {
+    process.env.OPC_DISABLE_EXTENSIONS = "1";
+    // Even with conflicting flags, env wins
+    const r = resolveBypass({ noExtensions: true, extensionWhitelist: ["a"], quietBypass: true });
+    assert.equal(r.mode, "disable-all");
+    assert.equal(r.source, "env");
+  });
+
+  test("config.noExtensions=true → disable-all/flag", () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const r = resolveBypass({ noExtensions: true, extensionWhitelist: ["a"], quietBypass: true });
+    assert.equal(r.mode, "disable-all");
+    assert.equal(r.source, "flag");
+  });
+
+  test("config.extensionWhitelist → whitelist/flag", () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const r = resolveBypass({ extensionWhitelist: ["alpha", "beta"], quietBypass: true });
+    assert.equal(r.mode, "whitelist");
+    assert.equal(r.source, "flag");
+    assert.deepEqual(r.names, ["alpha", "beta"]);
+  });
+
+  test("no env + no flags → default", () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const r = resolveBypass({ quietBypass: true });
+    assert.equal(r.mode, "default");
+  });
+
+  test("whitelist filters out empty/non-string names", () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const r = resolveBypass({ extensionWhitelist: ["alpha", "", null, undefined, "beta"], quietBypass: true });
+    assert.deepEqual(r.names, ["alpha", "beta"]);
+  });
+});
+
+describe("loadExtensions — benchmark bypass", () => {
+  let tmpBase, origEnv;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    origEnv = process.env.OPC_DISABLE_EXTENSIONS;
+  });
+  afterEach(() => {
+    rmSync(tmpBase, { recursive: true, force: true });
+    if (origEnv === undefined) delete process.env.OPC_DISABLE_EXTENSIONS;
+    else process.env.OPC_DISABLE_EXTENSIONS = origEnv;
+  });
+
+  function writeAlphaAndBeta(extDir) {
+    writeExtension(join(extDir, "alpha"), `
+export const meta = { name: "alpha", provides: ["cap"] };
+export async function promptAppend() { return "ALPHA"; }
+`);
+    writeExtension(join(extDir, "beta"), `
+export const meta = { name: "beta", provides: ["cap"] };
+export async function promptAppend() { return "BETA"; }
+`);
+  }
+
+  test("OPC_DISABLE_EXTENSIONS=1 returns empty registry without scanning disk", async () => {
+    process.env.OPC_DISABLE_EXTENSIONS = "1";
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    const registry = await loadExtensions({ extensionsDir: extDir, quietBypass: true });
+    assert.deepEqual(registry.applied, []);
+    assert.deepEqual(registry.extensions, []);
+  });
+
+  test("OPC_DISABLE_EXTENSIONS=1 waives required extensions (benchmark reproducibility)", async () => {
+    process.env.OPC_DISABLE_EXTENSIONS = "1";
+    const extDir = join(tmpBase, "exts");
+    // Don't write any extensions, but declare one required. Must NOT throw.
+    const registry = await loadExtensions({
+      extensionsDir: extDir,
+      requiredExtensions: ["missing-required"],
+      quietBypass: true,
+    });
+    assert.deepEqual(registry.applied, []);
+  });
+
+  test("config.noExtensions=true returns empty registry", async () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    const registry = await loadExtensions({ extensionsDir: extDir, noExtensions: true, quietBypass: true });
+    assert.deepEqual(registry.applied, []);
+  });
+
+  test("config.extensionWhitelist=['alpha'] loads only alpha", async () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    const registry = await loadExtensions({
+      extensionsDir: extDir,
+      extensionWhitelist: ["alpha"],
+      quietBypass: true,
+    });
+    assert.deepEqual(registry.applied, ["alpha"]);
+  });
+
+  test("empty whitelist → loads nothing", async () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    const registry = await loadExtensions({
+      extensionsDir: extDir,
+      extensionWhitelist: [],
+      quietBypass: true,
+    });
+    assert.deepEqual(registry.applied, []);
+  });
+
+  test("priority: env beats noExtensions beats whitelist", async () => {
+    // env + flag combo → env wins (disable-all)
+    process.env.OPC_DISABLE_EXTENSIONS = "1";
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    const r1 = await loadExtensions({
+      extensionsDir: extDir,
+      noExtensions: true,
+      extensionWhitelist: ["alpha"],
+      quietBypass: true,
+    });
+    assert.deepEqual(r1.applied, []);
+
+    // noExtensions + whitelist → noExtensions wins
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const r2 = await loadExtensions({
+      extensionsDir: extDir,
+      noExtensions: true,
+      extensionWhitelist: ["alpha"],
+      quietBypass: true,
+    });
+    assert.deepEqual(r2.applied, []);
+  });
+
+  test("whitelist respects required-extensions: missing required still throws", async () => {
+    delete process.env.OPC_DISABLE_EXTENSIONS;
+    const extDir = join(tmpBase, "exts");
+    writeAlphaAndBeta(extDir);
+    // Require beta but whitelist only alpha → beta is effectively missing → throw
+    await assert.rejects(
+      () => loadExtensions({
+        extensionsDir: extDir,
+        extensionWhitelist: ["alpha"],
+        requiredExtensions: ["beta"],
+        quietBypass: true,
+      }),
+      /required extension 'beta' missing/
+    );
   });
 });

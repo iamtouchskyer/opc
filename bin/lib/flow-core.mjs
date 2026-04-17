@@ -13,6 +13,8 @@ import {
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
+import { loadExtensions, saveRegistryCache } from "./extensions.mjs";
+import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ export function cmdRoute(args) {
 
 // ─── init ───────────────────────────────────────────────────────
 
-export function cmdInit(args) {
+export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
   const dir = resolveDir(args);
@@ -101,6 +103,22 @@ export function cmdInit(args) {
   };
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+  // ─── Persist .ext-registry.json (which extensions this flow will use) ────
+  // This is also the observable surface for the benchmark bypass: running
+  // `init` under OPC_DISABLE_EXTENSIONS=1 / --no-extensions must produce an
+  // empty applied[] so the benchmark harness can assert on the file.
+  try {
+    const bypassCfg = parseBypassArgs(args);
+    const registry = await loadExtensions(bypassCfg);
+    saveRegistryCache(dir, registry);
+  } catch (err) {
+    // Extension load failures must not block init — they surface at hook
+    // fire time. Record the intent (empty applied) so the cache is still
+    // written and downstream tooling is consistent.
+    saveRegistryCache(dir, { applied: [], extensions: [] });
+    console.error(`WARN: extensions failed to load during init: ${err.message}`);
+  }
 
   // Print initial flow viz to stderr
   const vizLines = [""];
