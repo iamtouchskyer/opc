@@ -626,7 +626,7 @@ normalizer resolves them to the canonical kebab form before dispatch.
 
 | Hook            | Fires during             | Args (context)                                                 | Return                                    | Failure isolation                                          |
 |-----------------|--------------------------|----------------------------------------------------------------|-------------------------------------------|------------------------------------------------------------|
-| `startup.check` | extension load           | `{ config }`                                                   | any (throw = refuse to load)              | Load rejected; extension absent from registry              |
+| `startup.check` | extension load           | `{}` (empty object — config is not threaded through today)      | any (throw = refuse to load)              | Load rejected; extension absent from registry              |
 | `prompt.append` | build / review prompts   | `{ node, role, task, flowDir, runDir, devServerUrl, nodeCapabilities }` | `string` (markdown)                       | Isolated — sibling extensions still fire                   |
 | `verdict.append`| review-node evaluation   | same as prompt.append                                          | `Finding[]` (`{severity, category, message}`) | Isolated — findings from siblings still collected          |
 | `execute.run`   | execute-node side effects | same + `role: "executor"`                                      | **ignored**                               | Isolated — per-extension circuit-breaker on repeated fails |

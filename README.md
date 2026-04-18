@@ -157,17 +157,22 @@ bash test/test-harness.sh
 
 ## Reproducing benchmarks
 
-OPC ships with an extension system (v0.5, Run 1) so you can plug in additional hooks — visual checks, design-system audits, a11y scans — without forking the skill. When reproducing the core benchmarks (tamper detection, review independence, gate math) you typically want the vanilla pipeline with no extensions mixed in:
+OPC ships with an extension system (v0.5, Run 1) so you can plug in additional hooks — visual checks, design-system audits, a11y scans — without forking the skill. The extension loader honors three bypasses so a single harness invocation can ignore locally-configured extensions:
 
 ```bash
-# Disable every extension for a clean reproduction
-OPC_DISABLE_EXTENSIONS=1 bash test/run-all.sh
-
-# Or per-invocation on a single opc-harness call
+# Disable every extension for one harness run
 OPC_DISABLE_EXTENSIONS=1 node bin/opc-harness.mjs init --flow review --entry review --dir .harness
+
+# Same effect, CLI flag form
+node bin/opc-harness.mjs init --flow review --entry review --dir .harness --no-extensions
+
+# Whitelist specific extensions only
+node bin/opc-harness.mjs init --flow review --entry review --dir .harness --extensions visual-check,a11y
 ```
 
-Priority order for extension loading: `OPC_DISABLE_EXTENSIONS=1` env var > `--no-extensions` CLI flag > `--extensions foo,bar` whitelist > config in `.opc/config.json` and `~/.opc/config.json`. See `docs/specs/2026-04-16-opc-extension-system-design.md` for the full contract.
+Priority order: `OPC_DISABLE_EXTENSIONS=1` env var > `--no-extensions` CLI flag > `--extensions foo,bar` whitelist > config in `.opc/config.json` and `~/.opc/config.json`. See `docs/specs/2026-04-16-opc-extension-system-design.md` for the full contract.
+
+**Note:** `bash test/run-all.sh` runs OPC's own internal test suite, which includes tests that intentionally *load* extensions to exercise the system. Don't set `OPC_DISABLE_EXTENSIONS=1` when running the suite — use the bypasses only on real benchmarking / workflow invocations.
 
 ## Requirements
 
