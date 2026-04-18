@@ -537,20 +537,27 @@ core enforces three invariants:
    another ext from running on the same hook call.
 2. **Observable failures** — every failure is appended to `registry.failures[]`
    as a structured record `{ext, hook, kind, message, at}`. The orchestrator
-   writes these to `{runDir}/eval-extension-failures.md` so the gate can see
-   them. Empty file = "no failures this run" (positive signal).
+   writes these to `{runDir}/extension-failures.md` so the gate can see them.
+   Empty file = "no failures this run" (positive signal).
 3. **Circuit-breaker** — after `OPC_HOOK_FAILURE_THRESHOLD` (default 3)
    consecutive failures, the ext is auto-disabled for the rest of the process.
-   Subsequent hook calls skip it silently. Set to `0` to disable the breaker.
+   Subsequent hook calls skip it silently. Set to `0` to **disable the breaker
+   entirely** (every failure is still recorded, the ext is never auto-disabled).
+   Note: `0` is the **off switch**, not "trip on first failure" — pick `1` for
+   that.
 
 ### §9.1 Failure kinds
 
 | `kind`         | Trigger                                                        |
 |----------------|----------------------------------------------------------------|
 | `throw`        | Hook function rejected/threw a non-timeout error               |
-| `timeout`      | Hook exceeded `OPC_HOOK_TIMEOUT_MS` (default 60s)              |
+| `timeout`      | Hook exceeded `OPC_HOOK_TIMEOUT_MS` (default 60s). Classified by the `HookTimeoutError` sentinel — never by string-matching `err.message`. |
 | `bad-return`   | Hook returned wrong type (e.g. non-string from `promptAppend`) |
-| `disabled`     | Auto-injected when the breaker trips (`hook: "_circuit_breaker"`)|
+| `disabled`     | Auto-injected when the breaker trips (`hook: "_circuit_breaker"`) |
+
+**Reserved hook names**: any hook name starting with `_` is reserved for OPC
+core (currently only `_circuit_breaker`). Extensions MUST NOT export hook
+functions with `_`-prefixed names.
 
 ### §9.2 Streak semantics
 
@@ -559,11 +566,28 @@ invocation resets the streak to 0. This protects against transient flakiness
 (e.g. a slow LLM call that occasionally times out) while still tripping on
 genuinely broken extensions.
 
+**Concurrency caveat**: "consecutive" is defined per-registry under serial
+invocation. Two parallel `firePromptAppend(registry, ...)` calls may interleave
+on `_failStreak`, which can delay or accelerate the trip but never corrupts
+state. OPC's call pattern is one node at a time, so this is currently a
+non-issue; a future per-ext mutex would be required if that changes.
+
+**Manual re-enable**: setting `ext.enabled = true` directly after a trip is a
+footgun — the stale `_failStreak` will re-trip the breaker on the very next
+single failure. Use the exported `resetExtension(ext)` helper, which clears
+both `enabled` and `_failStreak`.
+
+**Bounded log**: `registry.failures[]` is capped at `OPC_HOOK_FAILURE_LOG_CAP`
+(default 200) entries. Oldest are dropped FIFO and `registry.failuresDropped`
+counts the loss. Long-lived processes therefore cannot exhaust memory or
+balloon the report file.
+
 ### §9.3 Failure report file
 
-`{runDir}/eval-extension-failures.md` is written by `fireVerdictAppend`
-(always, when `runDir` is set) and may be written explicitly via
-`writeFailureReport(registry, runDir)` after `firePromptAppend`. Format:
+`{runDir}/extension-failures.md` is written by `fireVerdictAppend` (always,
+when `runDir` is set) and may be written explicitly via
+`writeFailureReport(registry, runDir)` after `firePromptAppend` for prompt-only
+paths. Format:
 
 ```
 # Extension Hook Failures
@@ -573,6 +597,22 @@ genuinely broken extensions.
 🔴 my-ext._circuit_breaker [disabled] circuit-breaker tripped after 3 ... @ ...
 ```
 
-The gate's verdict synthesizer treats any 🔴 (a tripped breaker) as ITERATE
-and 🟡-only files as INFO. Required extensions that trip the breaker should
-be surfaced to the user explicitly.
+**Filename rationale**: the file deliberately does **not** start with `eval-`.
+The `synthesize` command ingests `eval*.md` as role evaluations and applies
+thin-eval / no-code-refs / no-fix / no-reasoning guards that would fire false
+positives on every failure-bearing run. `extension-failures.md` is
+infrastructure signal, not a role evaluation, and is surfaced through a
+separate orchestrator path (gate hook), independent of `synthesize`.
+
+The gate's verdict synthesizer maps eval-file content to verdicts as:
+
+| Eval file content | Synthesize verdict |
+|-------------------|--------------------|
+| All 🔵 / no findings | `PASS`     |
+| Any 🟡 (warning)     | `ITERATE`  |
+| Any 🔴 (critical)    | `FAIL`     |
+| Any role BLOCKED     | `BLOCKED`  |
+
+`extension-failures.md` is **not** ingested by `synthesize`; required
+extensions that trip the breaker should be surfaced to the user explicitly via
+the gate hook (downstream consumer's responsibility — see U1.6).

@@ -43,12 +43,45 @@ const HOOK_FAILURE_THRESHOLD = (() => {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
 })();
 
+// Cap on registry.failures[] to keep memory + report file bounded in long-lived
+// processes. Oldest entries are dropped FIFO once the cap is reached, and a
+// running drop counter is exposed via registry.failuresDropped.
+const FAILURE_LOG_CAP = (() => {
+  const raw = process.env.OPC_HOOK_FAILURE_LOG_CAP;
+  if (raw === undefined || raw === "") return 200;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 200;
+})();
+
+// Tagged sentinel — survives across module boundaries via name check (instanceof
+// is fragile under dynamic re-import). Used by withTimeout + recordFailure to
+// classify timeouts deterministically instead of regex-sniffing err.message.
+export class HookTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "HookTimeoutError";
+  }
+}
+
+function isHookTimeoutError(err) {
+  return err && (err instanceof HookTimeoutError || err.name === "HookTimeoutError");
+}
+
 // ─── Failure record helpers ──────────────────────────────────────
 //
 // Every prompt.append / verdict.append failure (throw, timeout, bad-return-shape)
 // is appended to registry.failures[]. The orchestrator/gate persists these to
 // eval-extension-failures.md so a flaky or crashing extension is observable
 // instead of silently degrading the run.
+
+function appendFailure(registry, entry) {
+  if (!Array.isArray(registry.failures)) registry.failures = [];
+  registry.failures.push(entry);
+  while (registry.failures.length > FAILURE_LOG_CAP) {
+    registry.failures.shift();
+    registry.failuresDropped = (registry.failuresDropped || 0) + 1;
+  }
+}
 
 function recordFailure(registry, ext, hook, kind, message) {
   const entry = {
@@ -58,13 +91,13 @@ function recordFailure(registry, ext, hook, kind, message) {
     message: String(message).slice(0, 500),
     at: new Date().toISOString(),
   };
-  registry.failures.push(entry);
+  appendFailure(registry, entry);
   ext._failStreak = (ext._failStreak || 0) + 1;
   if (HOOK_FAILURE_THRESHOLD > 0 && ext._failStreak >= HOOK_FAILURE_THRESHOLD && ext.enabled) {
     ext.enabled = false;
     ext.disabledReason = `circuit-breaker tripped after ${ext._failStreak} consecutive failures`;
     console.error(`[opc] CIRCUIT-BREAKER: extension '${ext.name}' disabled after ${ext._failStreak} consecutive failures (last: ${kind} in ${hook})`);
-    registry.failures.push({
+    appendFailure(registry, {
       ext: ext.name,
       hook: "_circuit_breaker",
       kind: "disabled",
@@ -78,6 +111,18 @@ function recordSuccess(ext) {
   // Any successful invocation resets the consecutive-failure streak.
   // The breaker only trips on N-in-a-row, not N-total.
   if (ext._failStreak) ext._failStreak = 0;
+}
+
+/**
+ * Manually re-enable a disabled extension and clear its failure streak so it
+ * isn't immediately re-tripped by the next single failure. Call this from an
+ * orchestrator only after fixing the root cause.
+ */
+export function resetExtension(ext) {
+  if (!ext) return;
+  ext.enabled = true;
+  ext._failStreak = 0;
+  delete ext.disabledReason;
 }
 
 // ─── Path resolution ─────────────────────────────────────────────
@@ -178,7 +223,7 @@ function normalizeFinding(f) {
 function withTimeout(promise, ms, onTimeoutMessage) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(onTimeoutMessage)), ms);
+    timer = setTimeout(() => reject(new HookTimeoutError(onTimeoutMessage)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -429,7 +474,7 @@ export async function firePromptAppend(registry, context) {
       recordSuccess(ext);
     } catch (err) {
       console.error(`WARN: extension ${ext.name} prompt.append failed:`, err.message);
-      const kind = /timed out after/.test(err.message) ? "timeout" : "throw";
+      const kind = isHookTimeoutError(err) ? "timeout" : "throw";
       recordFailure(registry, ext, "prompt.append", kind, err.message);
     }
   }
@@ -475,7 +520,7 @@ export async function fireVerdictAppend(registry, context) {
       recordSuccess(ext);
     } catch (err) {
       console.error(`WARN: extension ${ext.name} verdict.append failed:`, err.message);
-      const kind = /timed out after/.test(err.message) ? "timeout" : "throw";
+      const kind = isHookTimeoutError(err) ? "timeout" : "throw";
       recordFailure(registry, ext, "verdict.append", kind, err.message);
     }
   }
@@ -498,22 +543,33 @@ export async function fireVerdictAppend(registry, context) {
 
   // Sibling failure report — observable signal for the gate.
   // Always written when runDir is set (empty file means "no failures this run").
+  // Filename intentionally lacks the `eval-` prefix so synthesize's `eval*.md`
+  // ingestion does NOT pick it up — the failure report is infrastructure
+  // signal, not a role evaluation, and should not trip thin-eval guards.
   writeFailureReport(registry, context.runDir);
 }
 
 // ─── Failure report ──────────────────────────────────────────────
 
 /**
- * Write registry.failures[] to {runDir}/eval-extension-failures.md.
- * The gate may surface this as a 🟡 if any failures are recorded.
+ * Write registry.failures[] to {runDir}/extension-failures.md.
+ * Filename has NO `eval-` prefix on purpose: the synthesize command ingests
+ * `eval*.md` as role evaluations, which would trip thin-eval / no-code-refs
+ * guards on every failure-bearing run. The orchestrator surfaces this file
+ * through a separate path (gate hook), not via synthesize.
  */
 export function writeFailureReport(registry, runDir) {
   if (!runDir) return;
   const failures = Array.isArray(registry.failures) ? registry.failures : [];
+  const dropped = registry.failuresDropped || 0;
   const lines = ["# Extension Hook Failures", ""];
   if (failures.length === 0) {
     lines.push("🔵 extension-failures: No hook failures recorded");
   } else {
+    if (dropped > 0) {
+      lines.push(`> Note: ${dropped} earlier failure record(s) dropped (cap=${FAILURE_LOG_CAP}).`);
+      lines.push("");
+    }
     for (const f of failures) {
       const emoji = f.kind === "disabled" ? "🔴" : "🟡";
       lines.push(`${emoji} ${f.ext}.${f.hook} [${f.kind}] ${f.message} @ ${f.at}`);
@@ -521,7 +577,7 @@ export function writeFailureReport(registry, runDir) {
   }
   lines.push("");
   mkdirSync(runDir, { recursive: true });
-  atomicWriteSync(join(runDir, "eval-extension-failures.md"), lines.join("\n"));
+  atomicWriteSync(join(runDir, "extension-failures.md"), lines.join("\n"));
 }
 
 // ─── Registry cache helpers ──────────────────────────────────────

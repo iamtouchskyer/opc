@@ -1067,7 +1067,7 @@ describe("built-in flow templates — no bare capability tokens", () => {
 
 // ─── U1.3 — Hook failure isolation, recording, circuit-breaker ─────
 
-import { writeFailureReport } from "./extensions.mjs";
+import { writeFailureReport, resetExtension, HookTimeoutError } from "./extensions.mjs";
 
 // Helper: silence console.error during noisy negative tests but still fail
 // loudly if a test expects no errors. Wrap a fn and return captured stderr.
@@ -1254,7 +1254,7 @@ describe("U1.3 — failure report file", () => {
     try { rmSync(runDir, { recursive: true, force: true }); } catch {}
   });
 
-  test("eval-extension-failures.md written by fireVerdictAppend even when no failures", async () => {
+  test("extension-failures.md written by fireVerdictAppend even when no failures", async () => {
     writeExtension(
       join(tmpBase, "ok"),
       `export const meta = { name: "ok", provides: ["cap@1"] };
@@ -1264,13 +1264,16 @@ describe("U1.3 — failure report file", () => {
       const reg = await loadExtensions({ extensionsDir: tmpBase });
       await fireVerdictAppend(reg, { nodeCapabilities: ["cap@1"], runDir });
     });
-    const path = join(runDir, "eval-extension-failures.md");
+    const path = join(runDir, "extension-failures.md");
     assert.ok(existsSync(path), "failures report must be written");
     const body = readFileSync(path, "utf8");
     assert.match(body, /No hook failures recorded/);
+    // Filename must NOT start with `eval-` so synthesize's `eval*.md` glob skips it.
+    assert.ok(!existsSync(join(runDir, "eval-extension-failures.md")),
+      "filename must not start with eval- (would trip synthesize thin-eval guards)");
   });
 
-  test("eval-extension-failures.md lists failures and disabled events", async () => {
+  test("extension-failures.md lists failures and disabled events", async () => {
     writeExtension(
       join(tmpBase, "bad"),
       `export const meta = { name: "bad", provides: ["cap@1"] };
@@ -1284,7 +1287,7 @@ describe("U1.3 — failure report file", () => {
       await fireVerdictAppend(reg, ctx);
       await fireVerdictAppend(reg, ctx);
     });
-    const body = readFileSync(join(runDir, "eval-extension-failures.md"), "utf8");
+    const body = readFileSync(join(runDir, "extension-failures.md"), "utf8");
     assert.match(body, /bad\.verdict\.append \[throw\]/);
     assert.match(body, /\[disabled\]/);
     // First two writes have only throws (🟡); after trip there's also a 🔴.
@@ -1303,7 +1306,125 @@ describe("U1.3 — failure report file", () => {
       await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
       writeFailureReport(reg, runDir);
     });
-    const body = readFileSync(join(runDir, "eval-extension-failures.md"), "utf8");
+    const body = readFileSync(join(runDir, "extension-failures.md"), "utf8");
     assert.match(body, /x\.prompt\.append \[throw\]/);
+  });
+});
+
+// ─── U1.3r — fix-forward additions (contract & resilience reviewers) ─────
+
+describe("U1.3r — HookTimeoutError sentinel (resilience 🟡)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("non-timeout Error containing 'timed out after' substring is NOT misclassified", async () => {
+    // Pre-fix: regex /timed out after/ on err.message would mis-tag this as timeout.
+    // Post-fix: classification is by HookTimeoutError sentinel only.
+    writeExtension(
+      join(tmpBase, "trickster"),
+      `export const meta = { name: "trickster", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("operation timed out after retry"); }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+      return reg;
+    });
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].kind, "throw",
+      "user error containing 'timed out after' must be kind=throw, not timeout");
+  });
+
+  test("HookTimeoutError is exported and identifiable", () => {
+    const err = new HookTimeoutError("x");
+    assert.equal(err.name, "HookTimeoutError");
+    assert.ok(err instanceof Error);
+  });
+});
+
+describe("U1.3r — sync-throw hook (resilience 🔵 → 🟢 lock contract)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("non-async hook that throws synchronously is caught and recorded", async () => {
+    writeExtension(
+      join(tmpBase, "syncthrow"),
+      `export const meta = { name: "syncthrow", provides: ["cap@1"] };
+       // intentionally NOT async — sync throw before returning a promise
+       export function promptAppend() { throw new Error("sync boom"); }`
+    );
+    writeExtension(
+      join(tmpBase, "sibling"),
+      `export const meta = { name: "sibling", provides: ["cap@1"] };
+       export async function promptAppend() { return "## sibling-ok\\n"; }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const out = await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+      return { reg, out };
+    });
+    assert.match(result.out, /sibling-ok/, "sibling must run despite sync throw");
+    assert.equal(result.reg.failures.length, 1);
+    assert.equal(result.reg.failures[0].ext, "syncthrow");
+    assert.equal(result.reg.failures[0].kind, "throw");
+  });
+});
+
+describe("U1.3r — resetExtension helper (resilience 🟡)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("after trip + resetExtension, ext must NOT re-trip on the next single failure", async () => {
+    writeExtension(
+      join(tmpBase, "doomed"),
+      `export const meta = { name: "doomed", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("nope"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"] };
+      for (let i = 0; i < 3; i++) await firePromptAppend(reg, ctx);
+      assert.equal(reg.extensions[0].enabled, false, "tripped after 3");
+      // Naive `ext.enabled = true` would re-trip on the very next failure
+      // because _failStreak is still 3. resetExtension clears it.
+      resetExtension(reg.extensions[0]);
+      assert.equal(reg.extensions[0]._failStreak, 0);
+      assert.equal(reg.extensions[0].disabledReason, undefined);
+      await firePromptAppend(reg, ctx); // single failure
+      assert.equal(reg.extensions[0].enabled, true,
+        "single post-reset failure must NOT re-trip the breaker");
+      assert.equal(reg.extensions[0]._failStreak, 1);
+    });
+  });
+});
+
+describe("U1.3r — failures[] cap (resilience 🟡)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => {
+    try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
+    delete process.env.OPC_HOOK_FAILURE_LOG_CAP;
+    delete process.env.OPC_HOOK_FAILURE_THRESHOLD;
+  });
+
+  test("failures[] is bounded; oldest dropped FIFO; failuresDropped tracks loss", async () => {
+    process.env.OPC_HOOK_FAILURE_LOG_CAP = "5";
+    process.env.OPC_HOOK_FAILURE_THRESHOLD = "0"; // disable breaker so we can pump
+    const mod = await import(`./extensions.mjs?cap=${Date.now()}`);
+    writeExtension(
+      join(tmpBase, "flaky"),
+      `export const meta = { name: "flaky", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("e"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await mod.loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"] };
+      for (let i = 0; i < 12; i++) await mod.firePromptAppend(reg, ctx);
+      assert.equal(reg.failures.length, 5, "cap must hold");
+      assert.equal(reg.failuresDropped, 7, "dropped count must match overflow");
+    });
   });
 });
