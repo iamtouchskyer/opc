@@ -178,7 +178,9 @@ export function resolveBypass(config = {}) {
 // ─── Hook normalization (exported — single source of truth) ──────
 
 /**
- * Normalize any hook format to { hooks: { "prompt.append"?, "verdict.append"?, "startup.check"? } }.
+ * Normalize any hook format to { hooks: { "prompt.append"?, "verdict.append"?, "startup.check"?, "execute.run"?, "artifact.emit"? } }.
+ * Accepts both kebab (`prompt.append`, `execute.run`) and camel (`promptAppend`,
+ * `executeRun`) named exports, plus the legacy `{ hooks: { ... } }` default-export form.
  */
 export function normalizeHook(raw, mod) {
   if (raw && raw.hooks && typeof raw.hooks === "object") {
@@ -190,9 +192,13 @@ export function normalizeHook(raw, mod) {
   if (typeof src.promptAppend === "function")   hooks["prompt.append"]   = src.promptAppend;
   if (typeof src.verdictAppend === "function")  hooks["verdict.append"]  = src.verdictAppend;
   if (typeof src.startupCheck === "function")   hooks["startup.check"]   = src.startupCheck;
+  if (typeof src.executeRun === "function")     hooks["execute.run"]     = src.executeRun;
+  if (typeof src.artifactEmit === "function")   hooks["artifact.emit"]   = src.artifactEmit;
   if (typeof src["prompt.append"] === "function")   hooks["prompt.append"]   = src["prompt.append"];
   if (typeof src["verdict.append"] === "function")  hooks["verdict.append"]  = src["verdict.append"];
   if (typeof src["startup.check"] === "function")   hooks["startup.check"]   = src["startup.check"];
+  if (typeof src["execute.run"] === "function")     hooks["execute.run"]     = src["execute.run"];
+  if (typeof src["artifact.emit"] === "function")   hooks["artifact.emit"]   = src["artifact.emit"];
 
   return { hooks };
 }
@@ -565,6 +571,127 @@ export async function fireVerdictAppend(registry, context) {
   // ingestion does NOT pick it up — the failure report is infrastructure
   // signal, not a role evaluation, and should not trip thin-eval guards.
   writeFailureReport(registry, context.runDir);
+}
+
+// ─── fireExecuteRun ──────────────────────────────────────────────
+
+/**
+ * Call `execute.run` on extensions whose `provides` matches context.nodeCapabilities.
+ *
+ * Execute hooks are fire-and-forget: they can return any value (ignored) and
+ * exist to let extensions run side-effectful verification during executor
+ * nodes (e.g. crawl a URL, run Playwright, hit an API). Failures are isolated
+ * exactly like prompt/verdict: recorded in registry.failures[], throwing
+ * extension does not block siblings, circuit-breaker still trips after N in a
+ * row. Return value shape is not enforced — extensions may return strings /
+ * objects / undefined.
+ */
+export async function fireExecuteRun(registry, context) {
+  const results = [];
+  const requires = context.nodeCapabilities || [];
+
+  for (const ext of registry.extensions) {
+    if (!ext.enabled) continue;
+    if (!extensionMatches(requires, ext.meta.provides, ext.meta.compatibleCapabilities)) continue;
+
+    const fn = ext.hook?.hooks?.["execute.run"];
+    if (typeof fn !== "function") continue;
+
+    try {
+      const result = await withTimeout(
+        Promise.resolve(fn(context)),
+        HOOK_TIMEOUT_MS,
+        `execute.run timed out after ${HOOK_TIMEOUT_MS}ms`
+      );
+      results.push({ ext: ext.name, result });
+      recordSuccess(ext);
+    } catch (err) {
+      console.error(`WARN: extension ${ext.name} execute.run failed:`, err.message);
+      const kind = isHookTimeoutError(err) ? "timeout" : "throw";
+      recordFailure(registry, ext, "execute.run", kind, err.message);
+    }
+  }
+  return results;
+}
+
+// ─── fireArtifactEmit ────────────────────────────────────────────
+
+/**
+ * Call `artifact.emit` on matching extensions. Each extension may return an
+ * array of `{ name: string, content: string|Buffer }`. Files are written to
+ * `<runDir>/ext-<extName>/<name>`; a summary array of
+ * `{ type: "ext-artifact", ext, path }` entries is returned and can be
+ * merged into `handshake.artifacts[]` by the caller.
+ *
+ * Safety: `name` is basename()'d before joining. Any `name` that contains a
+ * path separator, `..`, or is empty after normalization is skipped with a WARN
+ * — extensions never write outside their per-ext subdir.
+ */
+export async function fireArtifactEmit(registry, context) {
+  const emitted = [];
+  const requires = context.nodeCapabilities || [];
+  if (!context.runDir) return emitted;
+
+  const { basename } = await import("path");
+
+  for (const ext of registry.extensions) {
+    if (!ext.enabled) continue;
+    if (!extensionMatches(requires, ext.meta.provides, ext.meta.compatibleCapabilities)) continue;
+
+    const fn = ext.hook?.hooks?.["artifact.emit"];
+    if (typeof fn !== "function") continue;
+
+    let items;
+    try {
+      items = await withTimeout(
+        Promise.resolve(fn(context)),
+        HOOK_TIMEOUT_MS,
+        `artifact.emit timed out after ${HOOK_TIMEOUT_MS}ms`
+      );
+      if (items === undefined || items === null) { recordSuccess(ext); continue; }
+      if (!Array.isArray(items)) {
+        console.error(`WARN: extension ${ext.name} artifact.emit returned ${typeof items}, expected array — ignoring`);
+        recordFailure(registry, ext, "artifact.emit", "bad-return", `returned ${typeof items}, expected array`);
+        continue;
+      }
+    } catch (err) {
+      console.error(`WARN: extension ${ext.name} artifact.emit failed:`, err.message);
+      const kind = isHookTimeoutError(err) ? "timeout" : "throw";
+      recordFailure(registry, ext, "artifact.emit", kind, err.message);
+      continue;
+    }
+
+    const extDir = join(context.runDir, `ext-${ext.name}`);
+    mkdirSync(extDir, { recursive: true });
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const rawName = item.name;
+      if (typeof rawName !== "string" || rawName.length === 0) {
+        console.error(`WARN: extension ${ext.name} artifact.emit item missing string 'name' — skipping`);
+        continue;
+      }
+      const safeName = basename(rawName);
+      if (safeName !== rawName || safeName === "" || safeName === "." || safeName === "..") {
+        console.error(`WARN: extension ${ext.name} artifact.emit name '${rawName}' is not a plain basename — skipping`);
+        continue;
+      }
+      const content = item.content;
+      if (typeof content !== "string" && !Buffer.isBuffer(content)) {
+        console.error(`WARN: extension ${ext.name} artifact.emit '${rawName}' content is not string/Buffer — skipping`);
+        continue;
+      }
+      const outPath = join(extDir, safeName);
+      try {
+        atomicWriteSync(outPath, content);
+        emitted.push({ type: "ext-artifact", ext: ext.name, path: outPath });
+      } catch (err) {
+        console.error(`WARN: extension ${ext.name} artifact.emit write failed for '${safeName}': ${err.message}`);
+        recordFailure(registry, ext, "artifact.emit", "throw", `write ${safeName}: ${err.message}`);
+      }
+    }
+    recordSuccess(ext);
+  }
+  return emitted;
 }
 
 // ─── Failure report ──────────────────────────────────────────────

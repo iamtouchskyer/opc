@@ -7,7 +7,7 @@ import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.m
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
 import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transition.mjs";
-import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict } from "./lib/ext-commands.mjs";
+import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
@@ -51,6 +51,7 @@ switch (command) {
   case "prompt-context":        await cmdPromptContext(args);  break;
   case "extension-test":        await cmdExtensionTest(args);  break;
   case "extension-verdict":     await cmdExtensionVerdict(args); break;
+  case "extension-artifact":    await cmdExtensionArtifact(args); break;
   case "config":                await cmdConfigResolve(args);    break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");

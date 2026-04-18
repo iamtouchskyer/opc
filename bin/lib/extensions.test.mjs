@@ -17,6 +17,8 @@ import {
   normalizeCapability,
   _resetBareCapabilityWarnings,
   lintCapability,
+  fireExecuteRun,
+  fireArtifactEmit,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -1564,5 +1566,411 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
     assert.doesNotMatch(out, /\[lint\]/);
     assert.doesNotMatch(err, /\[lint\]/);
     assert.equal(exitCode, 0);
+  });
+});
+
+// ─── U1.6 — normalizeHook recognizes execute.run / artifact.emit ────
+
+describe("U1.6 — normalizeHook recognizes execute.run / artifact.emit", () => {
+  test("camel-case named exports wire to kebab hook names", () => {
+    const mod = {
+      executeRun: async () => "ran",
+      artifactEmit: async () => [],
+    };
+    const raw = mod;
+    const n = normalizeHook(raw, mod);
+    assert.equal(typeof n.hooks["execute.run"], "function");
+    assert.equal(typeof n.hooks["artifact.emit"], "function");
+  });
+
+  test("kebab-case named exports wire through", () => {
+    const mod = {
+      "execute.run": async () => "ran",
+      "artifact.emit": async () => [],
+    };
+    const n = normalizeHook(mod, mod);
+    assert.equal(typeof n.hooks["execute.run"], "function");
+    assert.equal(typeof n.hooks["artifact.emit"], "function");
+  });
+
+  test("legacy { hooks: { 'execute.run': fn } } default-export preserved", () => {
+    const raw = { hooks: { "execute.run": async () => "ran" } };
+    const n = normalizeHook(raw, raw);
+    assert.equal(typeof n.hooks["execute.run"], "function");
+  });
+});
+
+// ─── U1.6 — fireExecuteRun ───────────────────────────────────────
+
+describe("U1.6 — fireExecuteRun", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("fires on matching capability; skips non-matching ext", async () => {
+    writeExtension(
+      join(tmpBase, "match"),
+      `export const meta = { name: "match", provides: ["cap@1"] };
+       export async function executeRun() { return "ok"; }`
+    );
+    writeExtension(
+      join(tmpBase, "nomatch"),
+      `export const meta = { name: "nomatch", provides: ["other@1"] };
+       export async function executeRun() { return "nope"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await fireExecuteRun(reg, { nodeCapabilities: ["cap@1"], runDir: tmpBase });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].ext, "match");
+    assert.equal(out[0].result, "ok");
+  });
+
+  test("throwing extension does not block sibling; records failure", async () => {
+    writeExtension(
+      join(tmpBase, "a-bad"),
+      `export const meta = { name: "a-bad", provides: ["cap@1"] };
+       export async function executeRun() { throw new Error("boom"); }`
+    );
+    writeExtension(
+      join(tmpBase, "b-good"),
+      `export const meta = { name: "b-good", provides: ["cap@1"] };
+       export async function executeRun() { return "survived"; }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const out = await fireExecuteRun(reg, { nodeCapabilities: ["cap@1"], runDir: tmpBase });
+      return { reg, out };
+    });
+    const names = result.out.map(r => r.ext).sort();
+    assert.deepEqual(names, ["b-good"]);
+    assert.equal(result.reg.failures.length, 1);
+    assert.equal(result.reg.failures[0].ext, "a-bad");
+    assert.equal(result.reg.failures[0].hook, "execute.run");
+    assert.equal(result.reg.failures[0].kind, "throw");
+  });
+
+  test("timeout is recorded as kind=timeout", async () => {
+    process.env.OPC_HOOK_TIMEOUT_MS = "50";
+    const mod = await import(`./extensions.mjs?u16timeout=${Date.now()}`);
+    writeExtension(
+      join(tmpBase, "slow"),
+      `export const meta = { name: "slow", provides: ["cap@1"] };
+       export async function executeRun() {
+         return new Promise(r => setTimeout(() => r("late"), 500));
+       }`
+    );
+    try {
+      const { result } = await captureStderr(async () => {
+        const reg = await mod.loadExtensions({ extensionsDir: tmpBase });
+        await mod.fireExecuteRun(reg, { nodeCapabilities: ["cap@1"], runDir: tmpBase });
+        return reg;
+      });
+      assert.equal(result.failures.length, 1);
+      assert.equal(result.failures[0].kind, "timeout");
+      assert.equal(result.failures[0].hook, "execute.run");
+    } finally {
+      delete process.env.OPC_HOOK_TIMEOUT_MS;
+    }
+  });
+
+  test("missing execute.run hook → silently skipped, not recorded as failure", async () => {
+    writeExtension(
+      join(tmpBase, "no-execute"),
+      `export const meta = { name: "no-execute", provides: ["cap@1"] };
+       export async function promptAppend() { return "x"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await fireExecuteRun(reg, { nodeCapabilities: ["cap@1"], runDir: tmpBase });
+    assert.equal(out.length, 0);
+    assert.equal(reg.failures.length, 0);
+  });
+});
+
+// ─── U1.6 — fireArtifactEmit ─────────────────────────────────────
+
+describe("U1.6 — fireArtifactEmit", () => {
+  let tmpBase;
+  let runDir;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    runDir = join(tmpBase, "run");
+    mkdirSync(runDir, { recursive: true });
+  });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("writes each item to <runDir>/ext-<name>/<basename>; returns ext-artifact entries", async () => {
+    writeExtension(
+      join(tmpBase, "emitter"),
+      `export const meta = { name: "emitter", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         return [
+           { name: "a.txt", content: "hello" },
+           { name: "b.txt", content: Buffer.from("bytes") },
+         ];
+       }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const emitted = await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+    assert.equal(emitted.length, 2);
+    for (const e of emitted) {
+      assert.equal(e.type, "ext-artifact");
+      assert.equal(e.ext, "emitter");
+      assert.ok(existsSync(e.path));
+    }
+    assert.equal(readFileSync(join(runDir, "ext-emitter", "a.txt"), "utf8"), "hello");
+    assert.equal(readFileSync(join(runDir, "ext-emitter", "b.txt"), "utf8"), "bytes");
+  });
+
+  test("path-traversal attempts (../ and absolute) are skipped with WARN", async () => {
+    writeExtension(
+      join(tmpBase, "evil"),
+      `export const meta = { name: "evil", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         return [
+           { name: "../escape.txt", content: "nope" },
+           { name: "/etc/passwd", content: "nope" },
+           { name: "sub/nested.txt", content: "nope" },
+           { name: "", content: "nope" },
+           { name: "good.txt", content: "ok" },
+         ];
+       }`
+    );
+    const { result, stderr } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      return await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+    });
+    assert.equal(result.length, 1);
+    assert.ok(result[0].path.endsWith("good.txt"));
+    // No files leaked outside ext-evil/
+    assert.equal(existsSync(join(tmpBase, "escape.txt")), false);
+    assert.equal(existsSync(join(runDir, "ext-evil", "sub")), false);
+    assert.match(stderr, /not a plain basename/);
+  });
+
+  test("non-array return → recorded as bad-return, no files emitted", async () => {
+    writeExtension(
+      join(tmpBase, "wrong-shape"),
+      `export const meta = { name: "wrong-shape", provides: ["cap@1"] };
+       export async function artifactEmit() { return "not an array"; }`
+    );
+    const { result, stderr } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const emitted = await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+      return { reg, emitted };
+    });
+    assert.equal(result.emitted.length, 0);
+    assert.equal(result.reg.failures.length, 1);
+    assert.equal(result.reg.failures[0].kind, "bad-return");
+    assert.equal(result.reg.failures[0].hook, "artifact.emit");
+    assert.match(stderr, /expected array/);
+  });
+
+  test("item with non-string/Buffer content is skipped", async () => {
+    writeExtension(
+      join(tmpBase, "mixed"),
+      `export const meta = { name: "mixed", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         return [
+           { name: "bad.json", content: { foo: 1 } },
+           { name: "ok.txt", content: "good" },
+         ];
+       }`
+    );
+    const { result, stderr } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      return await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+    });
+    assert.equal(result.length, 1);
+    assert.ok(result[0].path.endsWith("ok.txt"));
+    assert.match(stderr, /content is not string\/Buffer/);
+  });
+
+  test("throwing artifact.emit is recorded as failure, no files emitted", async () => {
+    writeExtension(
+      join(tmpBase, "thrower"),
+      `export const meta = { name: "thrower", provides: ["cap@1"] };
+       export async function artifactEmit() { throw new Error("kaboom"); }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const emitted = await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+      return { reg, emitted };
+    });
+    assert.equal(result.emitted.length, 0);
+    assert.equal(result.reg.failures.length, 1);
+    assert.equal(result.reg.failures[0].kind, "throw");
+    assert.equal(result.reg.failures[0].hook, "artifact.emit");
+  });
+
+  test("no runDir → returns empty array, no writes", async () => {
+    writeExtension(
+      join(tmpBase, "e"),
+      `export const meta = { name: "e", provides: ["cap@1"] };
+       export async function artifactEmit() { return [{ name: "x.txt", content: "y" }]; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const emitted = await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir: null });
+    assert.equal(emitted.length, 0);
+  });
+});
+
+// ─── U1.6 — extension-artifact CLI integration ───────────────────
+
+describe("U1.6 — extension-artifact CLI integration", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("fires execute.run + artifact.emit, merges into handshake.artifacts[], writes failure report", async () => {
+    // Extensions layout
+    const extDir = join(tmpBase, "exts");
+    writeExtension(
+      join(extDir, "runner"),
+      `export const meta = { name: "runner", provides: ["nodecap@1"] };
+       export async function executeRun() { return "ran"; }
+       export async function artifactEmit() {
+         return [{ name: "out.txt", content: "data" }];
+       }`
+    );
+
+    // Harness layout with flow template + node run dir
+    const harnessDir = join(tmpBase, ".harness");
+    const nodeId = "exec-node";
+    const runDir = join(harnessDir, "nodes", nodeId, "run_1");
+    mkdirSync(runDir, { recursive: true });
+    // Seed handshake with an existing artifact to verify merge + dedup
+    writeFileSync(
+      join(runDir, "handshake.json"),
+      JSON.stringify({ artifacts: [{ type: "existing", path: "/pre-existing" }] }),
+      "utf8"
+    );
+    // Seed flow-state + flow template with nodeCapabilities
+    writeFileSync(
+      join(harnessDir, "flow-state.json"),
+      JSON.stringify({
+        flow: "test-flow",
+        flowFile: join(harnessDir, "flow.json"),
+        currentNode: nodeId,
+      }),
+      "utf8"
+    );
+    writeFileSync(
+      join(harnessDir, "flow.json"),
+      JSON.stringify({
+        opc_compat: ">=0.0",
+        nodes: [nodeId],
+        edges: { [nodeId]: { PASS: null } },
+        limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+        nodeTypes: { [nodeId]: "execute" },
+        nodeCapabilities: { [nodeId]: ["nodecap@1"] },
+      }),
+      "utf8"
+    );
+    // Config pointing at extensions dir — repo layer: <harnessDir>/.opc/config.json
+    mkdirSync(join(harnessDir, ".opc"), { recursive: true });
+    writeFileSync(
+      join(harnessDir, ".opc", "config.json"),
+      JSON.stringify({ extensionsDir: extDir }),
+      "utf8"
+    );
+
+    const { cmdExtensionArtifact } = await import(`./ext-commands.mjs?u16cli=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionArtifact([
+        "--node", nodeId,
+        "--dir", harnessDir,
+        "--flow-file", join(harnessDir, "flow.json"),
+      ])
+    );
+    assert.equal(exitCode, 0);
+    const parsed = JSON.parse(out.trim().split("\n").pop());
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.node, nodeId);
+    assert.deepEqual(parsed.extensionsApplied, ["runner"]);
+    assert.equal(parsed.executeRunCount, 1);
+    assert.equal(parsed.emitted.length, 1);
+
+    // File was written
+    const emittedPath = join(runDir, "ext-runner", "out.txt");
+    assert.ok(existsSync(emittedPath));
+    assert.equal(readFileSync(emittedPath, "utf8"), "data");
+
+    // handshake.artifacts[] was updated: existing preserved + ext-artifact merged
+    const hs = JSON.parse(readFileSync(join(runDir, "handshake.json"), "utf8"));
+    assert.ok(hs.artifacts.find(a => a.type === "existing"));
+    assert.ok(hs.artifacts.find(a => a.type === "ext-artifact" && a.ext === "runner"));
+    assert.deepEqual(hs.extensionsApplied, ["runner"]);
+
+    // extension-failures.md written (even when no failures — "no failures recorded")
+    assert.ok(existsSync(join(runDir, "extension-failures.md")));
+  });
+
+  test("failing execute.run hook writes extension-failures.md with record", async () => {
+    const extDir = join(tmpBase, "exts");
+    writeExtension(
+      join(extDir, "bad"),
+      `export const meta = { name: "bad", provides: ["nodecap@1"] };
+       export async function executeRun() { throw new Error("execute boom"); }`
+    );
+
+    const harnessDir = join(tmpBase, ".harness");
+    const nodeId = "exec-node";
+    const runDir = join(harnessDir, "nodes", nodeId, "run_1");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "handshake.json"), "{}", "utf8");
+    writeFileSync(
+      join(harnessDir, "flow-state.json"),
+      JSON.stringify({ flow: "f", flowFile: join(harnessDir, "flow.json"), currentNode: nodeId }),
+      "utf8"
+    );
+    writeFileSync(
+      join(harnessDir, "flow.json"),
+      JSON.stringify({
+        opc_compat: ">=0.0",
+        nodes: [nodeId],
+        edges: { [nodeId]: { PASS: null } },
+        limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+        nodeTypes: { [nodeId]: "execute" },
+        nodeCapabilities: { [nodeId]: ["nodecap@1"] },
+      }),
+      "utf8"
+    );
+    mkdirSync(join(harnessDir, ".opc"), { recursive: true });
+    writeFileSync(
+      join(harnessDir, ".opc", "config.json"),
+      JSON.stringify({ extensionsDir: extDir }),
+      "utf8"
+    );
+
+    const { cmdExtensionArtifact } = await import(`./ext-commands.mjs?u16clierr=${Date.now()}`);
+    const { exitCode } = await captureAll(() =>
+      cmdExtensionArtifact([
+        "--node", nodeId,
+        "--dir", harnessDir,
+        "--flow-file", join(harnessDir, "flow.json"),
+      ])
+    );
+    // Per contract: hook failures are isolated — CLI still exits 0.
+    assert.equal(exitCode, 0);
+
+    const failReport = readFileSync(join(runDir, "extension-failures.md"), "utf8");
+    assert.match(failReport, /bad\.execute\.run/);
+    assert.match(failReport, /execute boom/);
   });
 });

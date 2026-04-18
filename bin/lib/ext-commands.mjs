@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook, lintCapability } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
@@ -301,4 +301,92 @@ export async function cmdExtensionVerdict(args) {
   await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
 
   console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied, nodeCapabilities }));
+}
+
+// ─── extension-artifact ──────────────────────────────────────────
+//
+// U1.6: Fires `execute.run` and `artifact.emit` hooks for executor nodes.
+// - execute.run: side-effectful verification (ignored return value)
+// - artifact.emit: returns files written to <runDir>/ext-<name>/<basename> and
+//   appended to handshake.artifacts[] as `{ type: "ext-artifact", ext, path }`
+// Also calls writeFailureReport so failures from these hooks surface in the
+// same `extension-failures.md` as prompt/verdict failures — single file, one
+// grep for any hook crash.
+
+export async function cmdExtensionArtifact(args) {
+  if (args.includes("--help")) {
+    console.error("Usage: opc-harness extension-artifact --node <id> --dir <harness-dir>");
+    console.error("Fires execute.run + artifact.emit hooks. Emitted files go to <runDir>/ext-<name>/, paths merged into handshake.artifacts[].");
+    return;
+  }
+
+  const node = getFlag(args, "node");
+  const dir = getFlag(args, "dir", ".harness");
+
+  if (!node) {
+    console.error("Usage: opc-harness extension-artifact --node <id> --dir <harness-dir>");
+    process.exit(1);
+  }
+
+  const config = loadOpcConfig(dir);
+  Object.assign(config, parseBypassArgs(args));
+  const task = readTaskFromAC(dir);
+
+  let registry;
+  try {
+    registry = await loadExtensions(config);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  const runDir = findLatestRunDir(resolve(dir, "nodes", node));
+  if (!runDir) {
+    console.error(`No run directories found for node '${node}' in ${resolve(dir, "nodes", node)}`);
+    process.exit(1);
+  }
+
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const nodeCapabilities = readNodeCapabilities(dir, node, args);
+
+  const context = {
+    node,
+    role: "executor",
+    task,
+    flowDir: resolve(dir),
+    runDir,
+    devServerUrl,
+    nodeCapabilities,
+  };
+
+  const executeResults = await fireExecuteRun(registry, context);
+  const emitted = await fireArtifactEmit(registry, context);
+
+  // Always write failure report — U1.6 wires this into the orchestrator hook
+  // path so that execute/artifact-hook crashes are observable even without a
+  // subsequent verdict phase.
+  writeFailureReport(registry, runDir);
+
+  // Merge ext-artifact entries into handshake.artifacts[] (dedup by path)
+  const handshakePath = join(runDir, 'handshake.json');
+  let handshake = {};
+  try {
+    handshake = JSON.parse(await readFile(handshakePath, 'utf8'));
+  } catch { /* no handshake yet */ }
+  if (!Array.isArray(handshake.artifacts)) handshake.artifacts = [];
+  const seen = new Set(handshake.artifacts.map(a => (a && a.path) || null).filter(Boolean));
+  for (const a of emitted) {
+    if (!seen.has(a.path)) { handshake.artifacts.push(a); seen.add(a.path); }
+  }
+  handshake.extensionsApplied = registry.applied;
+  await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
+
+  console.log(JSON.stringify({
+    ok: true,
+    node,
+    runDir,
+    extensionsApplied: registry.applied,
+    executeRunCount: executeResults.length,
+    emitted,
+  }));
 }
