@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
@@ -123,6 +123,9 @@ export async function cmdPromptContext(args) {
   saveRegistryCache(resolve(dir), registry);
 
   console.log(JSON.stringify({ append, applied: registry.applied, nodeCapabilities }));
+
+  // Strict mode: after isolation work is done, exit non-zero if any failures.
+  enforceStrictMode(registry);
 }
 
 // ─── extension-test ──────────────────────────────────────────────
@@ -308,6 +311,10 @@ export async function cmdExtensionVerdict(args) {
   await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
 
   console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied, nodeCapabilities }));
+
+  // Strict mode: after eval-extensions.md and writeFailureReport have run
+  // (inside fireVerdictAppend), exit non-zero if any failures recorded.
+  enforceStrictMode(registry);
 }
 
 // ─── extension-artifact ──────────────────────────────────────────
@@ -397,4 +404,8 @@ export async function cmdExtensionArtifact(args) {
     executeRunCount: executeResults.length,
     emitted,
   }));
+
+  // Strict mode: after writeFailureReport + handshake merge, exit non-zero
+  // if any failures recorded (preserves isolation, signals to CI).
+  enforceStrictMode(registry);
 }

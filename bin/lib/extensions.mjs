@@ -738,6 +738,37 @@ export function writeFailureReport(registry, runDir) {
   atomicWriteSync(join(runDir, "extension-failures.md"), lines.join("\n"));
 }
 
+// ─── Strict mode (CI enforcement) ────────────────────────────────
+//
+// OPC_STRICT_EXTENSIONS=1 turns recorded extension hook failures into a
+// non-zero process exit. Default mode isolates failures (per-extension
+// breaker) and returns 0 — strict mode preserves the same isolation +
+// breaker behavior but signals failure to the caller (CI build).
+//
+// Contract:
+//   - Called AFTER hooks fire and AFTER writeFailureReport / eval-extensions.md
+//     are written. Isolation invariant: healthy siblings' outputs are already
+//     recorded by the time strict checks failures.
+//   - No-op when env != "1" (zero overhead in default mode).
+//   - No-op when registry.failures is empty (no false positives on clean runs).
+//   - Emits one stderr line per recorded failure naming STRICT mode + the
+//     extension + the hook so operators can diagnose CI breakage at a glance.
+//   - Exits with code 2 (distinguishes strict-trip from generic CLI errors
+//     which use exit 1).
+export function strictModeEnabled() {
+  return process.env.OPC_STRICT_EXTENSIONS === "1";
+}
+
+export function enforceStrictMode(registry) {
+  if (!strictModeEnabled()) return;
+  const failures = Array.isArray(registry?.failures) ? registry.failures : [];
+  if (failures.length === 0) return;
+  for (const f of failures) {
+    console.error(`[opc] STRICT: ${f.ext} failed ${f.hook} — exiting non-zero`);
+  }
+  process.exit(2);
+}
+
 // ─── Registry cache helpers ──────────────────────────────────────
 
 export function saveRegistryCache(dir, registry) {
