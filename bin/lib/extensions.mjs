@@ -735,25 +735,34 @@ export function writeFailureReport(registry, runDir) {
   // registry.failures (dedup on ext|hook|kind|message), then writes BOTH
   // sidecar + markdown atomically.
   let priorEntries = [];
+  let priorDropped = 0;
   if (existsSync(sidecarPath)) {
     try {
       const data = JSON.parse(readFileSync(sidecarPath, "utf8"));
       if (Array.isArray(data.failures)) priorEntries = data.failures;
+      if (typeof data.droppedTotal === "number") priorDropped = data.droppedTotal;
     } catch { /* corrupt sidecar = treat as empty, will be overwritten */ }
   }
 
+  // U2.8e (#2): use JSON.stringify on a tuple instead of `|`-joined string —
+  // dedup key is unambiguous even if any field contains `|`.
   const seen = new Set();
   const merged = [];
   for (const e of [...priorEntries, ...failures]) {
     if (!e || typeof e !== "object") continue;
-    const key = `${e.ext}|${e.hook}|${e.kind}|${e.message}`;
+    const key = JSON.stringify([e.ext, e.hook, e.kind, e.message]);
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(e);
   }
 
+  // U2.8e (#5): droppedTotal accumulates across CLI invocations (cap-overflow
+  // is a monotonically growing signal — overwriting with the current call's
+  // dropped count silently loses prior drops).
+  const droppedTotal = priorDropped + dropped;
+
   // Sidecar = source of truth.
-  const sidecar = { failures: merged, droppedTotal: dropped };
+  const sidecar = { failures: merged, droppedTotal };
   mkdirSync(runDir, { recursive: true });
   atomicWriteSync(sidecarPath, JSON.stringify(sidecar, null, 2));
 
@@ -762,8 +771,8 @@ export function writeFailureReport(registry, runDir) {
   if (merged.length === 0) {
     lines.push("🔵 extension-failures: No hook failures recorded");
   } else {
-    if (dropped > 0) {
-      lines.push(`> Note: ${dropped} earlier failure record(s) dropped (cap=${FAILURE_LOG_CAP}).`);
+    if (droppedTotal > 0) {
+      lines.push(`> Note: ${droppedTotal} earlier failure record(s) dropped (cap=${FAILURE_LOG_CAP}).`);
       lines.push("");
     }
     for (const f of merged) {

@@ -190,6 +190,74 @@ if [ -f "$EMPTY_MD" ]; then
   fi
 fi
 
+# ── 6. Dedup key collision (U2.8e #2): pipe in field must NOT collide ──
+echo "--- 6.1: dedup key tolerates '|' inside fields (no false collisions) ---"
+
+PIPE_DIR="$TMP/pipe"
+cat > "$TMP/pipe.mjs" <<EOF
+import { writeFailureReport } from "$REPO_ROOT/bin/lib/extensions.mjs";
+import { mkdirSync } from "fs";
+const dir = "$PIPE_DIR";
+mkdirSync(dir, { recursive: true });
+
+// Two genuinely DIFFERENT failures that would collide under naive
+// "ext|hook|kind|message" string-join keying:
+//   A: ext="a|b", hook="c"
+//   B: ext="a",   hook="b|c"
+// Both stringify to "a|b|c|error|same-msg" if you naive-join.
+writeFailureReport({
+  failures: [
+    { ext: "a|b", hook: "c",   kind: "error", message: "msg", at: "2025-04-18T00:00:01Z" },
+    { ext: "a",   hook: "b|c", kind: "error", message: "msg", at: "2025-04-18T00:00:02Z" },
+  ],
+  failuresDropped: 0
+}, dir);
+EOF
+
+node "$TMP/pipe.mjs" 2>&1 || fail "pipe-collision script crashed"
+
+PIPE_SIDECAR="$PIPE_DIR/extension-failures.json"
+if [ -f "$PIPE_SIDECAR" ]; then
+  PCOUNT=$(jq -r '.failures | length' "$PIPE_SIDECAR" 2>/dev/null || echo "x")
+  if [ "$PCOUNT" = "2" ]; then
+    ok "pipe-collision: both distinct failures preserved (length=2)"
+  else
+    fail "pipe-collision: failures.length = $PCOUNT (expected 2 — naive '|' key collision)"
+    cat "$PIPE_SIDECAR" >&2
+  fi
+fi
+
+# ── 7. droppedTotal accumulates across calls (U2.8e #5) ────────────
+echo "--- 7.1: droppedTotal accumulates across CLI invocations (cap-overflow signal) ---"
+
+DROP_DIR="$TMP/drop"
+cat > "$TMP/drop.mjs" <<EOF
+import { writeFailureReport } from "$REPO_ROOT/bin/lib/extensions.mjs";
+import { mkdirSync } from "fs";
+const dir = "$DROP_DIR";
+mkdirSync(dir, { recursive: true });
+
+// First CLI invocation: 5 drops
+writeFailureReport({ failures: [], failuresDropped: 5 }, dir);
+// Second CLI invocation: 3 more drops (fresh registry, doesn't know about prior 5)
+writeFailureReport({ failures: [], failuresDropped: 3 }, dir);
+// Third: 0 drops — total should still be 8
+writeFailureReport({ failures: [], failuresDropped: 0 }, dir);
+EOF
+
+node "$TMP/drop.mjs" 2>&1 || fail "drop-accumulate script crashed"
+
+DROP_SIDECAR="$DROP_DIR/extension-failures.json"
+if [ -f "$DROP_SIDECAR" ]; then
+  DT=$(jq -r '.droppedTotal' "$DROP_SIDECAR" 2>/dev/null || echo "x")
+  if [ "$DT" = "8" ]; then
+    ok "droppedTotal: accumulated 5+3+0 = 8 (cap signal preserved)"
+  else
+    fail "droppedTotal: got $DT (expected 8 — accumulation broken, signal lost)"
+    cat "$DROP_SIDECAR" >&2
+  fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 echo ""
 echo "==========================================="
