@@ -85,6 +85,19 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# 3b) validate-chain JSON exposes bypassActive/bypassSource/waivedRequiredExtensions
+echo "--- 1.3b: validate-chain JSON exposes bypass state (machine-readable)"
+BACTIVE=$(echo "$OUT" | jq -r '.bypassActive')
+BSOURCE=$(echo "$OUT" | jq -r '.bypassSource')
+WAIVED=$(echo "$OUT" | jq -r '.waivedRequiredExtensions | join(",")')
+if [ "$BACTIVE" = "true" ] && [[ "$BSOURCE" == flow-state* ]] && [ "$WAIVED" = "non-existent-ext" ]; then
+  echo "  ✅ bypassActive=true, bypassSource=$BSOURCE, waived=[$WAIVED]"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ JSON fields wrong: bypassActive=$BACTIVE bypassSource=$BSOURCE waived=$WAIVED"
+  FAIL=$((FAIL + 1))
+fi
+
 # 4) Negative case: without bypass, validate-chain would still enforce requiredExtensions
 #    (We can't easily test this in a passing way because a pristine init has no handshakes
 #     yet, so no nodes fail. But we can confirm the waiver message only fires when bypass
@@ -93,12 +106,26 @@ echo "--- 1.4: without bypass, no waiver message emitted"
 rm -rf "$HARNESS"
 HOME="$TMP/fake-home" node bin/opc-harness.mjs init \
   --flow review --entry review --dir "$HARNESS" >/dev/null 2>&1
-MSG=$(HOME="$TMP/fake-home" node bin/opc-harness.mjs validate-chain --dir "$HARNESS" 2>&1 >/dev/null | grep -c "waiving requiredExtensions" || true)
+OUT_NB=$(HOME="$TMP/fake-home" node bin/opc-harness.mjs validate-chain --dir "$HARNESS" 2>/tmp/nb-stderr.$$)
+MSG=$(grep -c "waiving requiredExtensions" /tmp/nb-stderr.$$ || true)
+rm -f /tmp/nb-stderr.$$
 if [ "$MSG" = "0" ]; then
   echo "  ✅ no 'waiving' message without bypass"
   PASS=$((PASS + 1))
 else
   echo "  ❌ unexpected waiver message without bypass"
+  FAIL=$((FAIL + 1))
+fi
+
+# 4b) Without bypass, JSON reports bypassActive=false
+echo "--- 1.4b: without bypass, JSON reports bypassActive=false"
+NB_ACTIVE=$(echo "$OUT_NB" | jq -r '.bypassActive')
+NB_WAIVED=$(echo "$OUT_NB" | jq -r '.waivedRequiredExtensions | length')
+if [ "$NB_ACTIVE" = "false" ] && [ "$NB_WAIVED" = "0" ]; then
+  echo "  ✅ bypassActive=false, waived=[]"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ JSON wrong without bypass: bypassActive=$NB_ACTIVE waived.length=$NB_WAIVED"
   FAIL=$((FAIL + 1))
 fi
 

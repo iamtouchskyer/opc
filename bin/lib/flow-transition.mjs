@@ -322,6 +322,7 @@ export function cmdValidateChain(args) {
   // The bypass record persisted on flow-state is the audit trail.
   let bypassActive = false;
   let bypassSource = null;
+  let waivedRequiredExtensions = [];
   if (state.bypassMode && state.bypassMode.mode === "disable-all") {
     bypassActive = true;
     bypassSource = `flow-state(${state.bypassMode.source})`;
@@ -334,6 +335,7 @@ export function cmdValidateChain(args) {
   }
   if (bypassActive && requiredExtensions.length > 0) {
     console.error(`[opc] validate-chain: waiving requiredExtensions (${requiredExtensions.join(", ")}) — bypass active via ${bypassSource}`);
+    waivedRequiredExtensions = requiredExtensions.slice();
     requiredExtensions = [];
   }
 
@@ -383,7 +385,14 @@ export function cmdValidateChain(args) {
     } catch { /* nodes dir unreadable */ }
   }
 
-  console.log(JSON.stringify({ valid: errors.length === 0, errors, executedPath }));
+  console.log(JSON.stringify({
+    valid: errors.length === 0,
+    errors,
+    executedPath,
+    bypassActive,
+    bypassSource,
+    waivedRequiredExtensions,
+  }));
 }
 
 // ─── finalize ──────────────────────────────────────────────────
