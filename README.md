@@ -155,6 +155,20 @@ bash test/test-harness.sh
 
 34 end-to-end tests covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, and plan parsing.
 
+## Reproducing benchmarks
+
+OPC ships with an extension system (v0.5, Run 1) so you can plug in additional hooks — visual checks, design-system audits, a11y scans — without forking the skill. When reproducing the core benchmarks (tamper detection, review independence, gate math) you typically want the vanilla pipeline with no extensions mixed in:
+
+```bash
+# Disable every extension for a clean reproduction
+OPC_DISABLE_EXTENSIONS=1 bash test/run-all.sh
+
+# Or per-invocation on a single opc-harness call
+OPC_DISABLE_EXTENSIONS=1 node bin/opc-harness.mjs init --flow review --entry review --dir .harness
+```
+
+Priority order for extension loading: `OPC_DISABLE_EXTENSIONS=1` env var > `--no-extensions` CLI flag > `--extensions foo,bar` whitelist > config in `.opc/config.json` and `~/.opc/config.json`. See `docs/specs/2026-04-16-opc-extension-system-design.md` for the full contract.
+
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)

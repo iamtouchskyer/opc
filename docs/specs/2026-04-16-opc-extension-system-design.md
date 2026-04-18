@@ -616,3 +616,73 @@ The gate's verdict synthesizer maps eval-file content to verdicts as:
 `extension-failures.md` is **not** ingested by `synthesize`; required
 extensions that trip the breaker should be surfaced to the user explicitly via
 the gate hook (downstream consumer's responsibility — see U1.6).
+
+## §10. Extension Hook Surface (U1.6, v0.5)
+
+The extension system exposes **five hooks** across three node types. All are
+optional; an extension implements only the hooks it needs. Both kebab
+(`execute.run`) and camel (`executeRun`) export names are accepted — the
+normalizer resolves them to the canonical kebab form before dispatch.
+
+| Hook            | Fires during             | Args (context)                                                 | Return                                    | Failure isolation                                          |
+|-----------------|--------------------------|----------------------------------------------------------------|-------------------------------------------|------------------------------------------------------------|
+| `startup.check` | extension load           | `{ config }`                                                   | any (throw = refuse to load)              | Load rejected; extension absent from registry              |
+| `prompt.append` | build / review prompts   | `{ node, role, task, flowDir, runDir, devServerUrl, nodeCapabilities }` | `string` (markdown)                       | Isolated — sibling extensions still fire                   |
+| `verdict.append`| review-node evaluation   | same as prompt.append                                          | `Finding[]` (`{severity, category, message}`) | Isolated — findings from siblings still collected          |
+| `execute.run`   | execute-node side effects | same + `role: "executor"`                                      | **ignored**                               | Isolated — per-extension circuit-breaker on repeated fails |
+| `artifact.emit` | execute-node file emission (after `execute.run`) | same as execute.run                                          | `{ name, content }[]` (see below)         | Isolated, **per-item** — one bad file doesn't skip the rest |
+
+### `artifact.emit` return contract
+
+Each item `{ name, content }`:
+
+- `name` — must be a **plain basename**. `basename(name) === name` is enforced;
+  `../escape`, `/abs`, `sub/nested`, empty string, `.`, `..` all rejected with
+  a stderr WARN and the item skipped.
+- `content` — accepts one of:
+  - `string` (written with default UTF-8 encoding)
+  - `Buffer` (written as-is)
+  - Any `ArrayBuffer.isView` value: `Uint8Array`, `DataView`, typed arrays.
+    Converted losslessly via `Buffer.from(v.buffer, v.byteOffset, v.byteLength)`
+    before write — zero-copy, honors non-zero `byteOffset` on sliced views.
+
+Files are written atomically to `<runDir>/ext-<ext.name>/<basename>` and
+auto-appended to `handshake.artifacts[]` as
+`{ type: "ext-artifact", ext, path }`. The handshake merge deduplicates by
+`path`, so re-running `extension-artifact` on the same run dir is idempotent.
+
+### Failure semantics
+
+The per-extension circuit-breaker (§9) tracks `_failStreak` across **all**
+hooks. Relevant subtleties for execute-node hooks:
+
+- `execute.run`: throw or timeout → `recordFailure`; clean return →
+  `recordSuccess`. Return value ignored — it's a pure side-effect hook.
+- `artifact.emit`: the extension's top-level throw/timeout is a single
+  failure event. Within a clean return, individual per-item write failures
+  (bad basename, `EISDIR`, permission, disk-full) each call
+  `recordFailure`. `recordSuccess` is called **only if every item in the
+  call succeeded** — persistent per-item I/O errors therefore do trip the
+  breaker as expected (U1.6r semantics F1 fix-forward).
+
+### CLI surface
+
+`opc-harness extension-artifact --node <id> --dir <harness>` fires
+`execute.run` then `artifact.emit` for all extensions whose `meta.provides`
+matches the node's `nodeCapabilities`. Stdout JSON shape:
+
+```json
+{
+  "ok": true,
+  "node": "execute",
+  "runDir": "/abs/path/.harness/nodes/execute/run_1",
+  "extensionsApplied": ["visual-check"],
+  "nodeCapabilities": ["visual-check@1"],
+  "executeRunCount": 1,
+  "emitted": [{ "type": "ext-artifact", "ext": "visual-check", "path": "…/screenshot.png" }]
+}
+```
+
+`nodeCapabilities` is included for symmetry with
+`opc-harness extension-verdict` — consumers can diff expected-vs-applied
+capabilities uniformly across both hook phases.
