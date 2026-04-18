@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "opc",
+  "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
+  "owner": {
+    "name": "iamtouchskyer"
+  },
+  "plugins": [
+    {
+      "name": "opc",
+      "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with 11 specialist agents. Every task ends with evaluation.",
+      "version": "0.10.0",
+      "source": "./"
+    }
+  ]
+}
