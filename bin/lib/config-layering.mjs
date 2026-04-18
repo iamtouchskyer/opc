@@ -90,6 +90,25 @@ function isPlainObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * Recursively rebuild a value so that every plain-object level is a fresh
+ * object (via safeAssign / Object.defineProperty) with DANGEROUS_PROTO_KEYS
+ * dropped. Arrays and scalars pass through by reference. This guarantees that
+ * a single-layer passthrough (where no merge happened) cannot smuggle a
+ * `__proto__` / `constructor` / `prototype` own-key into a nested object, so
+ * downstream `Object.assign(target, cfg.nested)` callers cannot be tricked
+ * into triggering the `[[Set]]` accessor on a prototype.
+ */
+function deepSanitize(v) {
+  if (!isPlainObject(v)) return v;
+  const out = {};
+  for (const k of Object.keys(v)) {
+    if (DANGEROUS_PROTO_KEYS.has(k)) continue;
+    safeAssign(out, k, deepSanitize(v[k]));
+  }
+  return out;
+}
+
 /** Deep-merge two plain objects. high wins on scalar conflict. Arrays replaced unless key is handled upstream. */
 function deepMerge(low, high) {
   const out = {};
@@ -97,14 +116,14 @@ function deepMerge(low, high) {
   // levels since only top-level _source/_paths are reserved for OPC output).
   for (const k of Object.keys(low || {})) {
     if (DANGEROUS_PROTO_KEYS.has(k)) continue;
-    safeAssign(out, k, low[k]);
+    safeAssign(out, k, deepSanitize(low[k]));
   }
   for (const k of Object.keys(high || {})) {
     if (DANGEROUS_PROTO_KEYS.has(k)) continue;
     const hv = high[k];
     const lv = out[k];
     if (isPlainObject(hv) && isPlainObject(lv)) safeAssign(out, k, deepMerge(lv, hv));
-    else safeAssign(out, k, hv);
+    else safeAssign(out, k, deepSanitize(hv));
   }
   return out;
 }
@@ -144,7 +163,7 @@ function mergeLayers(layers) {
       if (isPlainObject(existing) && isPlainObject(incoming)) {
         safeAssign(merged, k, deepMerge(existing, incoming));
       } else {
-        safeAssign(merged, k, incoming);
+        safeAssign(merged, k, deepSanitize(incoming));
       }
       source[k] = name;
     }

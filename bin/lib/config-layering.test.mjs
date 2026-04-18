@@ -330,6 +330,59 @@ describe("U1.4r — stripProvenance helper", () => {
   });
 });
 
+describe("U1.4r v2 — nested proto sanitization on single-layer passthrough", () => {
+  let home, repo;
+  beforeEach(() => { home = tmp(); repo = tmp(); });
+  afterEach(() => {
+    try { rmSync(home, { recursive: true, force: true }); } catch {}
+    try { rmSync(repo, { recursive: true, force: true }); } catch {}
+  });
+
+  test("single-layer nested __proto__ is stripped (Object.assign survives)", () => {
+    // Only user layer contributes `alone` — no merge, so passthrough path.
+    writeUserCfg(home, JSON.parse('{"alone":{"__proto__":{"polluted":"YES"},"legit":1}}'));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      // Nested __proto__ must NOT survive as an own property.
+      const ownKeys = Object.getOwnPropertyNames(out.alone);
+      assert.ok(!ownKeys.includes("__proto__"), "nested __proto__ must be stripped");
+      assert.equal(out.alone.legit, 1);
+      assert.equal(Object.getPrototypeOf(out.alone), Object.prototype);
+
+      // Object.assign (which uses [[Set]]) must NOT pollute a fresh target.
+      const consumer = {};
+      Object.assign(consumer, out.alone);
+      assert.equal(Object.getPrototypeOf(consumer), Object.prototype,
+        "Object.assign(target, cfg.nested) must not pollute target's prototype");
+      assert.equal(consumer.polluted, undefined);
+    });
+  });
+
+  test("single-layer nested constructor is stripped", () => {
+    writeUserCfg(home, JSON.parse('{"alone":{"constructor":"x","legit":2}}'));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      assert.ok(!Object.hasOwn(out.alone, "constructor"));
+      assert.equal(out.alone.legit, 2);
+    });
+  });
+
+  test("deeply nested (3+ levels) __proto__ via single-layer is stripped", () => {
+    writeUserCfg(home, JSON.parse(
+      '{"alone":{"nested":{"deeper":{"__proto__":{"polluted":"YES"},"ok":1}}}}'
+    ));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      const deeper = out.alone.nested.deeper;
+      assert.ok(!Object.getOwnPropertyNames(deeper).includes("__proto__"));
+      assert.equal(deeper.ok, 1);
+      const consumer = {};
+      Object.assign(consumer, deeper);
+      assert.equal(Object.getPrototypeOf(consumer), Object.prototype);
+    });
+  });
+});
+
 describe("U1.4r — CLI --dir missing value", () => {
   test("`config resolve --dir` with no value exits non-zero", () => {
     const harnessBin = join(process.cwd(), "bin", "opc-harness.mjs");
