@@ -8,6 +8,7 @@ import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
 import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transition.mjs";
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict } from "./lib/ext-commands.mjs";
+import { cmdConfigResolve } from "./lib/config-layering.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
@@ -49,7 +50,9 @@ switch (command) {
   case "criteria-lint":         cmdCriteriaLint(args);         break;
   case "prompt-context":        await cmdPromptContext(args);  break;
   case "extension-test":        await cmdExtensionTest(args);  break;
-  case "extension-verdict":     await cmdExtensionVerdict(args); break;  default:
+  case "extension-verdict":     await cmdExtensionVerdict(args); break;
+  case "config":                await cmdConfigResolve(args);    break;
+  default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
     console.log("Flow commands:");
@@ -88,6 +91,9 @@ switch (command) {
     console.log("  ux-friction-aggregate --dir <p> --run <N> --output <p>");
     console.log("                                                     Aggregate friction points");
     console.log("  criteria-lint <file> [--tier <t>]                  Lint acceptance criteria DoD");
+    console.log();
+    console.log("Config commands:");
+    console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
     console.log();
     console.log("Loop commands (Layer 2 — zero trust):");
     console.log("  init-loop [--plan <file>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]");

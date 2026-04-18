@@ -9,13 +9,16 @@ import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache,
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
+import { loadLayeredOpcConfig } from "./config-layering.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
+//
+// U1.4: loadOpcConfig is now a thin wrapper around loadLayeredOpcConfig so the
+// single-layer (~/.opc/config.json-only) behavior remains, but callers can
+// already benefit from repo-layer overrides when a <dir>/.opc/config.json exists.
 
-function loadOpcConfig() {
-  const configPath = join(os.homedir(), ".opc", "config.json");
-  if (!existsSync(configPath)) return {};
-  try { return JSON.parse(readFileSync(configPath, "utf8")); } catch { return {}; }
+function loadOpcConfig(harnessDir) {
+  return loadLayeredOpcConfig(harnessDir || process.cwd(), {});
 }
 
 function readTaskFromAC(dir) {
@@ -77,7 +80,7 @@ export async function cmdPromptContext(args) {
     process.exit(1);
   }
 
-  const config = loadOpcConfig();
+  const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args));
   const task = readTaskFromAC(dir);
 
@@ -231,7 +234,7 @@ export async function cmdExtensionVerdict(args) {
     process.exit(1);
   }
 
-  const config = loadOpcConfig();
+  const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args));
   const task = readTaskFromAC(dir);
 
