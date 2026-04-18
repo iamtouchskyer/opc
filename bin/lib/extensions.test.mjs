@@ -14,6 +14,8 @@ import {
   readRegistryApplied,
   normalizeHook,
   resolveBypass,
+  normalizeCapability,
+  _resetBareCapabilityWarnings,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -758,5 +760,226 @@ export async function promptAppend() { return "BETA"; }
       }),
       /required extension 'beta' missing/
     );
+  });
+});
+
+// ─── U1.2 — Capability versioning ─────────────────────────────────
+
+describe("normalizeCapability", () => {
+  beforeEach(() => { _resetBareCapabilityWarnings(); });
+
+  test("versioned name passes through unchanged", () => {
+    assert.equal(normalizeCapability("visual-check@2"), "visual-check@2");
+    assert.equal(normalizeCapability("foo@1"), "foo@1");
+    assert.equal(normalizeCapability("a@99"), "a@99");
+  });
+
+  test("bare name auto-upgrades to @1 with stderr WARN", () => {
+    const origErr = console.error;
+    let captured = "";
+    console.error = (msg) => { captured += String(msg) + "\n"; };
+    try {
+      assert.equal(normalizeCapability("visual-check"), "visual-check@1");
+      assert.match(captured, /auto-upgrading.*visual-check@1/);
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("WARN fires once per bare name per process", () => {
+    const origErr = console.error;
+    let count = 0;
+    console.error = () => { count++; };
+    try {
+      normalizeCapability("same-cap");
+      normalizeCapability("same-cap");
+      normalizeCapability("same-cap");
+      assert.equal(count, 1, "same bare name should warn only once");
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("different bare names warn separately", () => {
+    const origErr = console.error;
+    let count = 0;
+    console.error = () => { count++; };
+    try {
+      normalizeCapability("cap-one");
+      normalizeCapability("cap-two");
+      normalizeCapability("cap-three");
+      assert.equal(count, 3);
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("invalid capability strings are returned unchanged (no match later)", () => {
+    // Uppercase / numbers-first / malformed versioned — not normalized
+    assert.equal(normalizeCapability("Foo"), "Foo");
+    assert.equal(normalizeCapability("1foo"), "1foo");
+    assert.equal(normalizeCapability("foo@v1"), "foo@v1");
+    assert.equal(normalizeCapability("foo@"), "foo@");
+    assert.equal(normalizeCapability(""), "");
+  });
+});
+
+describe("capability matching — exact version", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); _resetBareCapabilityWarnings(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("ext provides foo@1, node requires foo@1 → fires", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["foo@1"] };
+       export async function promptAppend() { return "FIRED"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["foo@1"] }) });
+    assert.equal(out, "FIRED");
+  });
+
+  test("ext provides foo@1, node requires foo@2 → does NOT fire", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["foo@1"] };
+       export async function promptAppend() { return "FIRED"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["foo@2"] }) });
+    assert.equal(out, "");
+  });
+});
+
+describe("capability matching — bare-name auto-upgrade symmetry", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); _resetBareCapabilityWarnings(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("ext provides bare 'foo', node requires foo@1 → fires (both normalized to foo@1)", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["foo"] };
+       export async function promptAppend() { return "OK"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["foo@1"] }) });
+    assert.equal(out, "OK");
+  });
+
+  test("ext provides foo@1, node requires bare 'foo' → fires (both normalized to foo@1)", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["foo@1"] };
+       export async function promptAppend() { return "OK"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["foo"] }) });
+    assert.equal(out, "OK");
+  });
+
+  test("bare-name matching emits WARN (stderr spy)", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["bare-cap"] };
+       export async function promptAppend() { return "FIRED"; }`
+    );
+    const origErr = console.error;
+    let captured = "";
+    console.error = (msg) => { captured += String(msg) + "\n"; };
+    try {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["bare-cap"] }) });
+      assert.match(captured, /bare-cap.*@1/);
+    } finally {
+      console.error = origErr;
+    }
+  });
+});
+
+describe("capability matching — compatibleCapabilities", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); _resetBareCapabilityWarnings(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("ext provides visual@2 with compat=[visual@1] fires for visual@1 nodes", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = {
+         name: "ext",
+         provides: ["visual@2"],
+         compatibleCapabilities: ["visual@1"],
+       };
+       export async function promptAppend() { return "COMPAT"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["visual@1"] }) });
+    assert.equal(out, "COMPAT");
+  });
+
+  test("ext provides visual@2 WITHOUT compat does not fire for visual@1", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["visual@2"] };
+       export async function promptAppend() { return "X"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["visual@1"] }) });
+    assert.equal(out, "");
+  });
+
+  test("compatibleCapabilities also applies to verdict.append", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = {
+         name: "ext",
+         provides: ["visual@2"],
+         compatibleCapabilities: ["visual@1"],
+       };
+       export async function verdictAppend() {
+         return [{ severity: "info", category: "t", message: "hit" }];
+       }`
+    );
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir, { recursive: true });
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    await fireVerdictAppend(reg, { ...ctx({ nodeCapabilities: ["visual@1"], runDir }) });
+    const md = readFileSync(join(runDir, "eval-extensions.md"), "utf8");
+    assert.match(md, /hit/);
+  });
+
+  test("non-array compatibleCapabilities → treated as [] with WARN", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = {
+         name: "ext",
+         provides: ["foo@1"],
+         compatibleCapabilities: "not-an-array",
+       };
+       export async function promptAppend() { return "OK"; }`
+    );
+    const origErr = console.error;
+    let captured = "";
+    console.error = (msg) => { captured += String(msg) + "\n"; };
+    try {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      assert.match(captured, /compatibleCapabilities is not an array/);
+      // provides still works — this ext should fire for foo@1 nodes
+      const out = await firePromptAppend(reg, { ...ctx({ nodeCapabilities: ["foo@1"] }) });
+      assert.equal(out, "OK");
+    } finally {
+      console.error = origErr;
+    }
+  });
+
+  test("compatibleCapabilities undefined → defaults to [] (no fire for unrelated cap)", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["foo@1"] };
+       export async function promptAppend() { return "X"; }`
+    );
+    const reg = await loadExtensions({ extensionsDir: tmpBase });
+    assert.deepEqual(reg.extensions[0].meta.compatibleCapabilities, []);
   });
 });

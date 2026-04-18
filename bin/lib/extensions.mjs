@@ -138,16 +138,68 @@ function withTimeout(promise, ms, onTimeoutMessage) {
 
 // ─── Capability matching ─────────────────────────────────────────
 
+// ─── Capability versioning ───────────────────────────────────────
+//
+// Capability identifiers are strings of form `name@N` where name matches
+// /^[a-z][a-z0-9-]*$/ and N is a positive integer. A bare `name` (no @N)
+// is auto-upgraded to `name@1` with a one-time stderr WARN per bare token
+// (so a project using 10 extensions with bare capabilities only prints each
+// warning once per process).
+//
+// Use normalizeCapability() on both sides (provides AND requires) so the
+// match is symmetric: a node requiring "foo" matches an ext providing "foo"
+// OR "foo@1", and vice versa.
+//
+// `meta.compatibleCapabilities: string[]` widens what an extension matches
+// without changing its canonical provides. Example: an extension upgrading
+// visual-check from @1 to @2 can declare compatibleCapabilities: ["visual-check@1"]
+// to keep firing for @1-declared nodes during migration.
+
+const CAPABILITY_VERSIONED_RE = /^[a-z][a-z0-9-]*@\d+$/;
+const CAPABILITY_BARE_RE = /^[a-z][a-z0-9-]*$/;
+
+// Module-level set so warnings fire once per process per bare name.
+const _bareCapabilityWarnings = new Set();
+
+/** Test helper — clear warning cache so tests can assert each fire. */
+export function _resetBareCapabilityWarnings() {
+  _bareCapabilityWarnings.clear();
+}
+
+/**
+ * Normalize a capability string. Returns canonical `name@N` form.
+ * - `foo@2` → `foo@2` (unchanged)
+ * - `foo`   → `foo@1` (with one-time stderr WARN per bare name per process)
+ * - invalid → returned as-is (caller decides how to handle; matcher will simply not match)
+ */
+export function normalizeCapability(cap) {
+  if (typeof cap !== "string" || cap.length === 0) return cap;
+  if (CAPABILITY_VERSIONED_RE.test(cap)) return cap;
+  if (CAPABILITY_BARE_RE.test(cap)) {
+    if (!_bareCapabilityWarnings.has(cap)) {
+      _bareCapabilityWarnings.add(cap);
+      console.error(`[opc] WARN: capability '${cap}' missing version suffix — auto-upgrading to '${cap}@1'. Declare '${cap}@1' explicitly to silence this.`);
+    }
+    return `${cap}@1`;
+  }
+  return cap;
+}
+
 /**
  * Return true if the extension should fire for the given node's capability requirements.
  * - `requires` undefined/null/[] → NO extensions fire (node doesn't want any specialist)
  * - ext.provides is empty ([]) → never fires (pure startup-check extension)
- * - otherwise: fire if any ext.provides ∈ requires
+ * - otherwise: fire if any (normalized) ext.provides OR ext.compatibleCapabilities ∈ (normalized) requires
  */
-function extensionMatches(requires, provides) {
+function extensionMatches(requires, provides, compatible) {
   if (!Array.isArray(requires) || requires.length === 0) return false;
   if (!Array.isArray(provides) || provides.length === 0) return false;
-  return provides.some(cap => requires.includes(cap));
+  const reqSet = new Set(requires.map(normalizeCapability));
+  const provAll = [
+    ...provides,
+    ...(Array.isArray(compatible) ? compatible : []),
+  ].map(normalizeCapability);
+  return provAll.some(cap => reqSet.has(cap));
 }
 
 // ─── loadExtensions ──────────────────────────────────────────────
@@ -251,6 +303,15 @@ export async function loadExtensions(config = {}) {
     }
     meta.provides = provides;
 
+    // Validate optional meta.compatibleCapabilities (U1.2 — capability versioning)
+    let compatible = meta.compatibleCapabilities;
+    if (compatible === undefined) compatible = [];
+    if (!Array.isArray(compatible)) {
+      console.error(`WARN: extension ${name} meta.compatibleCapabilities is not an array — treating as []`);
+      compatible = [];
+    }
+    meta.compatibleCapabilities = compatible;
+
     let promptMd = "";
     if (existsSync(promptPath)) {
       try { promptMd = readFileSync(promptPath, "utf8"); } catch { /* best effort */ }
@@ -296,7 +357,7 @@ export async function firePromptAppend(registry, context) {
 
   for (const ext of registry.extensions) {
     if (!ext.enabled) continue;
-    if (!extensionMatches(requires, ext.meta.provides)) continue;
+    if (!extensionMatches(requires, ext.meta.provides, ext.meta.compatibleCapabilities)) continue;
 
     const fn = ext.hook?.hooks?.["prompt.append"];
     if (typeof fn !== "function") continue;
@@ -332,7 +393,7 @@ export async function fireVerdictAppend(registry, context) {
 
   for (const ext of registry.extensions) {
     if (!ext.enabled) continue;
-    if (!extensionMatches(requires, ext.meta.provides)) continue;
+    if (!extensionMatches(requires, ext.meta.provides, ext.meta.compatibleCapabilities)) continue;
 
     const fn = ext.hook?.hooks?.["verdict.append"];
     if (typeof fn !== "function") continue;

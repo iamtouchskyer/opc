@@ -449,3 +449,70 @@ ln -s ~/.dotfiles/opc ~/.opc
 | §5 Ordering | — | ✅ duplicates = more signal | ✅ independent | — | — | — |
 | §6 Testing | — | — | — | ✅ no test infra needed | — | ✅ pre-deploy verify |
 | §7 Installation | — | — | — | ✅ zero magic | — | ✅ new machine = 2 cmds |
+
+---
+
+## §8. Capability Versioning (U1.2, v0.5)
+
+Capability identifiers are versioned to allow breaking schema/behavior changes
+without silently breaking downstream nodes.
+
+### §8.1 Identifier format
+
+```
+/^[a-z][a-z0-9-]*@\d+$/     # canonical:  visual-check@1, code-quality@2
+/^[a-z][a-z0-9-]*$/         # bare:       visual-check  → auto-upgrades to @1
+```
+
+A **bare** identifier (no `@N`) is auto-upgraded to `@1` at match time. On
+first encounter per process, a one-line stderr WARN fires:
+
+```
+[opc] WARN: capability 'visual-check' missing version suffix — auto-upgrading to 'visual-check@1'. Declare 'visual-check@1' explicitly to silence this.
+```
+
+Subsequent normalizations of the same bare name in the same process are silent.
+
+Both sides of a match (the ext's `meta.provides` and the node's
+`nodeCapabilities`) are normalized, so matching is symmetric:
+
+| Ext provides   | Node requires  | Match |
+|----------------|----------------|:-----:|
+| `foo@1`        | `foo@1`        | ✅    |
+| `foo`          | `foo@1`        | ✅    |
+| `foo@1`        | `foo`          | ✅    |
+| `foo@1`        | `foo@2`        | ❌    |
+
+### §8.2 `meta.compatibleCapabilities`
+
+An extension upgrading from `@1` to `@2` can keep firing for legacy-declared
+nodes by widening its match surface:
+
+```js
+// hook.mjs (shipping visual-check v2)
+export const meta = {
+  name: "visual-check-v2",
+  provides: ["visual-check@2"],
+  compatibleCapabilities: ["visual-check@1"],   // still match old nodes
+  description: "Visual consistency check, v2 schema"
+};
+```
+
+`compatibleCapabilities` is treated identically to `provides` at match time —
+both lists are unioned and normalized. Non-array values trigger a load-time
+WARN and are coerced to `[]` (same policy as `provides`).
+
+### §8.3 Migration guidance
+
+1. New capability → declare as `name@1` from day one.
+2. Breaking change (schema, contract, semantics) → bump to `@2`.
+3. Ship ext with `provides: ["name@2"], compatibleCapabilities: ["name@1"]`.
+4. Bump all node templates to `name@2` in a follow-up.
+5. Remove `compatibleCapabilities` in a later release.
+
+### §8.4 What isn't versioned
+
+The **hook interface** (`promptAppend`, `verdictAppend`, `startupCheck`,
+U1.6's `executeRun`, `artifactEmit`) is versioned by the OPC core itself, not
+by capability tokens. Extensions opt into new hooks by implementing them; old
+hooks continue to work without changes.
