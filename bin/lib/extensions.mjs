@@ -721,40 +721,43 @@ export function writeFailureReport(registry, runDir) {
   const failures = Array.isArray(registry.failures) ? registry.failures : [];
   const dropped = registry.failuresDropped || 0;
   const reportPath = join(runDir, "extension-failures.md");
+  const sidecarPath = join(runDir, "extension-failures.json");
 
-  // Cross-command merge (G3): each CLI invocation starts with a fresh
-  // registry (failures: []). Prior phases (e.g. extension-verdict) may have
-  // written failure lines to this same file; without merging we'd
-  // OVERWRITE them with "No hook failures recorded" on a clean later
-  // phase, losing the earlier record. Read prior lines and union by
-  // (ext, hook, kind, message) to preserve cross-command history.
-  const FAILURE_LINE_RE = /^([🔴🟡])\s+(\S+?)\.(\S+?)\s+\[(\w+)\]\s+(.*?)\s+@\s+(\S+)$/;
-  const priorEntries = [];
-  if (existsSync(reportPath)) {
+  // U2.8c: Cross-command merge (G3) via JSON sidecar.
+  //
+  // Previous attempt parsed the markdown via regex; that was fragile (missing
+  // /u flag for emoji, ambiguous ext.hook split on dots) and silently
+  // degenerated to overwrite. The structurally correct fix is to keep the
+  // canonical record in a machine-readable JSON sidecar and render the
+  // markdown view from JSON. Parser/writer skew becomes impossible.
+  //
+  // Each CLI invocation reads the sidecar, unions with this run's
+  // registry.failures (dedup on ext|hook|kind|message), then writes BOTH
+  // sidecar + markdown atomically.
+  let priorEntries = [];
+  if (existsSync(sidecarPath)) {
     try {
-      const text = readFileSync(reportPath, "utf8");
-      for (const line of text.split("\n")) {
-        const m = FAILURE_LINE_RE.exec(line.trim());
-        if (m) {
-          priorEntries.push({
-            ext: m[2], hook: m[3], kind: m[4], message: m[5], at: m[6],
-          });
-        }
-      }
-    } catch { /* unreadable prior file = treat as empty */ }
+      const data = JSON.parse(readFileSync(sidecarPath, "utf8"));
+      if (Array.isArray(data.failures)) priorEntries = data.failures;
+    } catch { /* corrupt sidecar = treat as empty, will be overwritten */ }
   }
 
-  // Merge: prior entries first (preserves chronology), then new failures
-  // de-duplicated by (ext, hook, kind, message).
   const seen = new Set();
   const merged = [];
   for (const e of [...priorEntries, ...failures]) {
+    if (!e || typeof e !== "object") continue;
     const key = `${e.ext}|${e.hook}|${e.kind}|${e.message}`;
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(e);
   }
 
+  // Sidecar = source of truth.
+  const sidecar = { failures: merged, droppedTotal: dropped };
+  mkdirSync(runDir, { recursive: true });
+  atomicWriteSync(sidecarPath, JSON.stringify(sidecar, null, 2));
+
+  // Markdown = derived view for human/grep consumption.
   const lines = ["# Extension Hook Failures", ""];
   if (merged.length === 0) {
     lines.push("🔵 extension-failures: No hook failures recorded");
@@ -769,7 +772,6 @@ export function writeFailureReport(registry, runDir) {
     }
   }
   lines.push("");
-  mkdirSync(runDir, { recursive: true });
   atomicWriteSync(reportPath, lines.join("\n"));
 }
 

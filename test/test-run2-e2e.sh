@@ -231,14 +231,10 @@ else
   fail "throw-ext breaker did NOT trip (see $TMP/verdict.err)"
 fi
 
-# Snapshot extension-failures.md right after verdict — each CLI invocation
-# creates a fresh registry with empty failures[], and extension-artifact's
-# writeFailureReport() call will OVERWRITE the file with "No hook failures
-# recorded". Assert the immediate-post-verdict content is what matters.
-FAILURES_MD_MID="$TMP/extension-failures-after-verdict.md"
-if [ -f "$RUN_DIR_REL/extension-failures.md" ]; then
-  cp "$RUN_DIR_REL/extension-failures.md" "$FAILURES_MD_MID"
-fi
+# U2.8c: writeFailureReport now uses a JSON sidecar (extension-failures.json)
+# as canonical source, so cross-command merge is preserved without a mid-run
+# snapshot workaround. Assert on the FINAL file content after extension-artifact
+# runs (which is what operators see).
 
 # ── 4. extension-artifact fires execute.run + artifact.emit ──────
 # Only ok-ext implements these hooks. slow-ext and throw-ext are disabled
@@ -280,20 +276,32 @@ if [ -f "$RUN_DIR_REL/handshake.json" ]; then
   fi
 fi
 
-# ── 5. extension-failures.md records throw-ext ───────────────────
-# NOTE 1 (prompt-context gap): core calls writeFailureReport() only after
-# fireVerdictAppend and fireArtifactEmit — NOT after firePromptAppend. So
-# slow-ext's timeout (prompt phase) is not persisted to extension-failures.md;
-# the CIRCUIT-BREAKER line on stderr (asserted above) is the only record.
-# NOTE 2 (cross-command overwrite gap): each CLI invocation loads a FRESH
-# registry with empty failures[]. extension-artifact's writeFailureReport()
-# therefore overwrites the file produced by extension-verdict with "No
-# failures recorded". We snapshot the file immediately after extension-verdict
-# (see FAILURES_MD_MID above) to preserve the throw-ext record and assert on
-# that snapshot. Both gaps file as downstream fix-pairs per plan.md protocol.
-echo "--- 5.1: extension-failures.md records throw-ext with 🔴 (post-verdict snapshot) ---"
+# ── 5. extension-failures.md records throw-ext (FINAL content, post-artifact) ──
+# U2.8c: JSON sidecar (extension-failures.json) preserves prior failures across
+# CLI invocations. extension-artifact's writeFailureReport() reads the sidecar,
+# merges its (empty) failures[] with what's already on disk, and re-renders the
+# markdown view. The throw-ext entry from extension-verdict survives.
+# NOTE (prompt-context gap, separate from G3): core calls writeFailureReport()
+# only after fireVerdictAppend and fireArtifactEmit — NOT after firePromptAppend.
+# So slow-ext's timeout (prompt phase) is not persisted; the CIRCUIT-BREAKER line
+# on stderr (asserted above) is the only record. Files as a separate fix-pair.
+echo "--- 5.1: extension-failures.md records throw-ext with 🟡 (FINAL post-artifact) ---"
 
-FAILURES_MD="$FAILURES_MD_MID"
+FAILURES_MD="$RUN_DIR_REL/extension-failures.md"
+SIDECAR="$RUN_DIR_REL/extension-failures.json"
+
+# G3 closure assertion: sidecar (canonical) must contain throw-ext entry
+if [ -f "$SIDECAR" ]; then
+  HAS_THROW_JSON=$(jq -r '[.failures[] | select(.ext == "throw-ext")] | length' "$SIDECAR" 2>/dev/null || echo "0")
+  if [ "$HAS_THROW_JSON" -ge 1 ]; then
+    ok "extension-failures.json (sidecar) preserves throw-ext across CLI invocations"
+  else
+    fail "extension-failures.json missing throw-ext (G3 regression — cross-command merge broken)"
+    cat "$SIDECAR" >&2
+  fi
+else
+  fail "extension-failures.json (sidecar) not written"
+fi
 if [ -f "$FAILURES_MD" ]; then
   if grep -q "throw-ext" "$FAILURES_MD"; then
     ok "extension-failures.md names throw-ext"
