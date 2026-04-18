@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook, lintCapability } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
@@ -167,6 +167,28 @@ export async function cmdExtensionTest(args) {
   const raw = mod.default || mod;
   const hook = normalizeHook(raw, mod);
   const hooks = hook.hooks || {};
+
+  // U1.5: Lint meta.provides and meta.compatibleCapabilities. Warn (not fail)
+  // on entries that don't match the capability shape `/^[a-z][a-z0-9-]*@\d+$/`.
+  // Bare tokens (`foo` without `@N`) pass lint but trigger auto-upgrade WARN
+  // at load time; only malformed / wrong-type / empty values are reported here.
+  const meta = (raw && typeof raw === "object" && raw.meta) || {};
+  function lintList(listName, list) {
+    if (list == null) return;
+    if (!Array.isArray(list)) {
+      console.log(`[lint] ⚠️  meta.${listName} is not an array (got ${typeof list})`);
+      return;
+    }
+    for (const cap of list) {
+      const res = lintCapability(cap);
+      if (!res.ok) {
+        const shown = typeof cap === "string" ? JSON.stringify(cap) : String(cap);
+        console.log(`[lint] ⚠️  meta.${listName} entry ${shown} failed capability-shape check: ${res.reason}`);
+      }
+    }
+  }
+  lintList("provides", meta.provides);
+  lintList("compatibleCapabilities", meta.compatibleCapabilities);
 
   const hooksToRun = allHooks
     ? ["startup.check", "prompt.append", "verdict.append"]

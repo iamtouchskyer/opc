@@ -16,6 +16,7 @@ import {
   resolveBypass,
   normalizeCapability,
   _resetBareCapabilityWarnings,
+  lintCapability,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -1426,5 +1427,140 @@ describe("U1.3r — failures[] cap (resilience 🟡)", () => {
       assert.equal(reg.failures.length, 5, "cap must hold");
       assert.equal(reg.failuresDropped, 7, "dropped count must match overflow");
     });
+  });
+});
+
+// ─── U1.5 — lintCapability + extension-test CLI lint ─────────────
+
+describe("U1.5 — lintCapability", () => {
+  test("versioned capability name@N passes with reason=versioned", () => {
+    assert.deepEqual(lintCapability("visual-check@1"), { ok: true, reason: "versioned" });
+    assert.deepEqual(lintCapability("a@1"),              { ok: true, reason: "versioned" });
+    assert.deepEqual(lintCapability("foo-bar-baz@42"),   { ok: true, reason: "versioned" });
+  });
+
+  test("bare capability name passes with reason=bare (auto-upgrade later)", () => {
+    assert.deepEqual(lintCapability("foo"),        { ok: true, reason: "bare" });
+    assert.deepEqual(lintCapability("visual-check"), { ok: true, reason: "bare" });
+  });
+
+  test("non-string values fail with reason=not-a-string", () => {
+    assert.deepEqual(lintCapability(1),         { ok: false, reason: "not-a-string" });
+    assert.deepEqual(lintCapability(null),      { ok: false, reason: "not-a-string" });
+    assert.deepEqual(lintCapability(undefined), { ok: false, reason: "not-a-string" });
+    assert.deepEqual(lintCapability({}),        { ok: false, reason: "not-a-string" });
+    assert.deepEqual(lintCapability([]),        { ok: false, reason: "not-a-string" });
+  });
+
+  test("empty string fails with reason=empty", () => {
+    assert.deepEqual(lintCapability(""), { ok: false, reason: "empty" });
+  });
+
+  test("malformed shapes fail with reason=invalid-shape", () => {
+    // @0 (zero version) — rejected by regex
+    assert.deepEqual(lintCapability("foo@0"),      { ok: false, reason: "invalid-shape" });
+    // leading zero version
+    assert.deepEqual(lintCapability("foo@01"),     { ok: false, reason: "invalid-shape" });
+    // uppercase not allowed
+    assert.deepEqual(lintCapability("Foo"),        { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("FOO@1"),      { ok: false, reason: "invalid-shape" });
+    // leading digit / hyphen
+    assert.deepEqual(lintCapability("1foo"),       { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("-foo"),       { ok: false, reason: "invalid-shape" });
+    // whitespace / illegal chars
+    assert.deepEqual(lintCapability("foo bar"),    { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("foo_bar"),    { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("foo@"),       { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("foo@bar"),    { ok: false, reason: "invalid-shape" });
+    assert.deepEqual(lintCapability("foo@1@2"),    { ok: false, reason: "invalid-shape" });
+  });
+});
+
+describe("U1.5 — extension-test CLI lints meta capability shape", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  // Capture both stdout and stderr across a synchronous-looking async fn.
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("WARN printed for malformed meta.provides entry; exit code still 0", async () => {
+    const extDir = join(tmpBase, "bad-caps");
+    writeExtension(
+      extDir,
+      `export const meta = { name: "bad-caps", provides: ["good@1", "BAD@1", "foo@0", 123, ""] };
+       export async function startupCheck() { return true; }`
+    );
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
+    );
+    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "BAD@1" failed capability-shape check: invalid-shape/);
+    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "foo@0" failed capability-shape check: invalid-shape/);
+    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry 123 failed capability-shape check: not-a-string/);
+    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "" failed capability-shape check: empty/);
+    // good@1 must NOT appear in WARN output
+    assert.doesNotMatch(out, /entry "good@1" failed/);
+    // WARN is non-fatal — startup.check ran and passed → exit 0
+    assert.equal(exitCode, 0);
+    assert.match(out, /\[startup\.check\] ✅ passed/);
+  });
+
+  test("WARN printed for malformed meta.compatibleCapabilities entry", async () => {
+    const extDir = join(tmpBase, "bad-compat");
+    writeExtension(
+      extDir,
+      `export const meta = { name: "bad-compat", provides: ["foo@1"], compatibleCapabilities: ["foo@1", "NOPE"] };
+       export async function startupCheck() { return true; }`
+    );
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15c=${Date.now()}`);
+    const { out } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
+    );
+    assert.match(out, /meta\.compatibleCapabilities entry "NOPE" failed capability-shape check: invalid-shape/);
+    assert.doesNotMatch(out, /entry "foo@1" failed/);
+  });
+
+  test("non-array meta.provides emits shape WARN", async () => {
+    const extDir = join(tmpBase, "provides-not-array");
+    writeExtension(
+      extDir,
+      `export const meta = { name: "x", provides: "foo@1" };
+       export async function startupCheck() { return true; }`
+    );
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15na=${Date.now()}`);
+    const { out } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
+    );
+    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides is not an array \(got string\)/);
+  });
+
+  test("well-formed caps emit no lint WARN", async () => {
+    const extDir = join(tmpBase, "clean");
+    writeExtension(
+      extDir,
+      `export const meta = { name: "clean", provides: ["a@1", "b-c@2"], compatibleCapabilities: ["a@1"] };
+       export async function startupCheck() { return true; }`
+    );
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15cl=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
+    );
+    assert.doesNotMatch(out, /\[lint\]/);
+    assert.equal(exitCode, 0);
   });
 });

@@ -279,6 +279,24 @@ export function normalizeCapability(cap) {
 }
 
 /**
+ * Lint a single capability string. Returns { ok, reason } describing whether
+ * the string matches the canonical `name@N` form or the bare `name` form.
+ * - ok=true, reason="versioned" → `foo@2`
+ * - ok=true, reason="bare" → `foo` (still valid, auto-upgrades to @1 with WARN)
+ * - ok=false, reason="not-a-string" | "empty" | "invalid-shape" → lint failure
+ *
+ * Used by `opc-harness extension-test` to surface authoring mistakes as WARN
+ * (not FAIL) before the extension is ever loaded by the harness.
+ */
+export function lintCapability(cap) {
+  if (typeof cap !== "string") return { ok: false, reason: "not-a-string" };
+  if (cap.length === 0) return { ok: false, reason: "empty" };
+  if (CAPABILITY_VERSIONED_RE.test(cap)) return { ok: true, reason: "versioned" };
+  if (CAPABILITY_BARE_RE.test(cap)) return { ok: true, reason: "bare" };
+  return { ok: false, reason: "invalid-shape" };
+}
+
+/**
  * Return true if the extension should fire for the given node's capability requirements.
  * - `requires` undefined/null/[] → NO extensions fire (node doesn't want any specialist)
  * - ext.provides is empty ([]) → never fires (pure startup-check extension)
