@@ -1,0 +1,9 @@
+{
+  "name": "slow-ext",
+  "version": "0.1.0",
+  "description": "Run 2 fixture: timeout isolation — promptAppend sleeps past HOOK_TIMEOUT_MS",
+  "meta": {
+    "provides": ["verification@1"],
+    "compatibleCapabilities": []
+  }
+}

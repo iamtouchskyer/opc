@@ -1567,6 +1567,27 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
     assert.doesNotMatch(err, /\[lint\]/);
     assert.equal(exitCode, 0);
   });
+
+  // Run 2 OUT-1 contract: extension-test is a LINT command. Individual hook
+  // failures are reported in stdout with ❌ markers; the exit code stays 0 so
+  // CI can run the test command across a fixture tree without bailing on the
+  // first intentionally-broken hook. Non-zero exit is reserved for load-time
+  // errors (missing --ext, missing hook.mjs, bad --context JSON).
+  test("hook throw reports ❌ but still exits 0", async () => {
+    const extDir = join(tmpBase, "throwing");
+    writeExtension(
+      extDir,
+      `export const meta = { name: "throwing", provides: ["foo@1"] };
+       export async function startupCheck() { return true; }
+       export async function verdictAppend() { throw new Error("boom"); }`
+    );
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15thr=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--all-hooks"])
+    );
+    assert.match(out, /\[verdict\.append\] ❌ error: boom/);
+    assert.equal(exitCode, 0);
+  });
 });
 
 // ─── U1.6 — normalizeHook recognizes execute.run / artifact.emit ────

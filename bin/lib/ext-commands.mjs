@@ -238,7 +238,14 @@ export async function cmdExtensionTest(args) {
     }
   }
 
-  process.exit(hadError ? 1 : 0);
+  // Per Run 2 acceptance criteria OUT-1 and CONTRACTS: extension-test is a
+  // LINT command — it runs every requested hook, reports per-hook pass/fail
+  // in stdout with ✅/❌ markers, and exits 0 even when individual hooks
+  // fail. Non-zero exit is reserved for load-time errors (no --ext, missing
+  // hook.mjs, bad --context JSON, or no hooks requested). Callers that need
+  // a machine-readable pass/fail should grep stdout for the ❌ marker.
+  void hadError;
+  process.exit(0);
 }
 
 // ─── extension-verdict ───────────────────────────────────────────
