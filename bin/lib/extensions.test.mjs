@@ -1064,3 +1064,246 @@ describe("built-in flow templates — no bare capability tokens", () => {
     assert.equal(captured, "", `built-in templates triggered WARNs:\n${captured}`);
   });
 });
+
+// ─── U1.3 — Hook failure isolation, recording, circuit-breaker ─────
+
+import { writeFailureReport } from "./extensions.mjs";
+
+// Helper: silence console.error during noisy negative tests but still fail
+// loudly if a test expects no errors. Wrap a fn and return captured stderr.
+async function captureStderr(fn) {
+  const orig = console.error;
+  let buf = "";
+  console.error = (...args) => { buf += args.map(String).join(" ") + "\n"; };
+  try { return { result: await fn(), stderr: buf }; }
+  finally { console.error = orig; }
+}
+
+describe("U1.3 — failure isolation in firePromptAppend", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("a throwing extension does not block sibling extensions", async () => {
+    writeExtension(
+      join(tmpBase, "a-bad"),
+      `export const meta = { name: "a-bad", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("boom"); }`
+    );
+    writeExtension(
+      join(tmpBase, "b-good"),
+      `export const meta = { name: "b-good", provides: ["cap@1"] };
+       export async function promptAppend() { return "## from b\\n"; }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const out = await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+      return { reg, out };
+    });
+    assert.match(result.out, /from b/, "sibling output must survive");
+    assert.equal(result.reg.failures.length, 1);
+    assert.equal(result.reg.failures[0].ext, "a-bad");
+    assert.equal(result.reg.failures[0].kind, "throw");
+    assert.equal(result.reg.failures[0].hook, "prompt.append");
+  });
+
+  test("bad-return (non-string) is recorded as bad-return, not throw", async () => {
+    writeExtension(
+      join(tmpBase, "ext"),
+      `export const meta = { name: "ext", provides: ["cap@1"] };
+       export async function promptAppend() { return 42; }`
+    );
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+      return reg;
+    });
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].kind, "bad-return");
+    assert.match(result.failures[0].message, /number.*string/);
+  });
+
+  test("timeout is recorded as kind=timeout", async () => {
+    process.env.OPC_HOOK_TIMEOUT_MS = "50";
+    const mod = await import(`./extensions.mjs?timeout=${Date.now()}`);
+    writeExtension(
+      join(tmpBase, "slow"),
+      `export const meta = { name: "slow", provides: ["cap@1"] };
+       export async function promptAppend() {
+         return new Promise(r => setTimeout(() => r("late"), 500));
+       }`
+    );
+    try {
+      const { result } = await captureStderr(async () => {
+        const reg = await mod.loadExtensions({ extensionsDir: tmpBase });
+        await mod.firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+        return reg;
+      });
+      assert.equal(result.failures.length, 1);
+      assert.equal(result.failures[0].kind, "timeout");
+    } finally {
+      delete process.env.OPC_HOOK_TIMEOUT_MS;
+    }
+  });
+
+  test("successful invocation resets failure streak", async () => {
+    writeExtension(
+      join(tmpBase, "flaky"),
+      `let n = 0;
+       export const meta = { name: "flaky", provides: ["cap@1"] };
+       export async function promptAppend() {
+         n++;
+         if (n === 1) throw new Error("first call fails");
+         return "## ok\\n";
+       }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] }); // fail
+      await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] }); // success — resets
+      assert.equal(reg.extensions[0]._failStreak, 0);
+      assert.equal(reg.extensions[0].enabled, true);
+    });
+  });
+});
+
+describe("U1.3 — circuit-breaker", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => {
+    try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
+    delete process.env.OPC_HOOK_FAILURE_THRESHOLD;
+  });
+
+  test("breaker trips after 3 consecutive failures (default threshold)", async () => {
+    writeExtension(
+      join(tmpBase, "doomed"),
+      `export const meta = { name: "doomed", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("nope"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"] };
+      await firePromptAppend(reg, ctx);
+      await firePromptAppend(reg, ctx);
+      assert.equal(reg.extensions[0].enabled, true, "still enabled after 2 fails");
+      await firePromptAppend(reg, ctx);
+      assert.equal(reg.extensions[0].enabled, false, "disabled after 3rd fail");
+      assert.match(reg.extensions[0].disabledReason, /circuit-breaker/);
+      // 4th call must be a no-op — fn never invoked, no new failure recorded.
+      const before = reg.failures.length;
+      await firePromptAppend(reg, ctx);
+      // Only the auto-injected disabled record is present, no new "throw".
+      assert.equal(reg.failures.length, before, "no new failures after disable");
+    });
+  });
+
+  test("OPC_HOOK_FAILURE_THRESHOLD=0 disables the breaker", async () => {
+    // The threshold is read at module load via process.env, so we reload via
+    // dynamic import with a fresh URL query each time.
+    process.env.OPC_HOOK_FAILURE_THRESHOLD = "0";
+    const mod = await import(`./extensions.mjs?breaker0=${Date.now()}`);
+    writeExtension(
+      join(tmpBase, "doomed"),
+      `export const meta = { name: "doomed", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("nope"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await mod.loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"] };
+      for (let i = 0; i < 5; i++) await mod.firePromptAppend(reg, ctx);
+      // 5 throws recorded, 0 disabled records, ext still enabled.
+      assert.equal(reg.failures.filter(f => f.kind === "disabled").length, 0);
+      assert.equal(reg.extensions[0].enabled, true);
+      assert.equal(reg.failures.length, 5);
+    });
+  });
+
+  test("breaker is per-extension, not global", async () => {
+    writeExtension(
+      join(tmpBase, "a-doomed"),
+      `export const meta = { name: "a-doomed", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("nope"); }`
+    );
+    writeExtension(
+      join(tmpBase, "b-fine"),
+      `export const meta = { name: "b-fine", provides: ["cap@1"] };
+       export async function promptAppend() { return "ok\\n"; }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"] };
+      for (let i = 0; i < 4; i++) await firePromptAppend(reg, ctx);
+      const a = reg.extensions.find(e => e.name === "a-doomed");
+      const b = reg.extensions.find(e => e.name === "b-fine");
+      assert.equal(a.enabled, false, "a tripped");
+      assert.equal(b.enabled, true, "b unaffected");
+    });
+  });
+});
+
+describe("U1.3 — failure report file", () => {
+  let tmpBase;
+  let runDir;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    runDir = makeTmpDir();
+  });
+  afterEach(() => {
+    try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
+    try { rmSync(runDir, { recursive: true, force: true }); } catch {}
+  });
+
+  test("eval-extension-failures.md written by fireVerdictAppend even when no failures", async () => {
+    writeExtension(
+      join(tmpBase, "ok"),
+      `export const meta = { name: "ok", provides: ["cap@1"] };
+       export async function verdictAppend() { return [{ severity: "info", category: "x", message: "y" }]; }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await fireVerdictAppend(reg, { nodeCapabilities: ["cap@1"], runDir });
+    });
+    const path = join(runDir, "eval-extension-failures.md");
+    assert.ok(existsSync(path), "failures report must be written");
+    const body = readFileSync(path, "utf8");
+    assert.match(body, /No hook failures recorded/);
+  });
+
+  test("eval-extension-failures.md lists failures and disabled events", async () => {
+    writeExtension(
+      join(tmpBase, "bad"),
+      `export const meta = { name: "bad", provides: ["cap@1"] };
+       export async function verdictAppend() { throw new Error("explode"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      const ctx = { nodeCapabilities: ["cap@1"], runDir };
+      // Trip the breaker by firing 3 times.
+      await fireVerdictAppend(reg, ctx);
+      await fireVerdictAppend(reg, ctx);
+      await fireVerdictAppend(reg, ctx);
+    });
+    const body = readFileSync(join(runDir, "eval-extension-failures.md"), "utf8");
+    assert.match(body, /bad\.verdict\.append \[throw\]/);
+    assert.match(body, /\[disabled\]/);
+    // First two writes have only throws (🟡); after trip there's also a 🔴.
+    assert.match(body, /🔴/);
+    assert.match(body, /🟡/);
+  });
+
+  test("writeFailureReport works standalone (orchestrator can call after firePromptAppend)", async () => {
+    writeExtension(
+      join(tmpBase, "x"),
+      `export const meta = { name: "x", provides: ["cap@1"] };
+       export async function promptAppend() { throw new Error("e"); }`
+    );
+    await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      await firePromptAppend(reg, { nodeCapabilities: ["cap@1"] });
+      writeFailureReport(reg, runDir);
+    });
+    const body = readFileSync(join(runDir, "eval-extension-failures.md"), "utf8");
+    assert.match(body, /x\.prompt\.append \[throw\]/);
+  });
+});

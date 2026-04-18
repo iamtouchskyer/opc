@@ -33,6 +33,53 @@ import { atomicWriteSync } from "./util.mjs";
 
 const HOOK_TIMEOUT_MS = Number(process.env.OPC_HOOK_TIMEOUT_MS) || 60_000;
 
+// Circuit-breaker: after N consecutive failures, the extension is auto-disabled
+// for the remainder of the process. Override via OPC_HOOK_FAILURE_THRESHOLD.
+// Set to 0 to disable the breaker (still records failures, never trips).
+const HOOK_FAILURE_THRESHOLD = (() => {
+  const raw = process.env.OPC_HOOK_FAILURE_THRESHOLD;
+  if (raw === undefined || raw === "") return 3;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+})();
+
+// ─── Failure record helpers ──────────────────────────────────────
+//
+// Every prompt.append / verdict.append failure (throw, timeout, bad-return-shape)
+// is appended to registry.failures[]. The orchestrator/gate persists these to
+// eval-extension-failures.md so a flaky or crashing extension is observable
+// instead of silently degrading the run.
+
+function recordFailure(registry, ext, hook, kind, message) {
+  const entry = {
+    ext: ext.name,
+    hook,
+    kind,                              // "throw" | "timeout" | "bad-return"
+    message: String(message).slice(0, 500),
+    at: new Date().toISOString(),
+  };
+  registry.failures.push(entry);
+  ext._failStreak = (ext._failStreak || 0) + 1;
+  if (HOOK_FAILURE_THRESHOLD > 0 && ext._failStreak >= HOOK_FAILURE_THRESHOLD && ext.enabled) {
+    ext.enabled = false;
+    ext.disabledReason = `circuit-breaker tripped after ${ext._failStreak} consecutive failures`;
+    console.error(`[opc] CIRCUIT-BREAKER: extension '${ext.name}' disabled after ${ext._failStreak} consecutive failures (last: ${kind} in ${hook})`);
+    registry.failures.push({
+      ext: ext.name,
+      hook: "_circuit_breaker",
+      kind: "disabled",
+      message: ext.disabledReason,
+      at: entry.at,
+    });
+  }
+}
+
+function recordSuccess(ext) {
+  // Any successful invocation resets the consecutive-failure streak.
+  // The breaker only trips on N-in-a-row, not N-total.
+  if (ext._failStreak) ext._failStreak = 0;
+}
+
 // ─── Path resolution ─────────────────────────────────────────────
 
 function resolveExtensionsDir(config = {}) {
@@ -215,7 +262,7 @@ export async function loadExtensions(config = {}) {
   // benchmark run must be reproducible without any private extension installed.
   const bypass = resolveBypass(config);
   if (bypass.mode === "disable-all") {
-    return { extensions: [], applied: [] };
+    return { extensions: [], applied: [], failures: [] };
   }
 
   const extensionsDir = resolveExtensionsDir(config);
@@ -228,7 +275,7 @@ export async function loadExtensions(config = {}) {
       const missing = [...required][0];
       throw new Error(`FATAL: required extension '${missing}' missing or failed startup.check`);
     }
-    return { extensions: [], applied: [] };
+    return { extensions: [], applied: [], failures: [] };
   }
 
   let entries;
@@ -239,7 +286,7 @@ export async function loadExtensions(config = {}) {
       const missing = [...required][0];
       throw new Error(`FATAL: required extension '${missing}' missing or failed startup.check`);
     }
-    return { extensions: [], applied: [] };
+    return { extensions: [], applied: [], failures: [] };
   }
 
   // Only consider subdirs that:
@@ -344,7 +391,7 @@ export async function loadExtensions(config = {}) {
     }
   }
 
-  return { extensions, applied };
+  return { extensions, applied, failures: [] };
 }
 
 // ─── firePromptAppend ────────────────────────────────────────────
@@ -369,14 +416,21 @@ export async function firePromptAppend(registry, context) {
         HOOK_TIMEOUT_MS,
         `prompt.append timed out after ${HOOK_TIMEOUT_MS}ms`
       );
-      if (result === undefined || result === null || result === "") continue;
+      if (result === undefined || result === null || result === "") {
+        recordSuccess(ext);
+        continue;
+      }
       if (typeof result !== "string") {
         console.error(`WARN: extension ${ext.name} prompt.append returned ${typeof result}, expected string — ignoring`);
+        recordFailure(registry, ext, "prompt.append", "bad-return", `returned ${typeof result}, expected string`);
         continue;
       }
       parts.push(result);
+      recordSuccess(ext);
     } catch (err) {
       console.error(`WARN: extension ${ext.name} prompt.append failed:`, err.message);
+      const kind = /timed out after/.test(err.message) ? "timeout" : "throw";
+      recordFailure(registry, ext, "prompt.append", kind, err.message);
     }
   }
   return parts.join("\n\n");
@@ -405,17 +459,24 @@ export async function fireVerdictAppend(registry, context) {
         HOOK_TIMEOUT_MS,
         `verdict.append timed out after ${HOOK_TIMEOUT_MS}ms`
       );
-      if (findings === undefined || findings === null) continue;
+      if (findings === undefined || findings === null) {
+        recordSuccess(ext);
+        continue;
+      }
       if (!Array.isArray(findings)) {
         console.error(`WARN: extension ${ext.name} verdict.append returned ${typeof findings}, expected array — ignoring`);
+        recordFailure(registry, ext, "verdict.append", "bad-return", `returned ${typeof findings}, expected array`);
         continue;
       }
       for (const raw of findings) {
         const normalized = normalizeFinding(raw);
         if (normalized) allFindings.push({ ...normalized, _ext: ext.name });
       }
+      recordSuccess(ext);
     } catch (err) {
       console.error(`WARN: extension ${ext.name} verdict.append failed:`, err.message);
+      const kind = /timed out after/.test(err.message) ? "timeout" : "throw";
+      recordFailure(registry, ext, "verdict.append", kind, err.message);
     }
   }
 
@@ -434,6 +495,33 @@ export async function fireVerdictAppend(registry, context) {
 
   mkdirSync(context.runDir, { recursive: true });
   atomicWriteSync(join(context.runDir, "eval-extensions.md"), lines.join("\n"));
+
+  // Sibling failure report — observable signal for the gate.
+  // Always written when runDir is set (empty file means "no failures this run").
+  writeFailureReport(registry, context.runDir);
+}
+
+// ─── Failure report ──────────────────────────────────────────────
+
+/**
+ * Write registry.failures[] to {runDir}/eval-extension-failures.md.
+ * The gate may surface this as a 🟡 if any failures are recorded.
+ */
+export function writeFailureReport(registry, runDir) {
+  if (!runDir) return;
+  const failures = Array.isArray(registry.failures) ? registry.failures : [];
+  const lines = ["# Extension Hook Failures", ""];
+  if (failures.length === 0) {
+    lines.push("🔵 extension-failures: No hook failures recorded");
+  } else {
+    for (const f of failures) {
+      const emoji = f.kind === "disabled" ? "🔴" : "🟡";
+      lines.push(`${emoji} ${f.ext}.${f.hook} [${f.kind}] ${f.message} @ ${f.at}`);
+    }
+  }
+  lines.push("");
+  mkdirSync(runDir, { recursive: true });
+  atomicWriteSync(join(runDir, "eval-extension-failures.md"), lines.join("\n"));
 }
 
 // ─── Registry cache helpers ──────────────────────────────────────

@@ -527,3 +527,52 @@ The **hook interface** (`promptAppend`, `verdictAppend`, `startupCheck`,
 U1.6's `executeRun`, `artifactEmit`) is versioned by the OPC core itself, not
 by capability tokens. Extensions opt into new hooks by implementing them; old
 hooks continue to work without changes.
+
+## §9. Hook Failure Isolation (U1.3, v0.5)
+
+Extensions are untrusted: they may throw, hang, or return malformed data. The
+core enforces three invariants:
+
+1. **Sibling isolation** — one ext's exception/timeout/bad-return never blocks
+   another ext from running on the same hook call.
+2. **Observable failures** — every failure is appended to `registry.failures[]`
+   as a structured record `{ext, hook, kind, message, at}`. The orchestrator
+   writes these to `{runDir}/eval-extension-failures.md` so the gate can see
+   them. Empty file = "no failures this run" (positive signal).
+3. **Circuit-breaker** — after `OPC_HOOK_FAILURE_THRESHOLD` (default 3)
+   consecutive failures, the ext is auto-disabled for the rest of the process.
+   Subsequent hook calls skip it silently. Set to `0` to disable the breaker.
+
+### §9.1 Failure kinds
+
+| `kind`         | Trigger                                                        |
+|----------------|----------------------------------------------------------------|
+| `throw`        | Hook function rejected/threw a non-timeout error               |
+| `timeout`      | Hook exceeded `OPC_HOOK_TIMEOUT_MS` (default 60s)              |
+| `bad-return`   | Hook returned wrong type (e.g. non-string from `promptAppend`) |
+| `disabled`     | Auto-injected when the breaker trips (`hook: "_circuit_breaker"`)|
+
+### §9.2 Streak semantics
+
+The breaker counts **consecutive** failures, not total. Any successful
+invocation resets the streak to 0. This protects against transient flakiness
+(e.g. a slow LLM call that occasionally times out) while still tripping on
+genuinely broken extensions.
+
+### §9.3 Failure report file
+
+`{runDir}/eval-extension-failures.md` is written by `fireVerdictAppend`
+(always, when `runDir` is set) and may be written explicitly via
+`writeFailureReport(registry, runDir)` after `firePromptAppend`. Format:
+
+```
+# Extension Hook Failures
+
+🟡 my-ext.prompt.append [throw] boom @ 2026-04-18T03:14:15.000Z
+🟡 my-ext.prompt.append [timeout] timed out after 60000ms @ ...
+🔴 my-ext._circuit_breaker [disabled] circuit-breaker tripped after 3 ... @ ...
+```
+
+The gate's verdict synthesizer treats any 🔴 (a tripped breaker) as ITERATE
+and 🟡-only files as INFO. Required extensions that trip the breaker should
+be surfaced to the user explicitly.
