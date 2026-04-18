@@ -4,21 +4,21 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import os from "os";
 import { loadExtensions, firePromptAppend, fireVerdictAppend, saveRegistryCache, normalizeHook } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
-import { loadLayeredOpcConfig } from "./config-layering.mjs";
+import { loadLayeredOpcConfig, stripProvenance } from "./config-layering.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
 //
-// U1.4: loadOpcConfig is now a thin wrapper around loadLayeredOpcConfig so the
-// single-layer (~/.opc/config.json-only) behavior remains, but callers can
-// already benefit from repo-layer overrides when a <dir>/.opc/config.json exists.
+// U1.4: loadOpcConfig is a thin wrapper around loadLayeredOpcConfig. It strips
+// `_source`/`_paths` provenance metadata via stripProvenance before handing the
+// object downstream so extension code iterating Object.keys does not see OPC
+// internals as if they were user config.
 
 function loadOpcConfig(harnessDir) {
-  return loadLayeredOpcConfig(harnessDir || process.cwd(), {});
+  return stripProvenance(loadLayeredOpcConfig(harnessDir || process.cwd(), {}));
 }
 
 function readTaskFromAC(dir) {

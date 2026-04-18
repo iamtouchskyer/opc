@@ -14,9 +14,21 @@
 //   • arrays (other than extensions*) — high-wins (cli replaces repo replaces user)
 //
 // Source tagging:
-//   loadLayeredOpcConfig returns { ...merged, _source: { key: "user"|"repo"|"cli"|"default" } }
+//   loadLayeredOpcConfig returns { ...merged, _source: { key: "user"|"repo"|"cli"|"layered" } }
 //   _source is per-top-level-key only (keeping it terse — deep source tracking is
-//   not worth the complexity for v0.5).
+//   not worth the complexity for v0.5). "layered" is emitted for extensions /
+//   disabledExtensions when ≥2 layers contributed a non-empty list.
+//
+// Reserved / filtered top-level keys:
+//   • `_`-prefixed keys in user/repo/cli config are dropped during merge
+//     (reserved for OPC provenance output: `_source`, `_paths`, future `_*`).
+//   • `__proto__`, `constructor`, `prototype` are dropped at every merge level
+//     to prevent prototype-chain pollution of the returned merged object.
+//
+// Input validation:
+//   • Non-object JSON (array, string, number, null) at any layer is rejected
+//     with a one-line stderr warning; layer is treated as absent.
+//   • Malformed JSON is reported to stderr once per load, then treated as absent.
 
 import { existsSync, readFileSync } from "fs";
 import { join, resolve, dirname } from "path";
@@ -24,13 +36,34 @@ import os from "os";
 
 const USER_CONFIG_PATH = () => join(os.homedir(), ".opc", "config.json");
 
-/** Walk up from `start` to find the nearest ancestor dir containing `.opc/config.json`. */
+// Keys that must never flow into the merged output — either reserved for OPC
+// provenance (`_*`) or dangerous to the prototype chain.
+const DANGEROUS_PROTO_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+function isReservedKey(k) {
+  return typeof k !== "string" || k.startsWith("_") || DANGEROUS_PROTO_KEYS.has(k);
+}
+
+/** Assign a value to an object without invoking the `__proto__` / accessor setter. */
+function safeAssign(target, key, value) {
+  Object.defineProperty(target, key, {
+    value, enumerable: true, writable: true, configurable: true,
+  });
+}
+
+/**
+ * Walk up from `start` to find the nearest ancestor dir containing `.opc/config.json`.
+ * Stops when the candidate path would equal the user-layer config path (home dir
+ * collision) — that collapse would double-count the user's global config as a
+ * repo-layer override and corrupt provenance.
+ */
 export function findRepoConfigPath(start) {
   let dir = resolve(start);
   const root = resolve("/");
+  const userPath = USER_CONFIG_PATH();
   while (true) {
     const candidate = join(dir, ".opc", "config.json");
-    if (existsSync(candidate)) return candidate;
+    // Skip home-dir collision: do not return user-layer path as the repo layer.
+    if (candidate !== userPath && existsSync(candidate)) return candidate;
     if (dir === root) return null;
     const parent = dirname(dir);
     if (parent === dir) return null;
@@ -40,8 +73,17 @@ export function findRepoConfigPath(start) {
 
 function safeReadJson(path) {
   if (!path || !existsSync(path)) return null;
-  try { return JSON.parse(readFileSync(path, "utf8")); }
-  catch { return null; }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    if (!isPlainObject(parsed)) {
+      console.error(`opc: warning: ${path} is not a JSON object (got ${Array.isArray(parsed) ? "array" : typeof parsed}), ignoring`);
+      return null;
+    }
+    return parsed;
+  } catch (err) {
+    console.error(`opc: warning: ${path} is not valid JSON (${err.message}), ignoring`);
+    return null;
+  }
 }
 
 function isPlainObject(v) {
@@ -50,12 +92,19 @@ function isPlainObject(v) {
 
 /** Deep-merge two plain objects. high wins on scalar conflict. Arrays replaced unless key is handled upstream. */
 function deepMerge(low, high) {
-  const out = { ...low };
+  const out = {};
+  // Copy low's safe keys (drop dangerous proto keys; allow _*-prefix at nested
+  // levels since only top-level _source/_paths are reserved for OPC output).
+  for (const k of Object.keys(low || {})) {
+    if (DANGEROUS_PROTO_KEYS.has(k)) continue;
+    safeAssign(out, k, low[k]);
+  }
   for (const k of Object.keys(high || {})) {
+    if (DANGEROUS_PROTO_KEYS.has(k)) continue;
     const hv = high[k];
     const lv = out[k];
-    if (isPlainObject(hv) && isPlainObject(lv)) out[k] = deepMerge(lv, hv);
-    else out[k] = hv;
+    if (isPlainObject(hv) && isPlainObject(lv)) safeAssign(out, k, deepMerge(lv, hv));
+    else safeAssign(out, k, hv);
   }
   return out;
 }
@@ -84,16 +133,18 @@ function mergeLayers(layers) {
 
   // Pass 1: deep-merge everything, recording last writer per top-level key
   for (const { name, config } of layers) {
-    if (!config || typeof config !== "object") continue;
+    if (!isPlainObject(config)) continue; // reject non-object configs (array/string/number/null)
     for (const k of Object.keys(config)) {
       // Skip extensions* for this pass — handled specially below
       if (k === "extensions" || k === "disabledExtensions") continue;
+      // Skip reserved/dangerous top-level keys (`_*`, __proto__, constructor, prototype)
+      if (isReservedKey(k)) continue;
       const existing = merged[k];
       const incoming = config[k];
       if (isPlainObject(existing) && isPlainObject(incoming)) {
-        merged[k] = deepMerge(existing, incoming);
+        safeAssign(merged, k, deepMerge(existing, incoming));
       } else {
-        merged[k] = incoming;
+        safeAssign(merged, k, incoming);
       }
       source[k] = name;
     }
@@ -145,12 +196,27 @@ export function loadLayeredOpcConfig(harnessDir = process.cwd(), cliOverrides = 
   ];
 
   const { merged, source } = mergeLayers(layers);
-  merged._source = source;
-  merged._paths = {
+  safeAssign(merged, "_source", source);
+  safeAssign(merged, "_paths", {
     user: existsSync(userPath) ? userPath : null,
     repo: repoPath,
-  };
+  });
   return merged;
+}
+
+/**
+ * Strip OPC-internal provenance metadata (`_source`, `_paths`, and any other
+ * `_`-prefixed keys) from a merged config object. Returns a shallow copy safe to
+ * hand to downstream consumers (e.g. `loadExtensions`) that iterate Object.keys.
+ */
+export function stripProvenance(cfg) {
+  if (!isPlainObject(cfg)) return cfg;
+  const out = {};
+  for (const k of Object.keys(cfg)) {
+    if (typeof k === "string" && k.startsWith("_")) continue;
+    safeAssign(out, k, cfg[k]);
+  }
+  return out;
 }
 
 // ─── CLI: opc-harness config resolve [--dir <p>] ────────────────────
@@ -171,7 +237,15 @@ export async function cmdConfigResolve(args) {
 
   const rest = args.slice(1);
   const dirIdx = rest.indexOf("--dir");
-  const dir = dirIdx !== -1 ? rest[dirIdx + 1] : process.cwd();
+  let dir = process.cwd();
+  if (dirIdx !== -1) {
+    const val = rest[dirIdx + 1];
+    if (!val || val.startsWith("--")) {
+      console.error("Error: --dir requires a directory path");
+      process.exit(1);
+    }
+    dir = val;
+  }
 
   const merged = loadLayeredOpcConfig(dir, {});
   console.log(JSON.stringify(merged, null, 2));

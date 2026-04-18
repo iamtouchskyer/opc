@@ -15,6 +15,7 @@ import { execFileSync } from "child_process";
 import {
   loadLayeredOpcConfig,
   findRepoConfigPath,
+  stripProvenance,
 } from "./config-layering.mjs";
 
 // ─── helpers ─────────────────────────────────────────────────────
@@ -179,9 +180,171 @@ describe("U1.4 — loadLayeredOpcConfig (merging)", () => {
     writeFileSync(join(home, ".opc", "config.json"), "{ not valid json");
     writeRepoCfg(repo, { ok: true });
     withIsolatedHome(home, () => {
-      const out = loadLayeredOpcConfig(repo, {});
-      assert.equal(out.ok, true); // repo still loaded
+      // stderr warning is emitted but execution continues — capture to avoid test noise
+      const origErr = console.error; console.error = () => {};
+      try {
+        const out = loadLayeredOpcConfig(repo, {});
+        assert.equal(out.ok, true); // repo still loaded
+      } finally { console.error = origErr; }
     });
+  });
+});
+
+// ─── U1.4r fix-forward regressions ───────────────────────────────
+
+describe("U1.4r — prototype pollution hardening", () => {
+  let home, repo;
+  beforeEach(() => { home = tmp(); repo = tmp(); });
+  afterEach(() => {
+    try { rmSync(home, { recursive: true, force: true }); } catch {}
+    try { rmSync(repo, { recursive: true, force: true }); } catch {}
+  });
+
+  test("top-level __proto__ key in user config must NOT pollute returned object's prototype", () => {
+    writeUserCfg(home, JSON.parse(
+      '{"__proto__":{"injected":"YES","enableSafeMode":true},"ok":true}'
+    ));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      assert.equal(out.injected, undefined, "injected must not appear via prototype chain");
+      assert.equal(out.enableSafeMode, undefined, "enableSafeMode must not leak through proto");
+      assert.equal(Object.getPrototypeOf(out), Object.prototype, "prototype must remain Object.prototype");
+      assert.equal(out.ok, true, "legitimate keys still merge");
+    });
+  });
+
+  test("__proto__ in nested objects must not pollute via deep-merge", () => {
+    writeUserCfg(home, JSON.parse('{"tool":{"__proto__":{"bad":"x"},"ok":true}}'));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      assert.equal(out.tool.bad, undefined, "nested __proto__ must not leak");
+      assert.equal(out.tool.ok, true);
+    });
+  });
+
+  test("constructor / prototype keys are also dropped", () => {
+    writeUserCfg(home, JSON.parse('{"constructor":"x","prototype":"y","ok":true}'));
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      assert.equal(out.ok, true);
+      // constructor/prototype should be filtered (not set as own data properties)
+      assert.ok(!Object.hasOwn(out, "constructor"), "constructor must not be a top-level merged key");
+      assert.ok(!Object.hasOwn(out, "prototype"), "prototype must not be a top-level merged key");
+    });
+  });
+});
+
+describe("U1.4r — home/repo collision guard", () => {
+  let home;
+  beforeEach(() => { home = tmp(); });
+  afterEach(() => { try { rmSync(home, { recursive: true, force: true }); } catch {} });
+
+  test("findRepoConfigPath must NOT return the user-layer path even when home is an ancestor", () => {
+    writeUserCfg(home, { fromHome: true });
+    withIsolatedHome(home, () => {
+      // harnessDir === home → walk-up would otherwise match ~/.opc/config.json
+      const found = findRepoConfigPath(home);
+      assert.equal(found, null, "must skip home-dir match to prevent user/repo collapse");
+    });
+  });
+
+  test("loadLayeredOpcConfig under home with no project .opc tags everything as user", () => {
+    writeUserCfg(home, { fromHome: true, extensions: ["h"] });
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(home, {});
+      assert.equal(out._paths.repo, null);
+      assert.equal(out._source.fromHome, "user");
+      assert.equal(out._source.extensions, "user", "single contributor ≠ layered");
+    });
+  });
+});
+
+describe("U1.4r — input validation & provenance reservation", () => {
+  let home, repo;
+  beforeEach(() => { home = tmp(); repo = tmp(); });
+  afterEach(() => {
+    try { rmSync(home, { recursive: true, force: true }); } catch {}
+    try { rmSync(repo, { recursive: true, force: true }); } catch {}
+  });
+
+  test("non-object JSON (array) at user layer is rejected with stderr warning", () => {
+    mkdirSync(join(home, ".opc"), { recursive: true });
+    writeFileSync(join(home, ".opc", "config.json"), '["not","an","object"]');
+    writeRepoCfg(repo, { ok: true });
+    const warnings = [];
+    const origErr = console.error; console.error = (m) => warnings.push(m);
+    try {
+      withIsolatedHome(home, () => {
+        const out = loadLayeredOpcConfig(repo, {});
+        assert.ok(!Object.hasOwn(out, "0"), "indexed keys from array must not merge");
+        assert.equal(out.ok, true, "repo layer still loads");
+      });
+    } finally { console.error = origErr; }
+    assert.ok(warnings.some(w => /not a JSON object/.test(String(w))), "stderr warning expected");
+  });
+
+  test("user-authored _source / _paths top-level keys are stripped (reserved)", () => {
+    writeUserCfg(home, { _source: { evil: "x" }, _paths: { user: "/evil" }, real: true });
+    withIsolatedHome(home, () => {
+      const out = loadLayeredOpcConfig(repo, {});
+      assert.equal(out.real, true);
+      // _source and _paths exist but only contain OPC-generated data
+      assert.equal(out._source.evil, undefined, "user _source key must not leak in");
+      assert.equal(out._source._source, undefined, "no meta-provenance keys");
+      assert.notEqual(out._paths.user, "/evil", "user-supplied _paths must not override");
+    });
+  });
+
+  test("malformed JSON emits one-line stderr warning", () => {
+    mkdirSync(join(home, ".opc"), { recursive: true });
+    writeFileSync(join(home, ".opc", "config.json"), "{ broken json");
+    const warnings = [];
+    const origErr = console.error; console.error = (m) => warnings.push(m);
+    try {
+      withIsolatedHome(home, () => { loadLayeredOpcConfig(repo, {}); });
+    } finally { console.error = origErr; }
+    assert.ok(warnings.some(w => /not valid JSON/.test(String(w))), "stderr warning expected");
+  });
+});
+
+describe("U1.4r — stripProvenance helper", () => {
+  test("removes _source / _paths / any _-prefixed key", () => {
+    const cfg = {
+      a: 1, nested: { b: 2 },
+      _source: { a: "user" },
+      _paths: { user: "/u" },
+      _future: "x",
+    };
+    const stripped = stripProvenance(cfg);
+    assert.equal(stripped.a, 1);
+    assert.deepEqual(stripped.nested, { b: 2 });
+    assert.ok(!("_source" in stripped));
+    assert.ok(!("_paths" in stripped));
+    assert.ok(!("_future" in stripped));
+  });
+
+  test("is a no-op on non-plain-object input", () => {
+    assert.equal(stripProvenance(null), null);
+    assert.equal(stripProvenance("x"), "x");
+    assert.deepEqual(stripProvenance([1, 2]), [1, 2]);
+  });
+});
+
+describe("U1.4r — CLI --dir missing value", () => {
+  test("`config resolve --dir` with no value exits non-zero", () => {
+    const harnessBin = join(process.cwd(), "bin", "opc-harness.mjs");
+    let threw = false;
+    try {
+      execFileSync("node", [harnessBin, "config", "resolve", "--dir"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      threw = true;
+      assert.ok(err.status && err.status !== 0);
+      assert.ok(/--dir requires/.test(String(err.stderr)), "stderr must explain missing value");
+    }
+    assert.ok(threw, "must exit non-zero when --dir has no value");
   });
 });
 
