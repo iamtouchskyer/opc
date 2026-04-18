@@ -983,3 +983,84 @@ describe("capability matching — compatibleCapabilities", () => {
     assert.deepEqual(reg.extensions[0].meta.compatibleCapabilities, []);
   });
 });
+
+// ─── U1.2r — Regression: regex must reject non-positive integers ────
+
+describe("normalizeCapability — version regex strictness", () => {
+  beforeEach(() => { _resetBareCapabilityWarnings(); });
+
+  test("rejects @0 (does not match versioned, treated as invalid passthrough)", () => {
+    // @0 doesn't match versioned regex AND doesn't match bare regex →
+    // returned as-is. Critical: it must NOT be treated as canonical.
+    assert.equal(normalizeCapability("foo@0"), "foo@0");
+    // And it must not equal a normalized real capability.
+    assert.notEqual(normalizeCapability("foo@0"), normalizeCapability("foo"));
+  });
+
+  test("rejects leading-zero versions like @01, @007", () => {
+    assert.equal(normalizeCapability("foo@01"), "foo@01");
+    assert.equal(normalizeCapability("foo@007"), "foo@007");
+    // None of these should equal foo@1.
+    assert.notEqual(normalizeCapability("foo@01"), "foo@1");
+    assert.notEqual(normalizeCapability("foo@007"), "foo@1");
+  });
+
+  test("accepts @1, @2, @99, @100 (positive integers)", () => {
+    assert.equal(normalizeCapability("foo@1"), "foo@1");
+    assert.equal(normalizeCapability("foo@2"), "foo@2");
+    assert.equal(normalizeCapability("foo@99"), "foo@99");
+    assert.equal(normalizeCapability("foo@100"), "foo@100");
+  });
+
+  test("invalid versions do not silently match valid normalized form", () => {
+    // A node requiring "foo@1" must not accidentally match an ext providing "foo@01".
+    // Both pass through normalize as-is when they don't match canonical regex,
+    // so set comparison still works correctly.
+    const required = ["foo@1"];
+    const provided = ["foo@01"]; // invalid form
+    const reqSet = new Set(required.map(normalizeCapability));
+    const isMatch = provided.map(normalizeCapability).some(c => reqSet.has(c));
+    assert.equal(isMatch, false, "@01 must not match @1");
+  });
+});
+
+// ─── U1.2r — Regression: built-in flow templates must not WARN ──────
+
+describe("built-in flow templates — no bare capability tokens", () => {
+  test("FLOW_TEMPLATES nodeCapabilities all use versioned form", async () => {
+    const { FLOW_TEMPLATES } = await import("./flow-templates.mjs");
+    const versionedRe = /^[a-z][a-z0-9-]*@[1-9]\d*$/;
+    const offenders = [];
+    for (const [tplName, tpl] of Object.entries(FLOW_TEMPLATES)) {
+      const caps = tpl.nodeCapabilities || {};
+      for (const [nodeName, capList] of Object.entries(caps)) {
+        for (const cap of capList) {
+          if (!versionedRe.test(cap)) {
+            offenders.push(`${tplName}.${nodeName}: '${cap}'`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(offenders, [],
+      `built-in flow-templates.mjs has bare capability tokens — these will trigger WARN spam on cold start: ${offenders.join(", ")}`);
+  });
+
+  test("loading built-in templates emits no capability WARNs", async () => {
+    _resetBareCapabilityWarnings();
+    const { FLOW_TEMPLATES } = await import("./flow-templates.mjs");
+    const origErr = console.error;
+    let captured = "";
+    console.error = (msg) => { captured += String(msg) + "\n"; };
+    try {
+      // Touch every cap through normalizeCapability — simulates startup
+      for (const tpl of Object.values(FLOW_TEMPLATES)) {
+        for (const capList of Object.values(tpl.nodeCapabilities || {})) {
+          for (const cap of capList) normalizeCapability(cap);
+        }
+      }
+    } finally {
+      console.error = origErr;
+    }
+    assert.equal(captured, "", `built-in templates triggered WARNs:\n${captured}`);
+  });
+});

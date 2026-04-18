@@ -141,8 +141,9 @@ function withTimeout(promise, ms, onTimeoutMessage) {
 // ─── Capability versioning ───────────────────────────────────────
 //
 // Capability identifiers are strings of form `name@N` where name matches
-// /^[a-z][a-z0-9-]*$/ and N is a positive integer. A bare `name` (no @N)
-// is auto-upgraded to `name@1` with a one-time stderr WARN per bare token
+// /^[a-z][a-z0-9-]*$/ and N is a positive integer (1, 2, …; no leading zeros,
+// no @0). A bare `name` (no @N) is auto-upgraded to `name@1` with a one-time
+// stderr WARN per bare token
 // (so a project using 10 extensions with bare capabilities only prints each
 // warning once per process).
 //
@@ -155,7 +156,7 @@ function withTimeout(promise, ms, onTimeoutMessage) {
 // visual-check from @1 to @2 can declare compatibleCapabilities: ["visual-check@1"]
 // to keep firing for @1-declared nodes during migration.
 
-const CAPABILITY_VERSIONED_RE = /^[a-z][a-z0-9-]*@\d+$/;
+const CAPABILITY_VERSIONED_RE = /^[a-z][a-z0-9-]*@[1-9]\d*$/;
 const CAPABILITY_BARE_RE = /^[a-z][a-z0-9-]*$/;
 
 // Module-level set so warnings fire once per process per bare name.

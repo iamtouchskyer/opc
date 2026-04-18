@@ -45,7 +45,7 @@ export const FLOW_TEMPLATES = {
     // Capability contract: what specialist expertise each node requests.
     // Extensions with matching `provides` are auto-activated.
     nodeCapabilities: {
-      "code-review": ["code-quality-check", "visual-consistency-check"],
+      "code-review": ["code-quality-check@1", "visual-consistency-check@1"],
     },
   },
   "full-stack": {
@@ -82,11 +82,11 @@ export const FLOW_TEMPLATES = {
     },
     // Capability contract — which specialist expertise each node requests.
     nodeCapabilities: {
-      "code-review":     ["code-quality-check", "visual-consistency-check"],
-      acceptance:        ["visual-consistency-check", "user-simulation"],
-      audit:             ["security-check", "a11y-check"],
-      "e2e-user":        ["user-simulation"],
-      "post-launch-sim": ["user-simulation"],
+      "code-review":     ["code-quality-check@1", "visual-consistency-check@1"],
+      acceptance:        ["visual-consistency-check@1", "user-simulation@1"],
+      audit:             ["security-check@1", "a11y-check@1"],
+      "e2e-user":        ["user-simulation@1"],
+      "post-launch-sim": ["user-simulation@1"],
     },
   },
   "pre-release": {
@@ -106,9 +106,9 @@ export const FLOW_TEMPLATES = {
       "e2e-user": "execute", "gate-e2e": "gate",
     },
     nodeCapabilities: {
-      acceptance: ["visual-consistency-check", "user-simulation"],
-      audit:      ["security-check", "a11y-check"],
-      "e2e-user": ["user-simulation"],
+      acceptance: ["visual-consistency-check@1", "user-simulation@1"],
+      audit:      ["security-check@1", "a11y-check@1"],
+      "e2e-user": ["user-simulation@1"],
     },
   },
 };

@@ -460,9 +460,20 @@ without silently breaking downstream nodes.
 ### §8.1 Identifier format
 
 ```
-/^[a-z][a-z0-9-]*@\d+$/     # canonical:  visual-check@1, code-quality@2
-/^[a-z][a-z0-9-]*$/         # bare:       visual-check  → auto-upgrades to @1
+/^[a-z][a-z0-9-]*@[1-9]\d*$/     # canonical:  visual-check@1, code-quality@2
+/^[a-z][a-z0-9-]*$/              # bare:       visual-check  → auto-upgrades to @1
 ```
+
+`N` is a positive decimal integer with no leading zeros (`@1`, `@2`, `@99`,
+`@100`). Forms like `@0`, `@01`, `@007` are **not** canonical and pass through
+unchanged — they will not match the normalized form `name@1`. This is intentional:
+silently treating `@0` as equivalent to `@1` would let a typo erase the version
+distinction the system exists to enforce.
+
+**Built-in flow templates** (`bin/lib/flow-templates.mjs`) declare their
+`nodeCapabilities` exclusively in canonical `name@N` form. Cold-start init never
+emits the bare-name WARN — that signal is reserved for user-installed extensions
+or external flow templates that haven't migrated yet.
 
 A **bare** identifier (no `@N`) is auto-upgraded to `@1` at match time. On
 first encounter per process, a one-line stderr WARN fires:
