@@ -1506,15 +1506,16 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
        export async function startupCheck() { return true; }`
     );
     const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15=${Date.now()}`);
-    const { out, exitCode } = await captureAll(() =>
+    const { out, err, exitCode } = await captureAll(() =>
       cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
     );
-    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "BAD@1" failed capability-shape check: invalid-shape/);
-    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "foo@0" failed capability-shape check: invalid-shape/);
-    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry 123 failed capability-shape check: not-a-string/);
-    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides entry "" failed capability-shape check: empty/);
+    // Lint WARNs go to stderr (same channel as bare-token auto-upgrade WARN)
+    assert.match(err, /\[lint\] ⚠️ {2}meta\.provides entry "BAD@1" failed capability-shape check: invalid-shape/);
+    assert.match(err, /\[lint\] ⚠️ {2}meta\.provides entry "foo@0" failed capability-shape check: invalid-shape/);
+    assert.match(err, /\[lint\] ⚠️ {2}meta\.provides entry 123 failed capability-shape check: not-a-string/);
+    assert.match(err, /\[lint\] ⚠️ {2}meta\.provides entry "" failed capability-shape check: empty/);
     // good@1 must NOT appear in WARN output
-    assert.doesNotMatch(out, /entry "good@1" failed/);
+    assert.doesNotMatch(err, /entry "good@1" failed/);
     // WARN is non-fatal — startup.check ran and passed → exit 0
     assert.equal(exitCode, 0);
     assert.match(out, /\[startup\.check\] ✅ passed/);
@@ -1528,11 +1529,11 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
        export async function startupCheck() { return true; }`
     );
     const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15c=${Date.now()}`);
-    const { out } = await captureAll(() =>
+    const { err } = await captureAll(() =>
       cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
     );
-    assert.match(out, /meta\.compatibleCapabilities entry "NOPE" failed capability-shape check: invalid-shape/);
-    assert.doesNotMatch(out, /entry "foo@1" failed/);
+    assert.match(err, /meta\.compatibleCapabilities entry "NOPE" failed capability-shape check: invalid-shape/);
+    assert.doesNotMatch(err, /entry "foo@1" failed/);
   });
 
   test("non-array meta.provides emits shape WARN", async () => {
@@ -1543,10 +1544,10 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
        export async function startupCheck() { return true; }`
     );
     const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15na=${Date.now()}`);
-    const { out } = await captureAll(() =>
+    const { err } = await captureAll(() =>
       cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
     );
-    assert.match(out, /\[lint\] ⚠️ {2}meta\.provides is not an array \(got string\)/);
+    assert.match(err, /\[lint\] ⚠️ {2}meta\.provides is not an array \(got string\)/);
   });
 
   test("well-formed caps emit no lint WARN", async () => {
@@ -1557,10 +1558,11 @@ describe("U1.5 — extension-test CLI lints meta capability shape", () => {
        export async function startupCheck() { return true; }`
     );
     const { cmdExtensionTest } = await import(`./ext-commands.mjs?u15cl=${Date.now()}`);
-    const { out, exitCode } = await captureAll(() =>
+    const { out, err, exitCode } = await captureAll(() =>
       cmdExtensionTest(["--ext", extDir, "--hook", "startup.check"])
     );
     assert.doesNotMatch(out, /\[lint\]/);
+    assert.doesNotMatch(err, /\[lint\]/);
     assert.equal(exitCode, 0);
   });
 });

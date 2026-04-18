@@ -169,21 +169,23 @@ export async function cmdExtensionTest(args) {
   const hooks = hook.hooks || {};
 
   // U1.5: Lint meta.provides and meta.compatibleCapabilities. Warn (not fail)
-  // on entries that don't match the capability shape `/^[a-z][a-z0-9-]*@\d+$/`.
+  // on entries that don't match the capability shape `/^[a-z][a-z0-9-]*@[1-9]\d*$/`.
   // Bare tokens (`foo` without `@N`) pass lint but trigger auto-upgrade WARN
   // at load time; only malformed / wrong-type / empty values are reported here.
+  // Routed through console.error so it shares stderr with the bare-token
+  // auto-upgrade WARN emitted by normalizeCapability — one grep catches both.
   const meta = (raw && typeof raw === "object" && raw.meta) || {};
   function lintList(listName, list) {
     if (list == null) return;
     if (!Array.isArray(list)) {
-      console.log(`[lint] ⚠️  meta.${listName} is not an array (got ${typeof list})`);
+      console.error(`[lint] ⚠️  meta.${listName} is not an array (got ${typeof list})`);
       return;
     }
     for (const cap of list) {
       const res = lintCapability(cap);
       if (!res.ok) {
         const shown = typeof cap === "string" ? JSON.stringify(cap) : String(cap);
-        console.log(`[lint] ⚠️  meta.${listName} entry ${shown} failed capability-shape check: ${res.reason}`);
+        console.error(`[lint] ⚠️  meta.${listName} entry ${shown} failed capability-shape check: ${res.reason}`);
       }
     }
   }

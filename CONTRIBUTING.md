@@ -79,7 +79,7 @@ export async function verdictAppend(ctx) {
 
 ### Capability shape
 
-Capability identifiers follow `/^[a-z][a-z0-9-]*@\d+$/`. Examples:
+Capability identifiers follow `/^[a-z][a-z0-9-]*@[1-9]\d*$/` (lower-kebab name + `@` + positive integer, no leading zeros). Examples:
 
 - ✅ `visual-check@1`, `a11y@2`, `foo-bar@10`
 - ⚠️  `visual-check` (bare — works, auto-upgrades to `@1` with a stderr WARN)
