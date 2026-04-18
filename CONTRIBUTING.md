@@ -75,7 +75,36 @@ export async function promptAppend(ctx) {
 export async function verdictAppend(ctx) {
   return [{ severity: "warning", category: "accessibility", message: "..." }];
 }
+
+// Called during executor nodes (execute-type). Side-effectful verification —
+// crawl a URL, run Playwright, hit an API. Return value is IGNORED. Throwing
+// is isolated: siblings still fire.
+export async function executeRun(ctx) {
+  // ctx.runDir — write artifacts here if you need them
+  return;
+}
+
+// Called during executor nodes, after executeRun. Return an array of items
+// to persist as files: `{ name: "<basename>", content: string | Buffer | Uint8Array }`.
+// Files are written to `<runDir>/ext-<name>/<basename>` and auto-appended to
+// handshake.artifacts[] as `{ type: "ext-artifact", ext, path }`.
+// Names must be plain basenames — `../escape`, `/abs`, `sub/nested` are rejected.
+export async function artifactEmit(ctx) {
+  return [{ name: "screenshot.png", content: Buffer.from([/* ... */]) }];
+}
 ```
+
+### Hook surface summary
+
+| Hook            | When it fires                          | Return            | Failure |
+|-----------------|----------------------------------------|-------------------|---------|
+| `startupCheck`  | Once on load                           | any (throw=refuse)| Load rejected |
+| `promptAppend`  | build / review node prompt assembly    | string            | Isolated (siblings still fire) |
+| `verdictAppend` | review-node evaluation                 | `Finding[]`       | Isolated |
+| `executeRun`    | execute-node side-effectful phase      | ignored           | Isolated |
+| `artifactEmit`  | execute-node file-emission phase       | `{name,content}[]`| Isolated, per-item |
+
+Both kebab (`execute.run`) and camel (`executeRun`) export names are recognized.
 
 ### Capability shape
 

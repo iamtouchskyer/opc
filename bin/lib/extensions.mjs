@@ -663,6 +663,7 @@ export async function fireArtifactEmit(registry, context) {
 
     const extDir = join(context.runDir, `ext-${ext.name}`);
     mkdirSync(extDir, { recursive: true });
+    let anyItemFailed = false;
     for (const item of items) {
       if (!item || typeof item !== "object") continue;
       const rawName = item.name;
@@ -676,20 +677,32 @@ export async function fireArtifactEmit(registry, context) {
         continue;
       }
       const content = item.content;
-      if (typeof content !== "string" && !Buffer.isBuffer(content)) {
-        console.error(`WARN: extension ${ext.name} artifact.emit '${rawName}' content is not string/Buffer — skipping`);
+      // Accept string, Buffer, or any ArrayBufferView (Uint8Array, DataView, etc.)
+      // Modern APIs (crypto.subtle, TextEncoder, Playwright screenshots) commonly
+      // return Uint8Array — tight Buffer check would silently drop those.
+      const isBinaryView = ArrayBuffer.isView(content);
+      if (typeof content !== "string" && !isBinaryView) {
+        console.error(`WARN: extension ${ext.name} artifact.emit '${rawName}' content is not string/Buffer/ArrayBufferView — skipping`);
         continue;
       }
+      const payload = typeof content === "string" || Buffer.isBuffer(content)
+        ? content
+        : Buffer.from(content.buffer, content.byteOffset, content.byteLength);
       const outPath = join(extDir, safeName);
       try {
-        atomicWriteSync(outPath, content);
+        atomicWriteSync(outPath, payload);
         emitted.push({ type: "ext-artifact", ext: ext.name, path: outPath });
       } catch (err) {
         console.error(`WARN: extension ${ext.name} artifact.emit write failed for '${safeName}': ${err.message}`);
         recordFailure(registry, ext, "artifact.emit", "throw", `write ${safeName}: ${err.message}`);
+        anyItemFailed = true;
       }
     }
-    recordSuccess(ext);
+    // Only reset _failStreak if every item in this call succeeded. Otherwise
+    // a per-item write failure would be undone by recordSuccess on the same
+    // iteration and the circuit-breaker would never trip on persistent
+    // write failures (U1.6r semantics F1 fix-forward).
+    if (!anyItemFailed) recordSuccess(ext);
   }
   return emitted;
 }

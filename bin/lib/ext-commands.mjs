@@ -386,6 +386,7 @@ export async function cmdExtensionArtifact(args) {
     node,
     runDir,
     extensionsApplied: registry.applied,
+    nodeCapabilities,
     executeRunCount: executeResults.length,
     emitted,
   }));

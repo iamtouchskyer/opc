@@ -1974,3 +1974,167 @@ describe("U1.6 — extension-artifact CLI integration", () => {
     assert.match(failReport, /execute boom/);
   });
 });
+
+// ─── U1.6r fix-forward regressions ───────────────────────────────
+
+describe("U1.6r — fireArtifactEmit accepts Uint8Array content (semantics F2)", () => {
+  let tmpBase, runDir;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    runDir = join(tmpBase, "run");
+    mkdirSync(runDir, { recursive: true });
+  });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  test("Uint8Array content is written as bytes, not dropped", async () => {
+    writeExtension(
+      join(tmpBase, "bin-emit"),
+      `export const meta = { name: "bin-emit", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         const bytes = new Uint8Array([0x48, 0x49]); // "HI"
+         return [{ name: "hi.bin", content: bytes }];
+       }`
+    );
+    const { result, stderr } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: tmpBase });
+      return await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+    });
+    assert.equal(result.length, 1);
+    const buf = readFileSync(result[0].path);
+    assert.equal(buf.toString("utf8"), "HI");
+    // No bogus "not string/Buffer" WARN
+    assert.doesNotMatch(stderr, /content is not string/);
+  });
+});
+
+describe("U1.6r — circuit-breaker trips on persistent artifact.emit write failures (semantics F1)", () => {
+  let tmpBase, runDir;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    runDir = join(tmpBase, "run");
+    mkdirSync(runDir, { recursive: true });
+  });
+  afterEach(() => {
+    try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
+    delete process.env.OPC_HOOK_FAILURE_THRESHOLD;
+  });
+
+  test("per-item write failure is NOT undone by recordSuccess; _failStreak grows", async () => {
+    // Simulate a persistent write failure by pointing output at a read-only
+    // path. Easier: have the extension emit a valid item, then MANUALLY make
+    // the output path a dir so atomicWriteSync throws. Even simpler: emit an
+    // item whose eventual file path already exists as a directory → EISDIR.
+    const extDir = join(tmpBase, "ext");
+    writeExtension(
+      join(extDir, "collider"),
+      `export const meta = { name: "collider", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         return [{ name: "blocked", content: "x" }];
+       }`
+    );
+    // Pre-create <runDir>/ext-collider/blocked as a DIRECTORY — fs.writeFileSync
+    // on it will throw EISDIR.
+    mkdirSync(join(runDir, "ext-collider", "blocked"), { recursive: true });
+
+    const { result, stderr } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: extDir });
+      // Fire twice — with the old bug, _failStreak would reset to 0 each time.
+      await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+      await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+      return reg;
+    });
+    assert.match(stderr, /write failed for 'blocked'/);
+    const ext = result.extensions.find(e => e.name === "collider");
+    assert.equal(ext._failStreak, 2, "failure streak must persist across calls");
+    assert.equal(result.failures.length, 2);
+  });
+
+  test("success reset only fires when ALL items in the call succeeded", async () => {
+    const extDir = join(tmpBase, "ext");
+    writeExtension(
+      join(extDir, "mixed"),
+      `export const meta = { name: "mixed", provides: ["cap@1"] };
+       export async function artifactEmit() {
+         return [
+           { name: "ok.txt", content: "good" },
+           { name: "bad", content: "also good" },
+         ];
+       }`
+    );
+    mkdirSync(join(runDir, "ext-mixed", "bad"), { recursive: true });
+    const { result } = await captureStderr(async () => {
+      const reg = await loadExtensions({ extensionsDir: extDir });
+      await fireArtifactEmit(reg, { nodeCapabilities: ["cap@1"], runDir });
+      return reg;
+    });
+    const ext = result.extensions.find(e => e.name === "mixed");
+    assert.equal(ext._failStreak, 1, "mixed per-item outcome must count as failure");
+  });
+});
+
+describe("U1.6r — extension-artifact CLI includes nodeCapabilities (contract #1)", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("output JSON includes nodeCapabilities (consistency with extension-verdict)", async () => {
+    const extDir = join(tmpBase, "exts");
+    writeExtension(
+      join(extDir, "noop"),
+      `export const meta = { name: "noop", provides: ["nodecap@1"] };
+       export async function executeRun() { return; }`
+    );
+    const harnessDir = join(tmpBase, ".harness");
+    const nodeId = "exec-node";
+    const runDir = join(harnessDir, "nodes", nodeId, "run_1");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "handshake.json"), "{}");
+    writeFileSync(
+      join(harnessDir, "flow-state.json"),
+      JSON.stringify({ flow: "f", flowFile: join(harnessDir, "flow.json"), currentNode: nodeId })
+    );
+    writeFileSync(
+      join(harnessDir, "flow.json"),
+      JSON.stringify({
+        opc_compat: ">=0.0",
+        nodes: [nodeId],
+        edges: { [nodeId]: { PASS: null } },
+        limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+        nodeTypes: { [nodeId]: "execute" },
+        nodeCapabilities: { [nodeId]: ["nodecap@1"] },
+      })
+    );
+    mkdirSync(join(harnessDir, ".opc"), { recursive: true });
+    writeFileSync(
+      join(harnessDir, ".opc", "config.json"),
+      JSON.stringify({ extensionsDir: extDir })
+    );
+
+    const { cmdExtensionArtifact } = await import(`./ext-commands.mjs?u16rnc=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionArtifact([
+        "--node", nodeId, "--dir", harnessDir,
+        "--flow-file", join(harnessDir, "flow.json"),
+      ])
+    );
+    assert.equal(exitCode, 0);
+    const parsed = JSON.parse(out.trim().split("\n").pop());
+    assert.deepEqual(parsed.nodeCapabilities, ["nodecap@1"]);
+  });
+});
