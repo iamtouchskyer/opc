@@ -40,7 +40,15 @@ ok() {
 }
 
 TMP=$(mktemp -d -t opc-run2-e2e-XXXXXX)
-trap "rm -rf '$TMP'" EXIT
+# G6 fix: keep-on-fail (mirrors strict.sh + bypass.sh) + handle signal-driven exits.
+cleanup() {
+  if [ "$FAIL" -eq 0 ]; then
+    rm -rf "$TMP"
+  else
+    echo "  ⚠️  TMP preserved for diagnosis: $TMP" >&2
+  fi
+}
+trap cleanup EXIT INT TERM HUP
 
 # ── Stage fixtures in a private extensionsDir under $TMP ─────────
 EXT_DIR="$TMP/extensions"
@@ -252,6 +260,14 @@ if [ -f "$OK_MARKER" ]; then
   fi
 else
   fail "ok-ext-marker.txt NOT written at $OK_MARKER"
+fi
+
+# G4 fix: assert executeRun side-effect (was previously untested — fixture was no-op)
+EXEC_MARKER="$RUN_DIR_REL/ok-ext-execute-marker.txt"
+if [ -f "$EXEC_MARKER" ]; then
+  ok "ok-ext-execute-marker.txt written (executeRun fired)"
+else
+  fail "ok-ext-execute-marker.txt NOT written — executeRun did not fire"
 fi
 
 # handshake.artifacts[] should include the marker path

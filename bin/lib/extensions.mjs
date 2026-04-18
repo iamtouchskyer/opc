@@ -720,26 +720,74 @@ export function writeFailureReport(registry, runDir) {
   if (!runDir) return;
   const failures = Array.isArray(registry.failures) ? registry.failures : [];
   const dropped = registry.failuresDropped || 0;
+  const reportPath = join(runDir, "extension-failures.md");
+
+  // Cross-command merge (G3): each CLI invocation starts with a fresh
+  // registry (failures: []). Prior phases (e.g. extension-verdict) may have
+  // written failure lines to this same file; without merging we'd
+  // OVERWRITE them with "No hook failures recorded" on a clean later
+  // phase, losing the earlier record. Read prior lines and union by
+  // (ext, hook, kind, message) to preserve cross-command history.
+  const FAILURE_LINE_RE = /^([🔴🟡])\s+(\S+?)\.(\S+?)\s+\[(\w+)\]\s+(.*?)\s+@\s+(\S+)$/;
+  const priorEntries = [];
+  if (existsSync(reportPath)) {
+    try {
+      const text = readFileSync(reportPath, "utf8");
+      for (const line of text.split("\n")) {
+        const m = FAILURE_LINE_RE.exec(line.trim());
+        if (m) {
+          priorEntries.push({
+            ext: m[2], hook: m[3], kind: m[4], message: m[5], at: m[6],
+          });
+        }
+      }
+    } catch { /* unreadable prior file = treat as empty */ }
+  }
+
+  // Merge: prior entries first (preserves chronology), then new failures
+  // de-duplicated by (ext, hook, kind, message).
+  const seen = new Set();
+  const merged = [];
+  for (const e of [...priorEntries, ...failures]) {
+    const key = `${e.ext}|${e.hook}|${e.kind}|${e.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(e);
+  }
+
   const lines = ["# Extension Hook Failures", ""];
-  if (failures.length === 0) {
+  if (merged.length === 0) {
     lines.push("🔵 extension-failures: No hook failures recorded");
   } else {
     if (dropped > 0) {
       lines.push(`> Note: ${dropped} earlier failure record(s) dropped (cap=${FAILURE_LOG_CAP}).`);
       lines.push("");
     }
-    for (const f of failures) {
+    for (const f of merged) {
       const emoji = f.kind === "disabled" ? "🔴" : "🟡";
       lines.push(`${emoji} ${f.ext}.${f.hook} [${f.kind}] ${f.message} @ ${f.at}`);
     }
   }
   lines.push("");
   mkdirSync(runDir, { recursive: true });
-  atomicWriteSync(join(runDir, "extension-failures.md"), lines.join("\n"));
+  atomicWriteSync(reportPath, lines.join("\n"));
+}
+
+// ─── Survivors (post-breaker filter for handshake stamping) ──────
+//
+// `registry.applied` is the LOAD-TIME snapshot — every extension that
+// successfully loaded, regardless of subsequent breaker trips. For
+// `handshake.extensionsApplied` we want SURVIVORS (still-enabled at the
+// moment of stamping) so a downstream gate / human review sees who
+// actually contributed, not who tried to.
+export function survivingExtensions(registry) {
+  if (!registry || !Array.isArray(registry.extensions)) return [];
+  return registry.extensions
+    .filter((e) => e && e.enabled !== false)
+    .map((e) => e.name);
 }
 
 // ─── Strict mode (CI enforcement) ────────────────────────────────
-//
 // OPC_STRICT_EXTENSIONS=1 turns recorded extension hook failures into a
 // non-zero process exit. Default mode isolates failures (per-extension
 // breaker) and returns 0 — strict mode preserves the same isolation +

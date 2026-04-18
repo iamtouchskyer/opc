@@ -49,11 +49,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM HUP
 
-# ── Stage just throw-ext (single failing fixture is enough for strict mode) ──
+# ── Stage throw-ext + ok-ext + slow-ext (slow needed for prompt-phase strict) ──
 EXT_DIR="$TMP/extensions"
 mkdir -p "$EXT_DIR"
 cp -R "$REPO_ROOT/test/fixtures/run2-ext/throw-ext" "$EXT_DIR/"
 cp -R "$REPO_ROOT/test/fixtures/run2-ext/ok-ext"    "$EXT_DIR/"
+cp -R "$REPO_ROOT/test/fixtures/run2-ext/slow-ext"  "$EXT_DIR/"
 
 # ── Custom flow file declaring verification@1 on review node ───────
 FLOW_FILE="$TMP/run2-strict.json"
@@ -139,6 +140,12 @@ STRICT_RC=$?
 
 if [ "$STRICT_RC" != "0" ]; then
   ok "strict: extension-verdict exited $STRICT_RC (non-zero — strict mode propagated)"
+  # G5 fix: tighten — verdict gap is FATAL severity → exit code 2 specifically
+  if [ "$STRICT_RC" = "2" ]; then
+    ok "strict: exit code is exactly 2 (FATAL severity contract)"
+  else
+    fail "strict: exit code = $STRICT_RC (expected 2 per FATAL contract)"
+  fi
 else
   fail "strict: extension-verdict exited 0 — STRICT mode NOT enforced (expected non-zero)"
 fi
@@ -186,6 +193,57 @@ if [ "$CLEAN_RC" = "0" ]; then
 else
   fail "strict+clean: exited $CLEAN_RC — strict tripped on healthy run (false positive)"
   head -20 "$TMP/strict-clean.err" >&2
+fi
+
+# ── 6. STRICT mode covers prompt-context too (G5) ──────────────────
+# slow-ext promptAppend hangs > OPC_HOOK_TIMEOUT_MS=500 → timeout failure
+# logged in registry.failures → strict mode should exit 2.
+echo "--- 6.1: STRICT — prompt-context with slow-ext timeout → exit 2 ---"
+rm -rf "$HARNESS_NAME/nodes/review/run_1"
+mkdir -p "$HARNESS_NAME/nodes/review/run_1"
+echo '{}' > "$HARNESS_NAME/nodes/review/run_1/handshake.json"
+
+OPC_STRICT_EXTENSIONS=1 \
+  $OPC prompt-context --node review --role evaluator \
+  --flow-file "$FLOW_FILE" --dir "$HARNESS_NAME" \
+  >"$TMP/strict-prompt.out" 2>"$TMP/strict-prompt.err"
+PROMPT_RC=$?
+
+if [ "$PROMPT_RC" = "2" ]; then
+  ok "strict+prompt-context: exited 2 (FATAL — prompt-phase strict enforced)"
+else
+  fail "strict+prompt-context: exited $PROMPT_RC (expected 2)"
+  head -30 "$TMP/strict-prompt.err" >&2
+fi
+
+# stderr must name STRICT mode + the failing extension
+if grep -qiE "STRICT.*(slow-ext|throw-ext)" "$TMP/strict-prompt.err"; then
+  ok "strict+prompt-context: stderr identifies failing extension"
+else
+  fail "strict+prompt-context: stderr missing STRICT … <ext> line"
+fi
+
+# ── 7. STRICT mode covers extension-artifact too (G5) ──────────────
+echo "--- 7.1: STRICT — extension-artifact with throw-ext failure → exit 2 ---"
+rm -rf "$HARNESS_NAME/nodes/review/run_1"
+mkdir -p "$HARNESS_NAME/nodes/review/run_1"
+echo '{}' > "$HARNESS_NAME/nodes/review/run_1/handshake.json"
+
+OPC_STRICT_EXTENSIONS=1 \
+  $OPC extension-artifact --node review \
+  --flow-file "$FLOW_FILE" --dir "$HARNESS_NAME" \
+  >"$TMP/strict-artifact.out" 2>"$TMP/strict-artifact.err"
+ART_RC=$?
+
+# throw-ext doesn't implement execute.run/artifact.emit, so no failure here —
+# this section primarily proves strict mode does NOT false-positive on
+# this command path. (Real artifact-phase failure coverage requires a new
+# fixture — deferred per verdict.md "Soft / Out-of-scope" note.)
+if [ "$ART_RC" = "0" ]; then
+  ok "strict+extension-artifact: exits 0 when no artifact-phase failure (no false positive)"
+else
+  fail "strict+extension-artifact: exited $ART_RC unexpectedly"
+  head -20 "$TMP/strict-artifact.err" >&2
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

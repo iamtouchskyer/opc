@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { join, resolve } from "path";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode } from "./extensions.mjs";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode, survivingExtensions } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
@@ -115,9 +115,14 @@ export async function cmdPromptContext(args) {
       const handshakePath = join(latestRunDir, 'handshake.json');
       let handshake = {};
       try { handshake = JSON.parse(readFileSync(handshakePath, 'utf8')); } catch { /* no handshake yet */ }
-      handshake.extensionsApplied = registry.applied;
+      handshake.extensionsApplied = survivingExtensions(registry);
       writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
     } catch { /* best effort */ }
+
+    // G2 fix: persist prompt-phase failures (e.g. slow-ext timeout) so
+    // operators see them in extension-failures.md instead of just stderr.
+    // writeFailureReport now read-merges, so this won't clobber prior phases.
+    writeFailureReport(registry, latestRunDir);
   }
 
   saveRegistryCache(resolve(dir), registry);
@@ -307,10 +312,10 @@ export async function cmdExtensionVerdict(args) {
   try {
     handshake = JSON.parse(await readFile(handshakePath, 'utf8'));
   } catch { /* no handshake yet, start fresh */ }
-  handshake.extensionsApplied = registry.applied;
+  handshake.extensionsApplied = survivingExtensions(registry);
   await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
 
-  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: registry.applied, nodeCapabilities }));
+  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: survivingExtensions(registry), nodeCapabilities }));
 
   // Strict mode: after eval-extensions.md and writeFailureReport have run
   // (inside fireVerdictAppend), exit non-zero if any failures recorded.
@@ -392,14 +397,14 @@ export async function cmdExtensionArtifact(args) {
   for (const a of emitted) {
     if (!seen.has(a.path)) { handshake.artifacts.push(a); seen.add(a.path); }
   }
-  handshake.extensionsApplied = registry.applied;
+  handshake.extensionsApplied = survivingExtensions(registry);
   await writeFile(handshakePath, JSON.stringify(handshake, null, 2));
 
   console.log(JSON.stringify({
     ok: true,
     node,
     runDir,
-    extensionsApplied: registry.applied,
+    extensionsApplied: survivingExtensions(registry),
     nodeCapabilities,
     executeRunCount: executeResults.length,
     emitted,

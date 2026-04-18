@@ -295,6 +295,56 @@ if [ -f "$H6/.ext-registry.json" ]; then
   fi
 fi
 
+# ─────────────────────────────────────────────────────────────────
+# Method 7: --extensions <unknown-name> — graceful empty applied (G7)
+# ─────────────────────────────────────────────────────────────────
+echo "--- 7.1: --extensions does-not-exist — graceful empty applied[] ---"
+H7="harness-unknown"
+mkdir -p "$H7"
+
+HOME="$TMP/fake-home" \
+OPC_EXTENSIONS_DIR="$EXT_DIR" \
+  $OPC init --flow-file "$FLOW_FILE" --entry review --dir "$H7" \
+  --extensions does-not-exist \
+  >"$TMP/unknown-init.out" 2>"$TMP/unknown-init.err" || true
+
+if [ -f "$H7/.ext-registry.json" ]; then
+  APPLIED_LEN=$(jq -r '.applied | length' "$H7/.ext-registry.json" 2>/dev/null || echo "x")
+  BMODE=$(jq -r '.bypass.mode // "null"' "$H7/.ext-registry.json" 2>/dev/null || echo "x")
+  if [ "$APPLIED_LEN" = "0" ] && [ "$BMODE" = "whitelist" ]; then
+    ok "unknown-name: applied=[] AND bypass.mode=whitelist (graceful filter, no crash)"
+  else
+    fail "unknown-name: applied.length=$APPLIED_LEN bypass.mode=$BMODE (expected 0, whitelist)"
+  fi
+else
+  fail "unknown-name: .ext-registry.json not created (init crashed on unknown ext name)"
+fi
+
+# ─────────────────────────────────────────────────────────────────
+# Method 8: env + --no-extensions co-presence — both align, env wins source (G7)
+# ─────────────────────────────────────────────────────────────────
+echo "--- 8.1: OPC_DISABLE_EXTENSIONS=1 + --no-extensions — env wins source attribution ---"
+H8="harness-coexist"
+mkdir -p "$H8"
+
+HOME="$TMP/fake-home" \
+OPC_EXTENSIONS_DIR="$EXT_DIR" \
+OPC_DISABLE_EXTENSIONS=1 \
+  $OPC init --flow-file "$FLOW_FILE" --entry review --dir "$H8" --no-extensions \
+  >"$TMP/coexist-init.out" 2>"$TMP/coexist-init.err" || true
+
+if [ -f "$H8/.ext-registry.json" ]; then
+  APPLIED_LEN=$(jq -r '.applied | length' "$H8/.ext-registry.json" 2>/dev/null || echo "x")
+  BMODE=$(jq -r '.bypass.mode // "null"' "$H8/.ext-registry.json" 2>/dev/null || echo "x")
+  BSRC=$(jq -r '.bypass.source // "null"' "$H8/.ext-registry.json" 2>/dev/null || echo "x")
+  if [ "$APPLIED_LEN" = "0" ] && [ "$BMODE" = "disable-all" ] && [ "$BSRC" = "env" ]; then
+    ok "coexist: env+flag both → applied=[], mode=disable-all, source=env (priority deterministic)"
+  else
+    fail "coexist: applied.length=$APPLIED_LEN mode=$BMODE source=$BSRC (expected 0, disable-all, env)"
+  fi
+fi
+unset OPC_DISABLE_EXTENSIONS
+
 # ─── Summary ──────────────────────────────────────────────────────
 echo ""
 echo "==========================================="
