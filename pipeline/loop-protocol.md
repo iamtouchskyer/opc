@@ -45,15 +45,28 @@ Before decomposing a task from scratch, check for existing runbooks:
 
 ```
 Discovery order:
-1. .opc/runbooks/    (project-local, checked into repo)
-2. Auto-generate     (OPC decomposes task into units, writes to .opc/runbooks/)
+1. --runbook-dir <path> (flag passed to /opc loop)
+2. OPC_RUNBOOKS_DIR env var
+3. .opc/runbooks/       (project-local, checked into repo)
+4. ~/.opc/runbooks/     (user-global)
+5. Auto-generate        (OPC decomposes task into units, writes to .opc/runbooks/)
 ```
 
-**If runbook found:**
-1. List matching runbooks by filename and first heading
-2. If exactly one match → use it (confirm with user in interactive mode)
-3. If multiple matches → ask user which one
-4. Load the runbook as the plan — skip Step 1 (Plan Decomposition)
+The resolution matches `opc-harness runbook`'s `--dir` / env / default
+precedence — see `docs/runbooks.md` for the full schema and the
+`examples/runbooks/add-feature.md` seed as a reference.
+
+**If runbook found (matchRunbook returns a match):**
+1. Use the best-matching runbook's `units:` list as the plan
+2. Use its `flow:` as the per-unit flow template (overrides auto-detection)
+3. Use its `tier:` as the quality tier (if set)
+4. Skip Step 1 (Plan Decomposition) — the runbook IS the plan
+5. In interactive mode, confirm the chosen runbook with the user; in
+   auto mode, print the match + score and proceed
+
+**Disable runbooks per-invocation:**
+- `/opc loop --no-runbook <task>` — skip runbook lookup entirely
+- Also honored: `OPC_DISABLE_RUNBOOKS=1`
 
 **If no runbook found:**
 1. Proceed to Step 1 (Plan Decomposition) as normal
@@ -61,6 +74,26 @@ Discovery order:
 3. Ask user: "Runbook saved to `.opc/runbooks/{task-slug}.md`. Check it in for reuse?"
 
 ## Procedure
+
+### Step 0 — Runbook Lookup (before decomposition)
+
+Before Step 1, shell out to:
+
+```bash
+opc-harness runbook match "<task phrase>" [--dir <runbook-dir>]
+```
+
+- Exit `0` + `matched: true` → **skip Step 1**. Adopt the returned
+  runbook's `units`, `flow`, `tier`, `protocolRefs` as the plan. Write
+  them into `.harness/plan.md` with a header noting which runbook fired
+  and the score.
+- Exit `3` (match-miss) → proceed to Step 1.
+- `--no-runbook` on `/opc loop` skips this step entirely (exit with no
+  runbook query; always decompose fresh).
+
+Rationale: matching is cheap (O(#runbooks × #patterns)), and a reused
+plan avoids a full LLM decompose round. See `docs/runbooks.md` for the
+schema and `examples/runbooks/add-feature.md` for a canonical seed.
 
 ### Step 1 — Plan Decomposition
 
