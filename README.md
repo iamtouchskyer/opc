@@ -188,6 +188,10 @@ OPC works standalone — pair it with [memex](https://github.com/iamtouchskyer/m
 npm install -g @touchskyer/memex
 ```
 
+## Community
+
+Using OPC? Share your setup in [Discussions → Show and tell](https://github.com/iamtouchskyer/opc/discussions/categories/show-and-tell). Questions go in [Q&A](https://github.com/iamtouchskyer/opc/discussions/categories/q-a). Feature ideas in [Ideas](https://github.com/iamtouchskyer/opc/discussions/categories/ideas).
+
 ## License
 
 MIT
