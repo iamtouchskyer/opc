@@ -15,6 +15,7 @@ export const meta = {
 };
 
 const MEMEX_TIMEOUT_MS = 3000;
+const TOTAL_BUDGET_MS = 6000; // hard cap across all search calls
 const MAX_KEYWORDS = 5;
 const MAX_RESULTS = 3;
 
@@ -25,13 +26,19 @@ const STOPWORDS = new Set([
   "with", "by", "from", "as", "is", "are", "was", "were", "be", "been", "being",
   "do", "does", "did", "have", "has", "had", "this", "that", "these", "those",
   "it", "its", "my", "your", "our", "their",
+  "please", "just", "can", "could", "would", "should", "will", "need", "want",
   "的", "了", "在", "是", "和", "与", "或", "但", "我", "你", "他", "她", "它",
-  "帮", "做", "要", "把", "给", "让", "能",
+  "帮", "做", "要", "把", "给", "让", "能", "吧", "呢", "一下", "好",
 ]);
 
+// Cache cliAvailable() result for process lifetime — avoids spawning `which`
+// on every promptAppend call (Reviewer B flagged).
+let _cliAvailableCache = null;
 function cliAvailable() {
+  if (_cliAvailableCache !== null) return _cliAvailableCache;
   const r = spawnSync("which", ["memex"], { encoding: "utf8", timeout: 1500 });
-  return r.status === 0;
+  _cliAvailableCache = r.status === 0;
+  return _cliAvailableCache;
 }
 
 export function startupCheck() {
@@ -46,19 +53,34 @@ export function startupCheck() {
 
 function extractKeywords(text) {
   if (!text || typeof text !== "string") return [];
-  // Split on whitespace + punctuation (but keep CJK chars as single tokens
-  // — no tokenizer here, just surface the unique non-stopword runs).
-  const tokens = text
+  // Treat every CJK character as its own token boundary too — no jieba-style
+  // segmentation here, but this beats matching runs of 6+ CJK chars that
+  // memex will never index. Latin tokens stay whole.
+  // Strategy: split on punctuation/whitespace first, then break CJK runs
+  // into 2-char sliding windows (common Chinese word length).
+  const raw = text
     .toLowerCase()
     .split(/[\s,.!?;:()[\]{}"'`\/\\<>—–\-_]+/)
     .map((t) => t.trim())
-    .filter(Boolean)
-    .filter((t) => t.length >= 2)
-    .filter((t) => !STOPWORDS.has(t));
+    .filter(Boolean);
+  const tokens = [];
+  for (const tok of raw) {
+    // Split each coarse token into runs of [CJK] vs [non-CJK] — handles
+    // mixed tokens like "帮我fix一下" that have no whitespace between scripts.
+    const runs = tok.match(/[\u4e00-\u9fff]+|[^\u4e00-\u9fff]+/g) || [];
+    for (const run of runs) {
+      if (/^[\u4e00-\u9fff]+$/.test(run)) {
+        if (run.length <= 2) tokens.push(run);
+        else for (let i = 0; i + 2 <= run.length; i++) tokens.push(run.slice(i, i + 2));
+      } else if (run.length >= 2) {
+        tokens.push(run);
+      }
+    }
+  }
   const seen = new Set();
   const unique = [];
   for (const t of tokens) {
-    if (seen.has(t)) continue;
+    if (t.length < 2 || STOPWORDS.has(t) || seen.has(t)) continue;
     seen.add(t);
     unique.push(t);
     if (unique.length >= MAX_KEYWORDS) break;
@@ -91,7 +113,9 @@ export function promptAppend(ctx) {
     if (keywords.length === 0) return "";
 
     const hits = new Set();
+    const deadline = Date.now() + TOTAL_BUDGET_MS;
     for (const kw of keywords) {
+      if (Date.now() >= deadline) break;
       for (const hit of memexSearch(kw)) {
         if (hits.size >= MAX_RESULTS) break;
         hits.add(hit);
