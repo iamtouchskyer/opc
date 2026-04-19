@@ -74,6 +74,17 @@ cp -r opc ~/.claude/skills/opc
 /opc goto build    # jump to node
 ```
 
+## Extensions
+
+OPC has a capability-routed extension surface. Drop a directory into
+`~/.opc/extensions/<name>/` with `ext.json` + `hook.mjs` exporting any of
+`promptAppend` / `verdictAppend` / `executeRun` / `artifactEmit` hooks — no
+fork, no rebuild. Hooks are sandboxed via per-extension timeouts + circuit
+breakers, so a broken third-party extension can't take down the harness.
+
+Full authoring guide: **[docs/extension-authoring.md](docs/extension-authoring.md)** — zero-OPC-context
+quickstart + reference, plus a starter template at `examples/extensions/_starter/`.
+
 ## Flow Templates
 
 | Template | Nodes | When |
