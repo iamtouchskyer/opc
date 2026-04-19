@@ -87,7 +87,7 @@ export function executeRun(ctx) {
 
     const args = [
       "-m",
-      "vlm_eval",
+      "lib",
       ...images,
       "--prompt",
       "ui-quality",
@@ -95,7 +95,7 @@ export function executeRun(ctx) {
       "--output-dir",
       outDir,
     ];
-    const env = { ...process.env, PYTHONPATH: join(SKILL_ROOT, "lib") };
+    const env = { ...process.env, PYTHONPATH: SKILL_ROOT };
     const r = spawnSync(PYTHON, args, {
       encoding: "utf8",
       timeout: TIMEOUT_MS,
