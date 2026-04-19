@@ -65,14 +65,16 @@ as human guidance ("why these units, what to watch out for").
 | Field          | Type          | Validation                                  |
 |----------------|---------------|---------------------------------------------|
 | `version`      | number        | must be `1`                                 |
-| `id`           | string        | matches `/^[a-z0-9][a-z0-9-]*$/` (slug)     |
+| `id`           | string        | matches `/^[a-z0-9]+(-[a-z0-9]+)*$/` (slug) |
 | `title`        | string        | non-empty                                   |
 | `units`        | string[]      | non-empty, each entry non-empty string      |
 | `tags`         | string[]      | optional, array of strings                  |
-| `match`        | string[]      | optional; regex literals must be parseable  |
+| `match`        | string[]      | optional; regex literals must be parseable; empty regex `//` rejected |
 | `flow`         | string        | optional                                    |
-| `tier`         | string        | optional                                    |
+| `tier`         | string        | optional; must be `functional`, `polished`, or `delightful` |
 | `protocolRefs` | string[]      | optional                                    |
+| `createdAt`    | string        | optional; must start with `YYYY-MM-DD`      |
+| `updatedAt`    | string        | optional; must start with `YYYY-MM-DD`      |
 
 Unknown frontmatter keys are preserved on the parsed object but are not
 validated. v2 can add fields without breaking v1 readers.
@@ -83,7 +85,9 @@ Two forms are supported:
 
 - **Whole-word keyword** — plain string like `"add feature"`. Matched
   case-insensitively with word-boundary enforcement, so `"add"` will
-  NOT match inside `"address"`. Multi-word phrases score higher: a
+  NOT match inside `"address"`. Internal whitespace is flexible —
+  `"add feature"` matches `"add  feature"` (two spaces), `"add\tfeature"`
+  (tab), or split across lines. Multi-word phrases score higher: a
   3-word phrase is 3× the weight of a single word.
 - **Regex literal** — a string shaped exactly `/PATTERN/FLAGS`, e.g.
   `"/^implement /i"`. Parse errors are caught at load time via
@@ -143,6 +147,15 @@ Prints the runbook with its body. Exit code `2` if no runbook has that
 
 Scores every runbook against `<task>` and prints the winner. Exit code
 `3` if nothing matches.
+
+**Reserved flags.** `--dir` and `--help` are consumed by the command.
+Any other `--foo` token is rejected loudly (prevents silent typos like
+`--dri` producing empty results). If the literal task text contains
+`--flag`-looking tokens, separate with `--`:
+
+```
+opc-harness runbook match -- "please use --dir /opt for install"
+```
 
 ```json
 {
@@ -253,7 +266,7 @@ decomposition.
 
 **Q: Can I disable runbooks entirely?** Yes — either unset
 `OPC_RUNBOOKS_DIR` and remove `~/.opc/runbooks/`, or once U5.11 ships,
-pass `--no-runbook` to `/opc loop`.
+pass `--no-runbook` (U5.11+) to `/opc loop`.
 
 **Q: What happens if a runbook has a typo?** The loader skips it with a
 stderr WARN naming the file and the validation error. Other runbooks

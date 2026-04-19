@@ -7,30 +7,37 @@
 //
 // --dir (or OPC_RUNBOOKS_DIR env var, or ~/.opc/runbooks/) selects the
 // source directory. All output is JSON to stdout.
+//
+// Note: cmdRunbook is sync — no I/O awaits. Peer commands like
+// cmdExtensionTest are async because they read fixtures / invoke extension
+// handlers; runbook commands only do readFileSync. Don't "fix" to async.
 
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { loadRunbooks, matchRunbook } from "./runbooks.mjs";
 import { getFlag } from "./util.mjs";
 
+const KNOWN_FLAGS = new Set(["--dir", "--help", "-h"]);
+
 function resolveRunbookDir(args) {
   const fromFlag = getFlag(args, "dir");
-  if (fromFlag) return resolve(fromFlag);
-  if (process.env.OPC_RUNBOOKS_DIR) return resolve(process.env.OPC_RUNBOOKS_DIR);
-  return join(homedir(), ".opc", "runbooks");
+  if (fromFlag) return { dir: resolve(fromFlag), explicit: true };
+  if (process.env.OPC_RUNBOOKS_DIR) return { dir: resolve(process.env.OPC_RUNBOOKS_DIR), explicit: true };
+  return { dir: join(homedir(), ".opc", "runbooks"), explicit: false };
 }
 
 function summarize(rb) {
-  return {
-    id: rb.id,
-    title: rb.title,
-    tags: rb.tags || [],
-    match: rb.match || [],
-    flow: rb.flow || null,
-    tier: rb.tier || null,
-    units: rb.units,
-    path: rb._path,
-  };
+  // Emit every scalar/array field except the loader-internal _path and
+  // the large body string. Keeping this full-fidelity so `runbook show`
+  // reports everything the schema defines (version, protocolRefs,
+  // createdAt, updatedAt included).
+  const out = {};
+  for (const [k, v] of Object.entries(rb)) {
+    if (k === "_path" || k === "body") continue;
+    out[k] = v;
+  }
+  out.path = rb._path;
+  return out;
 }
 
 function printHelp() {
@@ -40,6 +47,26 @@ function printHelp() {
   console.error("  opc-harness runbook match <task...> [--dir <path>]");
   console.error("");
   console.error("Env: OPC_RUNBOOKS_DIR overrides the default ~/.opc/runbooks/");
+  console.error("Exit codes: 0 ok, 1 usage, 2 show-not-found, 3 match-miss");
+}
+
+function checkUnknownFlags(args, allowed = KNOWN_FLAGS) {
+  // Mirrors the unknown-flag guard added in U5.6r (ext-commands.mjs).
+  // Silently dropped flags are a footgun — typos like `--dri` silently
+  // produced empty results, which is exactly what `match` is supposed
+  // to diagnose. Fail loudly.
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("--")) continue;
+    const name = a.split("=")[0];
+    if (!allowed.has(name)) {
+      console.error(`Unknown flag: ${a}`);
+      printHelp();
+      process.exit(1);
+    }
+    // Skip the value of a flag that takes one.
+    if (a === "--dir" && !a.includes("=")) i++;
+  }
 }
 
 export function cmdRunbook(args) {
@@ -62,8 +89,13 @@ export function cmdRunbook(args) {
 }
 
 function runbookList(args) {
-  const dir = resolveRunbookDir(args);
-  const entries = loadRunbooks(dir);
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+  checkUnknownFlags(args);
+  const { dir, explicit } = resolveRunbookDir(args);
+  const entries = loadRunbooks(dir, { explicit });
   const payload = {
     dir,
     count: entries.length,
@@ -73,6 +105,11 @@ function runbookList(args) {
 }
 
 function runbookShow(args) {
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+  checkUnknownFlags(args);
   // Positional id = first non-flag token not preceded by --dir.
   let id = null;
   for (let i = 0; i < args.length; i++) {
@@ -86,8 +123,8 @@ function runbookShow(args) {
     console.error("Usage: opc-harness runbook show <id> [--dir <path>]");
     process.exit(1);
   }
-  const dir = resolveRunbookDir(args);
-  const entries = loadRunbooks(dir);
+  const { dir, explicit } = resolveRunbookDir(args);
+  const entries = loadRunbooks(dir, { explicit });
   const entry = entries.find(e => e.runbook.id === id);
   if (!entry) {
     console.error(`No runbook with id '${id}' in ${dir}`);
@@ -100,26 +137,48 @@ function runbookShow(args) {
 }
 
 function runbookMatch(args) {
-  // Task = all positional args joined. Strip --dir and its value.
+  if (args.includes("--help") || args.includes("-h")) {
+    printHelp();
+    return;
+  }
+  // `match` reserves --dir and --help as flags. Everything else, including
+  // --foo tokens, is rejected loudly (not swallowed into the task). Users
+  // who literally want `--foo` as task text can use `--` end-of-options.
+  let sawEndOfOpts = false;
   const taskParts = [];
+  const flagArgs = [];
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--dir") { i++; continue; }
-    if (args[i].startsWith("--")) continue;
-    taskParts.push(args[i]);
+    const a = args[i];
+    if (!sawEndOfOpts && a === "--") { sawEndOfOpts = true; continue; }
+    if (!sawEndOfOpts && a === "--dir") {
+      flagArgs.push(a);
+      if (i + 1 < args.length) flagArgs.push(args[++i]);
+      continue;
+    }
+    if (!sawEndOfOpts && a.startsWith("--")) {
+      console.error(`Unknown flag: ${a}`);
+      printHelp();
+      process.exit(1);
+    }
+    taskParts.push(a);
   }
   const task = taskParts.join(" ").trim();
   if (!task) {
     console.error("Usage: opc-harness runbook match <task...> [--dir <path>]");
     process.exit(1);
   }
-  const dir = resolveRunbookDir(args);
-  const entries = loadRunbooks(dir);
+  const { dir, explicit } = resolveRunbookDir(flagArgs);
+  const entries = loadRunbooks(dir, { explicit });
   const result = matchRunbook(task, entries);
   const payload = {
     task,
     dir,
     matched: !!result.runbook,
     score: result.score,
+    // Note: internally `matchRunbook` returns `matches: [...]`; we expose
+    // it as `patterns` because that's the user-facing vocabulary (match
+    // entries from the runbook frontmatter). Keep both names in sync if
+    // adjusting either side.
     patterns: result.matches,
     runbook: result.runbook ? summarize(result.runbook) : null,
   };
