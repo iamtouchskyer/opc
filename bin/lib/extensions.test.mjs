@@ -3,7 +3,7 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, mkdtempSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import {
@@ -3054,7 +3054,7 @@ describe("U5.7 F5 — persistent circuit-breaker state", () => {
     assert.equal(r4.extensions[0].enabled, false, "run4: still disabled");
   });
 
-  test("clearBreakerState rewrites file as empty extensions", () => {
+  test("clearBreakerState removes the file (delete-on-init semantics)", () => {
     const flowDir = join(tmpBase, "flow");
     mkdirSync(flowDir, { recursive: true });
     const path = join(flowDir, BREAKER_STATE_FILE);
@@ -3064,9 +3064,9 @@ describe("U5.7 F5 — persistent circuit-breaker state", () => {
     }));
 
     clearBreakerState(flowDir);
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    assert.equal(parsed.version, 1);
-    assert.deepEqual(parsed.extensions, {});
+    // U5.8r: clear must delete, not rewrite. Missing file and empty
+    // file should be semantically equivalent — keep the lifecycle simple.
+    assert.ok(!existsSync(path));
   });
 
   test("clearBreakerState on missing file is a no-op (no throw, no file created)", () => {
@@ -3121,5 +3121,150 @@ describe("U5.7 F5 — persistent circuit-breaker state", () => {
     assert.deepEqual(registry.extensions, []);
     // _flowDir should not be set under bypass (no extensions to track)
     assert.equal(registry._flowDir, undefined);
+  });
+
+  // ── U5.8r fix-pair: review findings from persistence-auditor + bypass-dx-reviewer ──
+
+  test("U5.8r: saveBreakerState preserves entries for extensions not in the current registry (whitelist-bypass safety)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir, "ext-a");
+    writeFlaky(extsDir, "ext-b");
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+
+    // Seed a file with a disabled 'ghost' extension that isn't loaded in
+    // this invocation (simulates: prior run tripped ext-ghost, this run
+    // uses `--extensions ext-a` whitelist).
+    const statePath = join(flowDir, BREAKER_STATE_FILE);
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      updatedAt: "2026-04-18T00:00:00.000Z",
+      extensions: {
+        ghost: { enabled: false, failStreak: 3, disabledReason: "from yesterday" },
+      },
+    }));
+
+    // Load only ext-a (whitelist). This fires verdict.append → save.
+    const reg = await loadExtensions({ extensionsDir: extsDir, flowDir, extensionWhitelist: ["ext-a"], quietBypass: true });
+    await fireVerdictAppend(reg, { node: "review", runDir: mkdtempSync(join(tmpBase, "run-")) });
+
+    const after = JSON.parse(readFileSync(statePath, "utf8"));
+    // ghost must still be there — not wiped by ext-a's save
+    assert.equal(after.extensions.ghost?.enabled, false);
+    assert.equal(after.extensions.ghost?.disabledReason, "from yesterday");
+    // ext-a must also be present
+    assert.ok(after.extensions["ext-a"], "ext-a should be in the file too");
+  });
+
+  test("U5.8r: saveBreakerState preserves unknown top-level fields (forward-compat round-trip)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+
+    // Seed a file with a future field a v1 writer doesn't know about
+    const statePath = join(flowDir, BREAKER_STATE_FILE);
+    writeFileSync(statePath, JSON.stringify({
+      version: 1,
+      updatedAt: "2026-04-18T00:00:00.000Z",
+      extensions: {},
+      futureField: { hello: "world" },
+    }));
+
+    const reg = await loadExtensions({ extensionsDir: extsDir, flowDir, quietBypass: true });
+    saveBreakerState(flowDir, reg);
+
+    const after = JSON.parse(readFileSync(statePath, "utf8"));
+    // futureField must survive round-trip
+    assert.deepEqual(after.futureField, { hello: "world" });
+    assert.equal(after.version, 1);
+  });
+
+  test("U5.8r: applyBreakerState emits a stderr breadcrumb naming restored-disabled extensions", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir, "ext-a");
+    writeFlaky(extsDir, "ext-b");
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    writeFileSync(join(flowDir, BREAKER_STATE_FILE), JSON.stringify({
+      version: 1,
+      updatedAt: "x",
+      extensions: {
+        "ext-a": { enabled: false, failStreak: 3, disabledReason: "prior trip" },
+        "ext-b": { enabled: true, failStreak: 0 },
+      },
+    }));
+
+    const captured = [];
+    const origErr = console.error;
+    console.error = (...args) => { captured.push(args.join(" ")); };
+    try {
+      await loadExtensions({ extensionsDir: extsDir, flowDir, quietBypass: true });
+    } finally {
+      console.error = origErr;
+    }
+
+    const joined = captured.join("\n");
+    assert.ok(/restored disabled state/.test(joined), `expected breadcrumb in stderr, got:\n${joined}`);
+    assert.ok(/ext-a/.test(joined), "breadcrumb must name ext-a");
+    assert.ok(!/ext-b/.test(joined.split("restored disabled")[1] || ""), "breadcrumb must NOT name ext-b (it was enabled)");
+  });
+
+  test("U5.8r: resetExtension(ext, registry) persists the reset when flowDir is tracked", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    // Seed disabled state
+    writeFileSync(join(flowDir, BREAKER_STATE_FILE), JSON.stringify({
+      version: 1, updatedAt: "x",
+      extensions: { flaky: { enabled: false, failStreak: 3, disabledReason: "old" } },
+    }));
+
+    const reg = await loadExtensions({ extensionsDir: extsDir, flowDir, quietBypass: true });
+    // Loaded as disabled
+    assert.equal(reg.extensions[0].enabled, false);
+
+    // Reset with registry → should persist
+    resetExtension(reg.extensions[0], reg);
+
+    const after = JSON.parse(readFileSync(join(flowDir, BREAKER_STATE_FILE), "utf8"));
+    assert.equal(after.extensions.flaky.enabled, true, "persisted state must show enabled=true after reset");
+    assert.equal(after.extensions.flaky.failStreak, 0);
+    assert.ok(!after.extensions.flaky.disabledReason, "disabledReason must be cleared");
+  });
+
+  test("U5.8r: OPC_BREAKER_STATE=disabled disables both load and save (no file reads/writes)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    // Seed a file that would normally disable the extension
+    const statePath = join(flowDir, BREAKER_STATE_FILE);
+    writeFileSync(statePath, JSON.stringify({
+      version: 1, updatedAt: "x",
+      extensions: { flaky: { enabled: false, failStreak: 3, disabledReason: "x" } },
+    }));
+
+    const prev = process.env.OPC_BREAKER_STATE;
+    process.env.OPC_BREAKER_STATE = "disabled";
+    try {
+      const reg = await loadExtensions({ extensionsDir: extsDir, flowDir, quietBypass: true });
+      // Load was skipped — extension must appear enabled
+      assert.equal(reg.extensions[0].enabled, true, "with OPC_BREAKER_STATE=disabled, the stale-disabled state must not apply");
+      // Save is also a no-op
+      saveBreakerState(flowDir, reg);
+      const after = JSON.parse(readFileSync(statePath, "utf8"));
+      // File unchanged (still shows flaky disabled from the seed)
+      assert.equal(after.extensions.flaky.enabled, false, "file must be unchanged when persistence is disabled");
+    } finally {
+      if (prev === undefined) delete process.env.OPC_BREAKER_STATE;
+      else process.env.OPC_BREAKER_STATE = prev;
+    }
   });
 });

@@ -23,7 +23,7 @@
 //
 // Finding shape: { severity: "error"|"warning"|"info", category: string, message: string, file?: string }
 
-import { readFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { readdir } from "fs/promises";
 import { join } from "path";
 import os from "os";
@@ -117,12 +117,20 @@ function recordSuccess(ext) {
  * Manually re-enable a disabled extension and clear its failure streak so it
  * isn't immediately re-tripped by the next single failure. Call this from an
  * orchestrator only after fixing the root cause.
+ *
+ * If `registry` is provided and has `_flowDir`, the persisted breaker state
+ * is updated so the reset survives across CLI invocations. Without this,
+ * resetExtension was effectively a no-op under short-lived-process CLI
+ * (U5.8r finding).
  */
-export function resetExtension(ext) {
+export function resetExtension(ext, registry) {
   if (!ext) return;
   ext.enabled = true;
   ext._failStreak = 0;
   delete ext.disabledReason;
+  if (registry && registry._flowDir) {
+    try { saveBreakerState(registry._flowDir, registry); } catch { /* non-fatal */ }
+  }
 }
 
 // ─── Persistent circuit-breaker state (F5 / U5.7) ────────────────
@@ -160,8 +168,20 @@ export function resetExtension(ext) {
 export const BREAKER_STATE_FILE = ".extension-state.json";
 let _breakerSchemaWarned = false;
 
+/**
+ * Master switch for persistence. `OPC_BREAKER_STATE=disabled` skips all
+ * load/save — useful for tests that share a harness dir across scenarios
+ * and don't want breaker state to leak between them. The previous
+ * workaround (`rm -f .extension-state.json` between test phases) worked
+ * but leaked into every user test script. (U5.8r finding.)
+ */
+function breakerPersistenceEnabled() {
+  return process.env.OPC_BREAKER_STATE !== "disabled";
+}
+
 export function loadBreakerState(flowDir) {
   if (!flowDir) return null;
+  if (!breakerPersistenceEnabled()) return null;
   const statePath = join(flowDir, BREAKER_STATE_FILE);
   if (!existsSync(statePath)) return null;
   let parsed;
@@ -185,6 +205,7 @@ export function loadBreakerState(flowDir) {
 
 export function applyBreakerState(registry, state) {
   if (!state || !state.extensions) return;
+  const restored = [];
   for (const ext of registry.extensions) {
     const snap = state.extensions[ext.name];
     if (!snap || typeof snap !== "object") continue;
@@ -193,16 +214,41 @@ export function applyBreakerState(registry, state) {
       ext.disabledReason = typeof snap.disabledReason === "string"
         ? snap.disabledReason
         : "circuit-breaker state restored (ext was disabled in prior run)";
+      restored.push(ext.name);
     }
     if (typeof snap.failStreak === "number" && snap.failStreak >= 0) {
       ext._failStreak = Math.floor(snap.failStreak);
     }
   }
+  // U5.8r: surface the restoration so operators can diagnose "my ext
+  // stopped firing". One stderr line per load, naming the extensions.
+  if (restored.length > 0) {
+    console.error(`[opc] restored disabled state from .extension-state.json: ${restored.join(", ")} (use 'opc-harness init' to clear or set OPC_BREAKER_STATE=disabled)`);
+  }
 }
 
 export function saveBreakerState(flowDir, registry) {
   if (!flowDir || !registry || !Array.isArray(registry.extensions)) return;
-  const extensions = {};
+  if (!breakerPersistenceEnabled()) return;
+
+  // U5.8r: read-modify-write rather than overwrite.
+  //   (a) Whitelist bypass (`--extensions a,b`) loads only a subset —
+  //       overwriting would silently wipe breaker snapshots for every
+  //       extension not in the whitelist.
+  //   (b) Forward-compat: a future v2 writer may add top-level fields; a
+  //       v1 writer should preserve them rather than clobber on round-trip.
+  const statePath = join(flowDir, BREAKER_STATE_FILE);
+  let existing = null;
+  if (existsSync(statePath)) {
+    try {
+      const raw = JSON.parse(readFileSync(statePath, "utf8"));
+      if (raw && typeof raw === "object" && raw.version === 1) existing = raw;
+    } catch { /* treat as no existing */ }
+  }
+
+  const extensions = existing && existing.extensions && typeof existing.extensions === "object"
+    ? { ...existing.extensions }
+    : {};
   for (const ext of registry.extensions) {
     extensions[ext.name] = {
       enabled: ext.enabled !== false,
@@ -211,11 +257,11 @@ export function saveBreakerState(flowDir, registry) {
     if (ext.disabledReason) extensions[ext.name].disabledReason = ext.disabledReason;
   }
   const payload = {
+    ...(existing || {}),
     version: 1,
     updatedAt: new Date().toISOString(),
     extensions,
   };
-  const statePath = join(flowDir, BREAKER_STATE_FILE);
   try {
     // Ensure parent dir exists (extension-test may be invoked with a
     // flowDir that hasn't been created by `init`).
@@ -231,12 +277,12 @@ export function clearBreakerState(flowDir) {
   if (!flowDir) return;
   const statePath = join(flowDir, BREAKER_STATE_FILE);
   if (!existsSync(statePath)) return;
+  // U5.8r: delete the file rather than rewrite with empty extensions.
+  // "Missing file" and "empty file" should be semantically identical
+  // (loadBreakerState returns null for both), and delete-on-init is the
+  // clearer mental model — matches the file-lifecycle docs in §7.4.
   try {
-    // Use unlink via fs — but fs isn't imported statically for unlink.
-    // writeFileSync empty + rename would leave a zero-byte file; simplest
-    // is to rewrite with a fresh empty-extensions payload.
-    const fresh = { version: 1, updatedAt: new Date().toISOString(), extensions: {} };
-    atomicWriteSync(statePath, JSON.stringify(fresh, null, 2) + "\n");
+    unlinkSync(statePath);
   } catch (err) {
     console.error(`WARN: could not clear .extension-state.json: ${err.message}`);
   }
