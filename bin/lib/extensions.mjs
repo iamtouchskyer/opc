@@ -322,13 +322,20 @@ function extensionMatches(requires, provides, compatible) {
 /**
  * F2: WARN once per registry when ctx.nodeCapabilities is unset/empty.
  * Mutates registry._warnedMissingCaps = true on first fire. Silent thereafter.
+ * Short-circuits when registry has zero extensions — no one is listening.
  */
 function warnMissingNodeCapsOnce(registry, context) {
   if (!registry || typeof registry !== "object") return;
   if (registry._warnedMissingCaps) return;
+  if (!Array.isArray(registry.extensions) || registry.extensions.length === 0) return;
   const caps = context?.nodeCapabilities;
   if (Array.isArray(caps) && caps.length > 0) return;
-  console.error("[extensions] WARN: ctx.nodeCapabilities not set — no hooks will match");
+  const names = registry.extensions.map(e => e.name).filter(Boolean).slice(0, 5).join(", ");
+  const suffix = names ? ` — loaded extensions (${names}) won't match anything.` : "";
+  console.error(
+    `[extensions] WARN: ctx.nodeCapabilities not set — no hooks will match.${suffix} ` +
+    `Set nodeCapabilities in your flow template or pass it in the harness CLI context.`
+  );
   registry._warnedMissingCaps = true;
 }
 
@@ -524,6 +531,14 @@ export async function firePromptAppend(registry, context) {
 /**
  * Call verdict.append on extensions whose `provides` matches context.nodeCapabilities.
  * Writes findings to {context.runDir}/eval-extensions.md.
+ *
+ * Returns `{ findings, filePath }`:
+ *   - `findings`: array of normalized findings, each tagged with `_ext` (string,
+ *     the extension's directory/name) so callers can attribute which extension
+ *     produced which finding. The `_ext` key is part of the public return
+ *     contract — not a private field — callers may read it.
+ *   - `filePath`: absolute path to the written `eval-extensions.md`, or `null`
+ *     when `context.runDir` is not set (findings still collected in-memory).
  */
 export async function fireVerdictAppend(registry, context) {
   const allFindings = [];
