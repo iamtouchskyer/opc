@@ -2729,3 +2729,173 @@ describe("U5.5 F6 — extension-test --lint hook/provides mismatch", () => {
     assert.doesNotMatch(err, /hook mismatch/);
   });
 });
+
+// ─── U5.6r fix-pair — reviewer feedback ──────────────────────────
+
+describe("U5.6r fix-pair — DX and robustness polish", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("typo-guard: --fixturedir (unknown flag) → exit 1 with actionable error", async () => {
+    // Reviewer B 🟡: before the fix, getFlag silently ignored unknown flags,
+    // so `--fixturedir /tmp/x` ran with no sandbox and could write into repo.
+    const extDir = join(tmpBase, "any");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56a=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--fixturedir", "/tmp/typo", "--lint"])
+    );
+    assert.equal(exitCode, 1);
+    assert.match(err, /Unknown flag: --fixturedir/);
+    assert.match(err, /--fixture-dir/); // list shows the real flag for correction
+  });
+
+  test("typo-guard: --lint-stict (unknown flag) → exit 1", async () => {
+    const extDir = join(tmpBase, "any2");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56b=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint-stict"])
+    );
+    assert.equal(exitCode, 1);
+    assert.match(err, /Unknown flag: --lint-stict/);
+  });
+
+  test("--lint-strict: no lint issues → exit 0", async () => {
+    const extDir = join(tmpBase, "clean");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56c=${Date.now()}`);
+    const { exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint-strict"])
+    );
+    assert.equal(exitCode, 0);
+  });
+
+  test("--lint-strict: hook mismatch → exit 1 (CI-failable)", async () => {
+    // Reviewer B 🟡: `--lint` is documented as pre-commit check but exits 0
+    // always, so CI can't fail the build. `--lint-strict` gives CI a knob.
+    const extDir = join(tmpBase, "mismatched");
+    writeExtension(extDir, `
+      export const meta = { provides: [] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56d=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint-strict"])
+    );
+    assert.equal(exitCode, 1);
+    assert.match(err, /hook mismatch/);
+  });
+
+  test("--lint-strict: malformed capability shape → exit 1", async () => {
+    const extDir = join(tmpBase, "badcap");
+    writeExtension(extDir, `
+      export const meta = { provides: ["BAD@1"] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56e=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint-strict"])
+    );
+    assert.equal(exitCode, 1);
+    assert.match(err, /failed capability-shape check/);
+  });
+
+  test("fixture-dir: symlinks are dereferenced (no sandbox escape)", async () => {
+    // Reviewer A 🟡: without dereference:true, `cp -r` preserves symlinks.
+    // A fixture with a symlink to /etc/passwd would read /etc/passwd during
+    // test. With dereference:true, the target content is copied as a plain
+    // file into the tmp sandbox — removing the tmp dir removes all copies.
+    const realDir = join(tmpBase, "real");
+    mkdirSync(realDir, { recursive: true });
+    writeFileSync(join(realDir, "secret.txt"), "OUTSIDE-SANDBOX", "utf8");
+    const fixtureSrc = join(tmpBase, "fx-with-symlink");
+    mkdirSync(fixtureSrc, { recursive: true });
+    // Create a symlink inside the fixture pointing OUTSIDE the fixture.
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync(join(realDir, "secret.txt"), join(fixtureSrc, "escape-link"));
+
+    const extDir = join(tmpBase, "peek");
+    writeExtension(extDir, `
+      import { existsSync, readFileSync, lstatSync } from "fs";
+      import { join } from "path";
+      export const meta = { provides: ["verification@1"] };
+      export function promptAppend(ctx) {
+        const p = join(ctx.flowDir, "escape-link");
+        if (!existsSync(p)) return "missing";
+        const stat = lstatSync(p);
+        return "isSymlink=" + stat.isSymbolicLink() + " content=" + readFileSync(p, "utf8");
+      }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56f=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "prompt.append", "--fixture-dir", fixtureSrc])
+    );
+    assert.equal(exitCode, 0);
+    // dereference:true means the copy is a plain file, not a symlink.
+    assert.match(out, /isSymlink=false/);
+    // Content is preserved (it's what we'd expect for a useful fixture) but
+    // the real file can be deleted and the tmp copy stays readable → sandbox.
+    assert.match(out, /content=OUTSIDE-SANDBOX/);
+  });
+
+  test("stderr text 'Specify --hook <name> or --all-hooks' preserved (no breaking change)", async () => {
+    // Reviewer B 🟡: the U5.5 version changed this text to include "or --lint
+    // for lint-only mode", which would break scripts grepping for the old
+    // phrase. Restored to verbatim pre-U5.5 text.
+    const extDir = join(tmpBase, "any3");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56g=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir])
+    );
+    assert.equal(exitCode, 1);
+    // Exact phrase, no trailing additions.
+    assert.match(err, /Specify --hook <name> or --all-hooks\n?$/m);
+  });
+
+  test("--lint with --hook ignored (lint wins, hook not invoked)", async () => {
+    // Reviewer B 🟡: --lint + --hook combination was undocumented. Now
+    // verified: --lint wins, hooks are skipped regardless of --hook/--all-hooks.
+    const extDir = join(tmpBase, "should-not-fire");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { throw new Error("MUST NOT FIRE"); }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u56h=${Date.now()}`);
+    const { out, err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "verdict.append", "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    assert.doesNotMatch(out, /verdict\.append/);
+    assert.doesNotMatch(err, /MUST NOT FIRE/);
+  });
+});
