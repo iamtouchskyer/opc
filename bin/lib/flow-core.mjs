@@ -13,7 +13,7 @@ import {
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
-import { loadExtensions, saveRegistryCache, resolveBypass } from "./extensions.mjs";
+import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
@@ -126,6 +126,9 @@ export async function cmdInit(args) {
   // Wrap in try/catch — a failed cache write (readonly dir, disk full) must
   // NOT crash init. The registry is recomputed at hook fire time anyway.
   try {
+    // F5 / U5.7: do NOT pass flowDir here — init means "start over", we
+    // don't want to inherit a stale .extension-state.json from a prior run.
+    // clearBreakerState below wipes it before the first real hook fires.
     const registry = await loadExtensions(bypassCfg);
     // Stamp bypass marker into cache for post-hoc audit
     registry.bypass = bypassRecord;
@@ -133,6 +136,14 @@ export async function cmdInit(args) {
       saveRegistryCache(dir, registry);
     } catch (cacheErr) {
       console.error(`WARN: could not write .ext-registry.json: ${cacheErr.message}`);
+    }
+    // F5 / U5.7: fresh flow — clear any stale circuit-breaker state from a
+    // prior aborted run. init == "start over", so no ext should be born
+    // already disabled. clearBreakerState is idempotent (no-op if file missing).
+    try {
+      clearBreakerState(dir);
+    } catch (clearErr) {
+      console.error(`WARN: could not clear .extension-state.json: ${clearErr.message}`);
     }
   } catch (err) {
     // Extension load failures must not block init — they surface at hook

@@ -131,6 +131,10 @@ echo "--- 3.1: STRICT — OPC_STRICT_EXTENSIONS=1: throw-ext failure → exit �
 rm -rf "$HARNESS_NAME/nodes/review/run_1"
 mkdir -p "$HARNESS_NAME/nodes/review/run_1"
 echo '{}' > "$HARNESS_NAME/nodes/review/run_1/handshake.json"
+# F5/U5.7: default run tripped throw-ext's breaker and persisted the state
+# to .extension-state.json. For this scenario we want throw-ext to fire
+# again under strict mode, so reset persistent breaker state.
+rm -f "$HARNESS_NAME/.extension-state.json"
 
 OPC_STRICT_EXTENSIONS=1 \
   $OPC extension-verdict --node review \

@@ -20,6 +20,11 @@ import {
   fireExecuteRun,
   fireArtifactEmit,
   renderEvalMarkdown,
+  loadBreakerState,
+  saveBreakerState,
+  clearBreakerState,
+  applyBreakerState,
+  BREAKER_STATE_FILE,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -2897,5 +2902,224 @@ describe("U5.6r fix-pair — DX and robustness polish", () => {
     assert.equal(exitCode, 0);
     assert.doesNotMatch(out, /verdict\.append/);
     assert.doesNotMatch(err, /MUST NOT FIRE/);
+  });
+});
+
+// ─── U5.7 F5: Persistent circuit-breaker state ───────────────────
+
+describe("U5.7 F5 — persistent circuit-breaker state", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  function writeFlaky(extsDir, name = "flaky") {
+    const d = join(extsDir, name);
+    writeExtension(d, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { throw new Error("boom"); }
+    `);
+    return d;
+  }
+
+  test("saveBreakerState writes valid schema v1 JSON atomically", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+
+    const registry = await loadExtensions({ extensionsDir: extsDir, flowDir });
+    // Hand-disable to simulate tripped state
+    registry.extensions[0].enabled = false;
+    registry.extensions[0].disabledReason = "test-tripped";
+    registry.extensions[0]._failStreak = 5;
+
+    saveBreakerState(flowDir, registry);
+
+    const path = join(flowDir, BREAKER_STATE_FILE);
+    assert.ok(existsSync(path));
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(parsed.version, 1);
+    assert.match(parsed.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(parsed.extensions.flaky.enabled, false);
+    assert.equal(parsed.extensions.flaky.failStreak, 5);
+    assert.equal(parsed.extensions.flaky.disabledReason, "test-tripped");
+  });
+
+  test("loadBreakerState reads v1 file and ignores unknown versions", () => {
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    const path = join(flowDir, BREAKER_STATE_FILE);
+
+    // Missing file → null
+    assert.equal(loadBreakerState(flowDir), null);
+
+    // Unknown version → null + WARN
+    writeFileSync(path, JSON.stringify({ version: 99, extensions: {} }));
+    assert.equal(loadBreakerState(flowDir), null);
+
+    // Valid v1 → object
+    writeFileSync(path, JSON.stringify({
+      version: 1, updatedAt: new Date().toISOString(),
+      extensions: { foo: { enabled: false, failStreak: 3 } },
+    }));
+    const snap = loadBreakerState(flowDir);
+    assert.equal(snap.version, 1);
+    assert.equal(snap.extensions.foo.enabled, false);
+
+    // Corrupt JSON → null, no crash
+    writeFileSync(path, "{not-json");
+    assert.equal(loadBreakerState(flowDir), null);
+  });
+
+  test("applyBreakerState marks matching extensions disabled", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir, "ext-a");
+    writeFlaky(extsDir, "ext-b");
+
+    const registry = await loadExtensions({ extensionsDir: extsDir });
+    applyBreakerState(registry, {
+      version: 1,
+      extensions: { "ext-a": { enabled: false, failStreak: 4, disabledReason: "prior-run" } },
+    });
+
+    const a = registry.extensions.find(e => e.name === "ext-a");
+    const b = registry.extensions.find(e => e.name === "ext-b");
+    assert.equal(a.enabled, false);
+    assert.equal(a._failStreak, 4);
+    assert.equal(a.disabledReason, "prior-run");
+    // Unmentioned ext untouched
+    assert.equal(b.enabled, true);
+    assert.equal(b._failStreak || 0, 0);
+  });
+
+  test("loadExtensions({flowDir}) re-applies persisted disabled state", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+
+    // Seed persisted state
+    writeFileSync(join(flowDir, BREAKER_STATE_FILE), JSON.stringify({
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      extensions: { flaky: { enabled: false, failStreak: 7, disabledReason: "persisted" } },
+    }));
+
+    const registry = await loadExtensions({ extensionsDir: extsDir, flowDir });
+    assert.equal(registry._flowDir, flowDir);
+    const ext = registry.extensions[0];
+    assert.equal(ext.enabled, false);
+    assert.equal(ext._failStreak, 7);
+    assert.equal(ext.disabledReason, "persisted");
+  });
+
+  test("fireVerdictAppend persists breaker state across invocations (same flow)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+
+    // Three invocations — each reloads extensions with flowDir, fires, state persists.
+    const runDir = join(tmpBase, "runs/r1");
+    mkdirSync(runDir, { recursive: true });
+
+    async function invoke() {
+      const registry = await loadExtensions({ extensionsDir: extsDir, flowDir });
+      await fireVerdictAppend(registry, {
+        nodeCapabilities: ["verification@1"], flowDir, runDir,
+      });
+      return registry;
+    }
+
+    // Default threshold is 3 consecutive failures.
+    const r1 = await invoke();
+    assert.equal(r1.extensions[0].enabled, true, "run1: not yet tripped");
+    assert.equal(r1.extensions[0]._failStreak, 1);
+
+    const r2 = await invoke();
+    assert.equal(r2.extensions[0].enabled, true, "run2: one more failure");
+    assert.equal(r2.extensions[0]._failStreak, 2);
+
+    const r3 = await invoke();
+    // Third failure trips the breaker. After the next load the ext should
+    // come back already disabled.
+    assert.equal(r3.extensions[0].enabled, false, "run3: breaker tripped");
+
+    // Fourth invocation — ext starts disabled, so no hook fires, no new failure.
+    const r4 = await invoke();
+    assert.equal(r4.extensions[0].enabled, false, "run4: still disabled");
+  });
+
+  test("clearBreakerState rewrites file as empty extensions", () => {
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    const path = join(flowDir, BREAKER_STATE_FILE);
+    writeFileSync(path, JSON.stringify({
+      version: 1, updatedAt: "x",
+      extensions: { foo: { enabled: false, failStreak: 9 } },
+    }));
+
+    clearBreakerState(flowDir);
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(parsed.version, 1);
+    assert.deepEqual(parsed.extensions, {});
+  });
+
+  test("clearBreakerState on missing file is a no-op (no throw, no file created)", () => {
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    // Sanity: no state file yet
+    assert.ok(!existsSync(join(flowDir, BREAKER_STATE_FILE)));
+    clearBreakerState(flowDir);
+    assert.ok(!existsSync(join(flowDir, BREAKER_STATE_FILE)));
+  });
+
+  test("saveBreakerState creates parent dir if missing (no ENOENT crash)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const flowDir = join(tmpBase, "not/yet/created");
+    // Parent dir doesn't exist — saveBreakerState must mkdir -p it.
+    const registry = await loadExtensions({ extensionsDir: extsDir, flowDir });
+    registry._flowDir = flowDir;
+    saveBreakerState(flowDir, registry);
+    assert.ok(existsSync(join(flowDir, BREAKER_STATE_FILE)));
+  });
+
+  test("no flowDir → fire* does not persist (no file created anywhere)", async () => {
+    const extsDir = join(tmpBase, "extensions");
+    mkdirSync(extsDir, { recursive: true });
+    writeFlaky(extsDir);
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir, { recursive: true });
+
+    // No flowDir passed into config
+    const registry = await loadExtensions({ extensionsDir: extsDir });
+    assert.equal(registry._flowDir, undefined);
+    await fireVerdictAppend(registry, {
+      nodeCapabilities: ["verification@1"], flowDir: undefined, runDir,
+    });
+    // No state file anywhere under tmpBase
+    // Walk: just check obvious candidates
+    assert.ok(!existsSync(join(tmpBase, BREAKER_STATE_FILE)));
+    assert.ok(!existsSync(join(runDir, BREAKER_STATE_FILE)));
+  });
+
+  test("bypass (disable-all) does not attempt to load or persist breaker state", async () => {
+    const flowDir = join(tmpBase, "flow");
+    mkdirSync(flowDir, { recursive: true });
+    // Seed a stale state file to prove it's not consulted
+    writeFileSync(join(flowDir, BREAKER_STATE_FILE), JSON.stringify({
+      version: 1, extensions: { ghost: { enabled: false } },
+    }));
+
+    const registry = await loadExtensions({ noExtensions: true, flowDir, quietBypass: true });
+    assert.deepEqual(registry.extensions, []);
+    // _flowDir should not be set under bypass (no extensions to track)
+    assert.equal(registry._flowDir, undefined);
   });
 });

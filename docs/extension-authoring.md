@@ -915,6 +915,57 @@ await fetch(url, { signal: AbortSignal.timeout(5000) });
 await page.goto(url, { timeout: 10_000 });
 ```
 
+### 7.4 Persistent breaker state (`.extension-state.json`)
+
+The circuit breaker's `ext.enabled` / `ext._failStreak` / `ext.disabledReason`
+are **persisted to disk** across CLI invocations within the same flow. This
+matters because OPC is a short-lived-process CLI — without persistence, every
+`opc-harness extension-verdict`, `prompt-context`, `extension-artifact` call
+would start with a fresh in-memory registry and the breaker could never trip
+across invocations.
+
+**Location:** `<flow-dir>/.extension-state.json` (where `<flow-dir>` is
+whatever you passed to `--dir`, typically `.harness`).
+
+**Schema (v1):**
+
+```json
+{
+  "version": 1,
+  "updatedAt": "2026-04-19T10:30:00.000Z",
+  "extensions": {
+    "my-ext": {
+      "enabled": false,
+      "failStreak": 3,
+      "disabledReason": "circuit_breaker: 3 consecutive failures"
+    }
+  }
+}
+```
+
+**Lifecycle:**
+- **Written** at the end of every `fire*` call when `flowDir` is configured.
+  Atomic (tmp + rename) — no torn reads.
+- **Read** by `loadExtensions({flowDir})` — applies `enabled=false` and
+  streak state to extensions whose `name` matches. Unknown extensions in the
+  file are ignored (no error).
+- **Cleared** by `opc-harness init` — a fresh run starts with a clean slate.
+  "Init == start over." If you want to preserve a tripped breaker across runs
+  on purpose, don't re-init.
+- **Bypass mode** (`--no-extensions`, `OPC_EXTENSIONS=disable`) does NOT
+  load or persist breaker state — bypass is process-local by design.
+
+**Forward-compat:** If `version` is missing or not `1`, the core logs a single
+WARN to stderr and falls back to an empty state (does not crash). Corrupt JSON
+is treated the same way. This lets future schema versions ship without
+breaking older core binaries that encounter them.
+
+**Testing note:** If your test suite runs the same flow dir through multiple
+scenarios that each expect a "clean breaker" (e.g. default-mode trips breaker,
+then strict-mode scenario expects the same extension to fire again), `rm -f
+<flow-dir>/.extension-state.json` between scenarios. See
+`test/test-run2-strict.sh` for an example.
+
 ---
 
 ## 8. Failure sidecar — how your crashes surface

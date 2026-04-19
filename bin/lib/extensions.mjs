@@ -125,6 +125,124 @@ export function resetExtension(ext) {
   delete ext.disabledReason;
 }
 
+// ─── Persistent circuit-breaker state (F5 / U5.7) ────────────────
+//
+// Problem: circuit-breaker state lives on the in-memory `ext` object. Every
+// CLI invocation (`extension-verdict`, `extension-artifact`, ...) reloads
+// extensions and resets `_failStreak=0` and `enabled=true`. A broken
+// extension trips → recovers → trips again on the very next call. The
+// breaker is effectively a no-op across invocations within a single flow.
+//
+// Fix: persist breaker state to `<flowDir>/.extension-state.json`.
+//   - `loadExtensions({ flowDir })` reads the file (if any) and applies
+//     `enabled=false`/`disabledReason`/`_failStreak` to matching extensions.
+//   - After any fire* hook, if `registry._flowDir` is set, the current
+//     breaker state is written atomically (write-to-tmp + rename).
+//   - `cmdInit` clears the file on fresh flow init so a new run starts
+//     with a clean slate.
+//
+// Schema v1:
+//   {
+//     "version": 1,
+//     "updatedAt": "2026-04-19T10:30:00.000Z",
+//     "extensions": {
+//       "flaky-ext": { "enabled": false, "failStreak": 3,
+//                      "disabledReason": "circuit-breaker tripped after 3 ..." },
+//       "healthy-ext": { "enabled": true, "failStreak": 0 }
+//     }
+//   }
+//
+// Forward-compat: unknown top-level keys are preserved round-trip; a
+// future v2 can add fields without breaking v1 readers. v!==1 rows are
+// ignored (log once, proceed with fresh state) so a downgraded binary
+// doesn't crash on a newer-schema file.
+
+export const BREAKER_STATE_FILE = ".extension-state.json";
+let _breakerSchemaWarned = false;
+
+export function loadBreakerState(flowDir) {
+  if (!flowDir) return null;
+  const statePath = join(flowDir, BREAKER_STATE_FILE);
+  if (!existsSync(statePath)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.error(`WARN: .extension-state.json unreadable (${err.message}) — proceeding with fresh breaker state`);
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (parsed.version !== 1) {
+    if (!_breakerSchemaWarned) {
+      console.error(`WARN: .extension-state.json version=${parsed.version} unknown (expected 1) — ignoring`);
+      _breakerSchemaWarned = true;
+    }
+    return null;
+  }
+  if (!parsed.extensions || typeof parsed.extensions !== "object") return null;
+  return parsed;
+}
+
+export function applyBreakerState(registry, state) {
+  if (!state || !state.extensions) return;
+  for (const ext of registry.extensions) {
+    const snap = state.extensions[ext.name];
+    if (!snap || typeof snap !== "object") continue;
+    if (snap.enabled === false) {
+      ext.enabled = false;
+      ext.disabledReason = typeof snap.disabledReason === "string"
+        ? snap.disabledReason
+        : "circuit-breaker state restored (ext was disabled in prior run)";
+    }
+    if (typeof snap.failStreak === "number" && snap.failStreak >= 0) {
+      ext._failStreak = Math.floor(snap.failStreak);
+    }
+  }
+}
+
+export function saveBreakerState(flowDir, registry) {
+  if (!flowDir || !registry || !Array.isArray(registry.extensions)) return;
+  const extensions = {};
+  for (const ext of registry.extensions) {
+    extensions[ext.name] = {
+      enabled: ext.enabled !== false,
+      failStreak: ext._failStreak || 0,
+    };
+    if (ext.disabledReason) extensions[ext.name].disabledReason = ext.disabledReason;
+  }
+  const payload = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    extensions,
+  };
+  const statePath = join(flowDir, BREAKER_STATE_FILE);
+  try {
+    // Ensure parent dir exists (extension-test may be invoked with a
+    // flowDir that hasn't been created by `init`).
+    mkdirSync(flowDir, { recursive: true });
+    atomicWriteSync(statePath, JSON.stringify(payload, null, 2) + "\n");
+  } catch (err) {
+    // Non-fatal — breaker falls back to in-memory only for this process.
+    console.error(`WARN: could not persist .extension-state.json: ${err.message}`);
+  }
+}
+
+export function clearBreakerState(flowDir) {
+  if (!flowDir) return;
+  const statePath = join(flowDir, BREAKER_STATE_FILE);
+  if (!existsSync(statePath)) return;
+  try {
+    // Use unlink via fs — but fs isn't imported statically for unlink.
+    // writeFileSync empty + rename would leave a zero-byte file; simplest
+    // is to rewrite with a fresh empty-extensions payload.
+    const fresh = { version: 1, updatedAt: new Date().toISOString(), extensions: {} };
+    atomicWriteSync(statePath, JSON.stringify(fresh, null, 2) + "\n");
+  } catch (err) {
+    console.error(`WARN: could not clear .extension-state.json: ${err.message}`);
+  }
+}
+
+
 // ─── Path resolution ─────────────────────────────────────────────
 
 function resolveExtensionsDir(config = {}) {
@@ -480,7 +598,21 @@ export async function loadExtensions(config = {}) {
     }
   }
 
-  return { extensions, applied, failures: [] };
+  const registry = { extensions, applied, failures: [] };
+
+  // F5 / U5.7: apply persisted circuit-breaker state from <flowDir>/.extension-state.json.
+  // Record flowDir on the registry so fire* hooks can re-persist after updates.
+  if (config.flowDir) {
+    registry._flowDir = config.flowDir;
+    try {
+      const snap = loadBreakerState(config.flowDir);
+      if (snap) applyBreakerState(registry, snap);
+    } catch (err) {
+      console.error(`WARN: failed to apply breaker state: ${err.message}`);
+    }
+  }
+
+  return registry;
 }
 
 // ─── firePromptAppend ────────────────────────────────────────────
@@ -523,6 +655,7 @@ export async function firePromptAppend(registry, context) {
       recordFailure(registry, ext, "prompt.append", kind, err.message);
     }
   }
+  if (registry._flowDir) saveBreakerState(registry._flowDir, registry);
   return parts.join("\n\n");
 }
 
@@ -628,6 +761,8 @@ export async function fireVerdictAppend(registry, context) {
   // signal, not a role evaluation, and should not trip thin-eval guards.
   writeFailureReport(registry, context.runDir);
 
+  if (registry._flowDir) saveBreakerState(registry._flowDir, registry);
+
   return { findings: allFindings, filePath, jsonPath };
 }
 
@@ -696,6 +831,7 @@ export async function fireExecuteRun(registry, context) {
       recordFailure(registry, ext, "execute.run", kind, err.message);
     }
   }
+  if (registry._flowDir) saveBreakerState(registry._flowDir, registry);
   return results;
 }
 
@@ -790,6 +926,7 @@ export async function fireArtifactEmit(registry, context) {
     // write failures (U1.6r semantics F1 fix-forward).
     if (!anyItemFailed) recordSuccess(ext);
   }
+  if (registry._flowDir) saveBreakerState(registry._flowDir, registry);
   return emitted;
 }
 
