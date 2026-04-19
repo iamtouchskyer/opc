@@ -94,6 +94,15 @@ Two forms are supported:
   `validateRunbook` — a runbook with a broken regex is rejected with a
   stderr WARN and skipped.
 
+> **YAML escaping footgun:** always wrap regex literals in **double
+> quotes** in the frontmatter. Backslashes inside double-quoted YAML
+> strings pass through to the OPC loader as a single backslash (which
+> RegExp then interprets as an escape — e.g. `"/\bword/"` correctly
+> compiles to a word-boundary). Single-quoted or unquoted forms have
+> different escape rules and have caused silently-broken patterns in
+> practice. If `runbook match` doesn't fire on a phrase you expect,
+> first check that your regex line is double-quoted.
+
 Tags that appear as whole words in the task also contribute score.
 
 ### Scoring
@@ -186,25 +195,40 @@ opc-harness runbook match -- "please use --dir /opt for install"
 6. **The body is human documentation.** The orchestrator may surface it
    to the operator or inject it into subagent prompts as context. Write
    it for the next person (likely future-you) to read.
+7. **Recognized unit IDs.** The schema validator only checks `units`
+   is `string[]` non-empty — any string passes. The loop-protocol's
+   default mapping (see `pipeline/loop-protocol.md` §"Standard unit
+   sequence") recognizes: `spec`, `design`, `plan`, `build`,
+   `implement`, `review`, `code-review`, `fix`, `test-design`,
+   `test-execute`, `e2e-verify`, `accept`, `acceptance`, `e2e`,
+   `audit`. Unrecognized IDs fall through to the build-verify default
+   silently — pick from this set unless you have a reason not to.
+
+### Try the reference runbook
+
+To use the canonical `add-feature` runbook shipped under
+`examples/runbooks/`, symlink it into your user runbooks dir:
+
+```bash
+mkdir -p ~/.opc/runbooks
+ln -s ~/.claude/skills/opc/examples/runbooks/add-feature.md \
+      ~/.opc/runbooks/add-feature.md
+opc-harness runbook match "add a dark-mode toggle"   # exit 0 + matched: true
+```
 
 ---
 
-## Loop-protocol integration (preview)
+## Loop-protocol integration
 
-Currently only the schema + CLI ship (unit U5.9). The loop-protocol
-wiring — "before decomposing, check `~/.opc/runbooks/` for a match" —
-lands in U5.11 and will look like:
+Shipped in U5.11 (v0.8). The loop-protocol's Step 0 invokes
+`opc-harness runbook match "<task>"` before plan decomposition. On
+exit `0` + `matched: true`, the orchestrator adopts the runbook's
+`flow` / `tier` / `units` as the loop plan. On exit `3` it falls
+through to fresh decomposition. See `pipeline/loop-protocol.md` §"Step 0
+— Runbook Lookup" for the full procedure.
 
-```
-0. [tick 0] If matchRunbook(task, loadRunbooks(runbookDir)) returns a
-   runbook, use its flow / tier / units as the loop plan. User can
-   override with --no-runbook. Otherwise fall through to decompose.
-```
-
-Until then, `runbook match` is a standalone diagnostic command: you can
-seed `~/.opc/runbooks/`, confirm your patterns are well-tuned, and
-then the upcoming loop-protocol change will start consuming them
-automatically.
+`runbook match` also remains a standalone diagnostic — invoke it
+directly to confirm your patterns fire before kicking off a real loop.
 
 ---
 
@@ -264,9 +288,12 @@ see the tie-breaker order above. You can always inspect scores with
 and the loop-protocol (post-U5.11) falls through to fresh task
 decomposition.
 
-**Q: Can I disable runbooks entirely?** Yes — either unset
-`OPC_RUNBOOKS_DIR` and remove `~/.opc/runbooks/`, or once U5.11 ships,
-pass `--no-runbook` (U5.11+) to `/opc loop`.
+**Q: Can I disable runbooks entirely?** Yes — set
+`OPC_DISABLE_RUNBOOKS=1` before the harness call. The CLI returns
+exit `3` with `disabled: true` in the payload, without scanning
+disk. (`/opc loop --no-runbook` is planned CLI sugar that would set
+this env var for one invocation, but is not yet wired into arg
+parsing as of v0.8 — set the env var directly until then.)
 
 **Q: What happens if a runbook has a typo?** The loader skips it with a
 stderr WARN naming the file and the validation error. Other runbooks

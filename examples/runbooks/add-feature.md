@@ -72,11 +72,13 @@ directive: **the agent that does the work never evaluates it.**
 - **Complex subsystem** → insert a `design` unit between `spec` and
   `plan` to brainstorm architecture.
 
-Override this runbook at invocation time with `--no-runbook` or by
-deleting `.opc/runbooks/add-feature.md`. If you want a project-local
-variant, copy this file to `.opc/runbooks/` and edit freely — runbooks
-resolve `.opc/runbooks/` (project) before `~/.opc/runbooks/` (user)
-before `OPC_RUNBOOKS_DIR`.
+Override this runbook at invocation time by setting
+`OPC_DISABLE_RUNBOOKS=1` before the harness call (forces match-miss
+without scanning disk). To use a project-local variant, copy this file
+to your project (or any directory) and point `OPC_RUNBOOKS_DIR` at it
+— the CLI resolves `--dir` flag → `OPC_RUNBOOKS_DIR` env var →
+`~/.opc/runbooks/` (default), in that order. There is no automatic
+project-local `.opc/runbooks/` discovery today.
 
 ## Match patterns
 
@@ -94,12 +96,19 @@ Tags `build` and `frontend` contribute +3 each if they appear as
 whole words in the task (e.g., "add a new build step" would pick up
 the `build` tag).
 
-## Acceptance criteria (baseline)
+## Acceptance criteria (baseline subset)
 
-Derived from the `polished` tier. Include these in every run:
+A representative subset derived from the `polished` tier. The full
+checklist (typography, navigation, code blocks, tables, favicon,
+smooth-scroll, etc.) lives in `pipeline/quality-tiers.md` — when this
+runbook fires, the orchestrator's quality-tier expansion picks up
+*all* polished items, not just the ones below. The bullets here are
+illustrative of what an `add a dark-mode toggle` task would surface
+first.
 
 - [ ] Dark + light theme pass visual review
-- [ ] Responsive at 375 / 768 / 1280 widths
+- [ ] Responsive at 375 / 768 / 1280 widths (extend to 320/1024/1440 per
+      tier baseline)
 - [ ] Loading / error / empty states covered
 - [ ] Focus styles on every interactive element
 - [ ] No console errors / warnings

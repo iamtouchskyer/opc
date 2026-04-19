@@ -46,7 +46,9 @@ function printHelp() {
   console.error("  opc-harness runbook show <id> [--dir <path>]");
   console.error("  opc-harness runbook match <task...> [--dir <path>]");
   console.error("");
-  console.error("Env: OPC_RUNBOOKS_DIR overrides the default ~/.opc/runbooks/");
+  console.error("Env:");
+  console.error("  OPC_RUNBOOKS_DIR        override the default ~/.opc/runbooks/");
+  console.error("  OPC_DISABLE_RUNBOOKS=1  force `match` to miss without scanning disk");
   console.error("Exit codes: 0 ok, 1 usage, 2 show-not-found, 3 match-miss");
 }
 
@@ -140,6 +142,32 @@ function runbookMatch(args) {
   if (args.includes("--help") || args.includes("-h")) {
     printHelp();
     return;
+  }
+  // OPC_DISABLE_RUNBOOKS=1 short-circuits to match-miss without scanning
+  // disk. Documented escape hatch (loop-protocol Step 0 / docs/runbooks.md)
+  // for users who want to force fresh decomposition. Any other value
+  // (including "0", empty, or unset) leaves matching enabled — strict "1"
+  // gate matches how OPC_DISABLE_EXTENSIONS works.
+  if (process.env.OPC_DISABLE_RUNBOOKS === "1") {
+    const taskParts = [];
+    let sawEoO = false;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (!sawEoO && a === "--") { sawEoO = true; continue; }
+      if (!sawEoO && a === "--dir") { i++; continue; }
+      if (!sawEoO && a.startsWith("--")) continue;
+      taskParts.push(a);
+    }
+    console.log(JSON.stringify({
+      task: taskParts.join(" ").trim(),
+      dir: null,
+      matched: false,
+      score: 0,
+      patterns: [],
+      runbook: null,
+      disabled: true,
+    }, null, 2));
+    process.exit(3);
   }
   // `match` reserves --dir and --help as flags. Everything else, including
   // --foo tokens, is rejected loudly (not swallowed into the task). Users

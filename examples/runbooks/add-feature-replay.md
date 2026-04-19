@@ -34,7 +34,8 @@ the new Step 0, before decomposition it shells out to:
 opc-harness runbook match "add a dark-mode toggle"
 ```
 
-Verified output (live):
+Verified output (live, with `~` substituted for the absolute home path
+in the rendered transcript below for portability):
 
 ```json
 {
@@ -188,9 +189,9 @@ to final summary. Cron cancelled. `.harness/report.html` generated.
   "添加一个暗色模式" would not match. Future work (U6+): bilingual
   keyword support or per-project runbook override.
 - `--no-runbook` is documented in loop-protocol but not yet wired into
-  `/opc loop` CLI parsing. That's a follow-up — for U5.11 the doc/CLI
-  split is acceptable because the escape hatch works via env var
-  (`OPC_DISABLE_RUNBOOKS=1`) which `runbook match` can read.
+  `/opc loop` CLI parsing. The wired escape hatch is the env var
+  `OPC_DISABLE_RUNBOOKS=1`, which `runbook match` honors as of U5.12r
+  (returns exit 3 with `disabled: true` in the payload). Verified live.
 
 ## Coherence check
 
