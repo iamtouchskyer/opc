@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.6 — Run 3: 5 real extensions mounted (2026-04-19)
+
+First production payload for the v0.5 extension surface. Five independently-
+scoped extensions built under `~/.opc/extensions/`, each paired with a
+2-reviewer gate and, where findings ≥ 🟡, a fix-pair commit. No OPC core
+modifications — any core bugs surfaced during build went to
+`.harness-run3/findings-for-run5.md`.
+
+Mirrored to `examples/extensions/<name>/` so the shipping skill repo contains
+the full set as reference implementations.
+
+### Extensions added
+
+- **design-lint** (`design-spec-conformance@1`, verdict.append) — walks up
+  from `ctx.flowDir` looking for `design-tokens.json`; if found + live
+  `ctx.devServerUrl` available, shells out to `opc-extend-design/bin/design-lint.mjs`
+  with 30s timeout and converts diffs to findings. Graceful `[]` otherwise.
+- **visual-eval** (`visual-consistency-check@1`, execute.run) — wraps
+  `opc-extend-visual-eval` Python via subprocess. On `ctx.runDir/artifacts/*.png`
+  presence, runs VLM evaluation with 60s bounded timeout; writes
+  `ext-visual-eval/visual-eval-marker.json` with `{status,exitCode,stderrTail}`.
+  Missing `DASHSCOPE_API_KEY` → `status=error` without throw (no registry
+  failure).
+- **memex-recall** (`context-enrichment@1`, prompt.append) — extracts
+  non-stopword keywords from `ctx.task` (CJK-segmented), probes `memex search`
+  with 3s timeout, formats top-3 results as `## 相关历史笔记`. CLI absent /
+  timeout → empty string (graceful no-op).
+- **git-changeset-review** (`code-quality-check@1`, verdict.append) — walks
+  up for `.git`, runs `git -c core.quotepath=false diff --numstat --no-renames
+  HEAD~1 HEAD` with 5s timeout, applies 3 rules: >500 lines 🟡, test/source
+  ratio <0.3 🟡, package.json without lockfile 🔴. `basename` match for lockfile
+  detection (not endsWith) to avoid false positives on `fake-package.json`.
+- **session-logex** (`post-flow-digest@1`, verdict.append) — soft nudge hook.
+  Walks up from `ctx.flowDir` for `flow-state.json` (direct + `.harness*/`
+  prefix-match), bounded by `.git` / `package.json` / `.opc` sentinels. On
+  `status ∈ DONE_STATUSES && steps >= 5 && /logex skill present`, emits info
+  finding with session.jsonl path hint. Dedup via sibling `.logex-nudged`
+  marker — same flow never re-nudges.
+
+### Integration surface verified (U3.6r)
+
+Driver at `examples/extensions/u36-integration-driver.mjs`. 9 assertions
+across 2 passes (in-repo + `/tmp/run3-u36-nongit`):
+
+- All 5 loaded; zero 🔴 registry failures.
+- `verdict.append` fires only for matching capabilities (`verification@1` /
+  `design-review@1`); `prompt.append` for memex-recall only; `execute.run`
+  for visual-eval only.
+- Isolation: only `ext-visual-eval/` writes files under `runDir`.
+- visual-eval marker written with valid status even when API key absent.
+- Non-git pass produces "No extension findings" — proves graceful degrade
+  isn't an artifact of the in-repo happy path.
+
+### Known gaps carried to Run 5
+
+See `.harness-run3/findings-for-run5.md` (if non-empty).
+
+### Test suite
+
+- Core test suite unchanged — 27 files pass, 0 fail (extensions live outside
+  core and don't touch `bin/opc-harness.mjs`).
+
 ## v0.5.1 — Extension system, Run 2 verification (2026-04-18)
 
 Hardens Run 1's extension surface against the gaps surfaced by independent
