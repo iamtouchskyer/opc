@@ -97,13 +97,11 @@ switch (command) {
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
     console.log();
     console.log("Extension commands:");
-    console.log("  extension-test --ext <p> --hook <h> --context <json>");
-    console.log("                                                     Dry-run a single extension hook");
-    console.log("  extension-verdict --dir <p> [--node <id>] [--run N] [--context <json>]");
-    console.log("                                                     Fire verdict.append → writes eval-extensions.{md,json}");
-    console.log("  extension-artifact --dir <p> [--node <id>] [--run N] [--context <json>]");
-    console.log("                                                     Fire artifact.emit → writes artifacts/");
-    console.log("  prompt-context --node <id> [--context <json>]      Fire prompt.append → emit extra prompt context");
+    console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks]");
+    console.log("                                                     Dry-run extension hook(s); use --all-hooks to fire every hook");
+    console.log("  extension-verdict --node <id> --dir <p>            Fire verdict.append → writes eval-extensions.{md,json}");
+    console.log("  extension-artifact --node <id> --dir <p>           Fire artifact.emit → writes artifacts/");
+    console.log("  prompt-context --node <id> --role <role> --dir <p> Fire prompt.append → emit extra prompt context");
     console.log();
     console.log("Loop commands (Layer 2 — zero trust):");
     console.log("  init-loop [--plan <file>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]");

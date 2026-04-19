@@ -19,6 +19,7 @@ import {
   lintCapability,
   fireExecuteRun,
   fireArtifactEmit,
+  renderEvalMarkdown,
 } from "./extensions.mjs";
 
 // ─── Test helpers ────────────────────────────────────────────────
@@ -672,7 +673,8 @@ export async function verdictAppend() {
     assert.equal(doc.version, 1, "schema version is 1");
     assert.equal(typeof doc.generatedAt, "string");
     assert.ok(!Number.isNaN(Date.parse(doc.generatedAt)), "generatedAt is ISO timestamp");
-    assert.deepEqual(doc.extensionsLoaded, ["linter"]);
+    assert.ok(doc.generatedAt.endsWith("Z"), "generatedAt is UTC");
+    assert.deepEqual(doc.extensionsLoaded, [{ name: "linter", enabled: true }]);
     assert.equal(doc.findings.length, 1);
     assert.deepEqual(doc.findings[0], {
       extension: "linter",
@@ -755,6 +757,91 @@ export async function verdictAppend() {
     const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
     assert.equal(doc.findings.length, 1, "only the normalized finding survives");
     assert.equal(doc.findings[0].message, "kept");
+  });
+
+  // ─ Fix-pair U5.4r ─────────────────────────────────────────────
+
+  test("fix-pair: renderEvalMarkdown exported + golden byte-identical output", () => {
+    const hand = {
+      version: 1,
+      generatedAt: "2026-04-19T00:00:00.000Z",
+      extensionsLoaded: [{ name: "linter", enabled: true }],
+      findings: [
+        { extension: "linter", severity: "error", category: "sec", message: "xss" },
+        { extension: "linter", severity: "warning", category: "style", message: "long", file: "b.js" },
+        { extension: "linter", severity: "info", category: "note", message: "FYI" },
+      ],
+    };
+    const md = renderEvalMarkdown(hand);
+    const expected =
+      "<!-- derived from eval-extensions.json — edits here will be overwritten -->\n" +
+      "# Extension Findings\n" +
+      "\n" +
+      "🔴 sec: xss\n" +
+      "🟡 style: long in b.js\n" +
+      "🔵 note: FYI\n";
+    assert.equal(md, expected, "golden byte-exact");
+  });
+
+  test("fix-pair: renderEvalMarkdown empty → 'No extension findings' fallback", () => {
+    const md = renderEvalMarkdown({
+      version: 1, generatedAt: "x", extensionsLoaded: [], findings: [],
+    });
+    assert.ok(md.includes("🔵 extensions: No extension findings"));
+    assert.ok(md.startsWith("<!-- derived"), "banner always first");
+  });
+
+  test("fix-pair: hook throws → JSON still written with findings:[]", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "boom"), `
+export const meta = { name: "boom", provides: ["cap"] };
+export async function verdictAppend() { throw new Error("kaboom"); }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    // Swallow stderr WARN
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = () => true;
+    try {
+      const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+      const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
+      assert.deepEqual(doc.findings, [], "no findings on throw");
+      assert.equal(doc.extensionsLoaded[0].name, "boom");
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  test("fix-pair: disabled (circuit-broken) ext shows enabled:false", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "tripped"), `
+export const meta = { name: "tripped", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    // Trip breaker manually
+    registry.extensions[0].enabled = false;
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+    const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
+    assert.equal(doc.extensionsLoaded[0].enabled, false, "disabled is visible");
+  });
+
+  test("fix-pair: markdown contains 'derived — do not edit' banner", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+    const md = readFileSync(result.filePath, "utf8");
+    assert.ok(md.startsWith("<!-- derived from eval-extensions.json"), "banner on first line");
+    assert.ok(md.includes("edits here will be overwritten"));
   });
 });
 

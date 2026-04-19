@@ -589,11 +589,24 @@ export async function fireVerdictAppend(registry, context) {
 
   // F4 — canonical JSON sidecar. Markdown is derived from this JSON.
   // Schema v1 is the public contract; tooling may depend on these field names.
+  // Design notes:
+  //   - `generatedAt` is ISO-8601 UTC (ends with `Z`). Consumers doing golden /
+  //     snapshot comparisons should ignore this field or stub Date.
+  //   - `extensionsLoaded[].enabled` reflects live circuit-breaker state at
+  //     dispatch time: `false` means the extension was loaded but tripped and
+  //     therefore did NOT fire for this call.
+  //   - `findings[].extension` is the on-disk field name. In-memory,
+  //     `fireVerdictAppend` returns `findings[]._ext` — same concept, two
+  //     names: `_ext` for JS callers (pre-F1 contract), `extension` for JSON
+  //     consumers (clean schema). Don't rename either without a v2 bump.
   const jsonPath = join(context.runDir, "eval-extensions.json");
   const jsonDoc = {
     version: 1,
     generatedAt: new Date().toISOString(),
-    extensionsLoaded: registry.extensions.map((e) => e.name),
+    extensionsLoaded: registry.extensions.map((e) => ({
+      name: e.name,
+      enabled: e.enabled !== false,
+    })),
     findings: allFindings.map((f) => ({
       extension: f._ext,
       severity: f.severity,
@@ -621,9 +634,17 @@ export async function fireVerdictAppend(registry, context) {
 /**
  * Render the canonical JSON doc as the legacy markdown view.
  * Public contract: markdown is derived — JSON is the source of truth.
+ *
+ * Exported for golden tests and for callers that want to preview markdown
+ * without writing to disk. Note the `<!-- derived -->` banner — hand edits
+ * will be overwritten on the next fireVerdictAppend.
  */
-function renderEvalMarkdown(jsonDoc) {
-  const lines = ["# Extension Findings", ""];
+export function renderEvalMarkdown(jsonDoc) {
+  const lines = [
+    "<!-- derived from eval-extensions.json — edits here will be overwritten -->",
+    "# Extension Findings",
+    "",
+  ];
   for (const f of jsonDoc.findings) {
     const emoji = f.severity === "error" ? "🔴" : f.severity === "warning" ? "🟡" : "🔵";
     const filePart = f.file ? ` in ${f.file}` : "";
