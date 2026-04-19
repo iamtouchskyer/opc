@@ -1,9 +1,8 @@
 {
-  "name": "my-extension",
   "version": "0.1.0",
-  "enabled": true,
+  "description": "Starter template — replace this string.",
   "meta": {
     "provides": ["my-capability@1"],
-    "compatibleCapabilities": ["verification@1"]
+    "compatibleCapabilities": []
   }
 }

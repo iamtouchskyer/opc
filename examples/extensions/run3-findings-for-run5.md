@@ -107,6 +107,33 @@ hint.
 
 **Severity:** 🔵 lint-quality.
 
+## F7 — `opc-harness --help` omits extension subcommands (Run 4 finding)
+
+**Where:** `opc-harness --help` banner output.
+
+**Context:** Reviewer A (U4.2r) live-tested the `_starter` README's headline
+command `opc-harness extension-test --ext … --all-hooks` against a brew-
+installed `opc-harness` on PATH. The brew binary printed the generic usage
+banner and exited 0 — no "unknown subcommand" error, no hint. Even switching
+to the bundled `node bin/opc-harness.mjs --help`, `grep -i ext` on the help
+text returns no matches. The `extension-test` / `prompt-context` /
+`extension-verdict` / `extension-artifact` / `config resolve` subcommands are
+fully implemented but undiscoverable from `--help`.
+
+**Risk at scale:** Junior devs following the starter README think the
+command doesn't exist (or worse, think their extension passed because
+exit code is 0). Distribution drift between brew / npm-global / bundled
+harnesses compounds the confusion.
+
+**Suggested Run 5 fix:** Add an "Extension commands:" section to the
+`--help` banner in `bin/opc-harness.mjs` listing `extension-test`,
+`prompt-context`, `extension-verdict`, `extension-artifact`, and
+`config resolve` with one-line descriptions. Starter-side mitigation
+(in U4.2r README §2) directs users to the bundled binary and flags the
+brew/stale-global gotcha until v0.7 ships the help update.
+
+**Severity:** 🟡 discoverability — silent no-op for users on stale binaries.
+
 ## Not deferred — fixed in Run 3 itself
 
 These were caught by U3.*r reviewers and fixed in fix-pair commits without
@@ -123,5 +150,6 @@ core changes:
 
 ## Recommendation
 
-None of F1–F6 block Run 4 (first third-party-authored extension). They
-accumulate as Run 5 polish. The core surface is production-ready as-is.
+None of F1–F6 block Run 4 (first third-party-authored extension). F7 is
+also non-blocking for Run 4 (starter-side mitigation shipped in U4.2r).
+They accumulate as Run 5 polish. The core surface is production-ready as-is.

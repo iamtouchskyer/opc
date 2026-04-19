@@ -1,16 +1,21 @@
 // hook.mjs — starter extension template.
-// Replace the name + capability in ext.json, then edit each hook below.
+// The loader reads `meta` from THIS file (not ext.json). The extension's
+// canonical name is the DIRECTORY NAME on disk — rename the dir to rename
+// the extension.
 // Every hook returns its graceful-empty value by default so
 // `opc-harness extension-test --all-hooks` exits 0 right after copy-paste.
 //
 // Only node builtins are imported here. Add your own deps in package.json
 // inside this directory if you need them.
 
-import { basename } from "node:path";
-
 export const meta = {
+  // The capability YOU provide. Nodes with this in `nodeCapabilities` fire your hooks.
   provides: ["my-capability@1"],
-  compatibleCapabilities: ["verification@1"],
+  // Older capability generations you still want to match (migration aid).
+  // Keep `[]` until you actually need it — a real value like "verification@1"
+  // will silently fire this (stub) extension on every verification@1 node
+  // in the pipeline. Change this to match the nodes you want to fire on.
+  compatibleCapabilities: [],
   description: "Starter template — replace this string.",
 };
 
@@ -66,8 +71,10 @@ export async function promptAppend(ctx) {
  * @returns {Promise<Array<{severity:string,category:string,message:string,file?:string}>>}
  */
 export async function verdictAppend(ctx) {
-  if (!ctx?.runDir) return [];
-  // TODO(starter): inspect runDir / devServerUrl, push findings into the array.
+  // TODO(starter): inspect ctx.task / ctx.runDir / ctx.devServerUrl and push
+  // findings into the array. For file-scanning hooks you may want to
+  // `if (!ctx?.runDir) return [];` early — skip that guard for task-string
+  // checks (e.g. scanning ctx.task for "FIXME").
   const findings = [];
   return findings;
 }
@@ -75,7 +82,8 @@ export async function verdictAppend(ctx) {
 /**
  * execute.run — fires during the executor phase, BEFORE artifact.emit.
  * Use this for side effects: hit a dev server, run Playwright, scan files.
- * Return value is not consumed. Throw → counted as a failure (circuit breaker).
+ * Return value is accepted but not consumed by the pipeline — use this
+ * hook for side effects only. Throw → counted as a failure (circuit breaker).
  * @param {{
  *   runDir?: string,
  *   devServerUrl?: string,
@@ -95,19 +103,14 @@ export async function executeRun(ctx) {
  * artifact.emit — fires during the executor phase, AFTER execute.run.
  * Each item lands at <runDir>/ext-<extname>/<name>.
  * @param {{ runDir?: string, devServerUrl?: string, nodeCapabilities?: string[] }} ctx
- * @returns {Promise<Array<{name:string, content: string|Buffer|Uint8Array}>>}
+ * @returns {Promise<Array<{name:string, content: string|Buffer|ArrayBufferView}>>}
+ *   `name` must equal basename(name) — no slashes, no "..", no empty.
+ *   `content` must be string | Buffer | ArrayBufferView (Uint8Array, DataView,
+ *   other TypedArrays). NOT raw ArrayBuffer, NOT Blob, NOT unawaited Promise.
+ *   Core guards name + content and WARNs-and-skips bad entries.
  */
 export async function artifactEmit(ctx) {
   if (!ctx?.runDir) return [];
-  // TODO(starter): produce files. `name` must equal basename(name) — no slashes,
-  // no "..", no empty strings. `content` must be string | Buffer | TypedArray
-  // (NOT raw ArrayBuffer, NOT Blob, NOT unawaited Promise).
-  const items = [];
-  for (const it of items) {
-    if (it && typeof it.name === "string" && basename(it.name) !== it.name) {
-      // Defensive: skip anything that wouldn't survive the loader's name guard.
-      continue;
-    }
-  }
-  return items;
+  // TODO(starter): push {name, content} objects here.
+  return [];
 }
