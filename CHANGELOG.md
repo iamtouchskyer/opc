@@ -1,5 +1,94 @@
 # Changelog
 
+## v0.8 — Run 5: F-items closeout + Runbook mechanism (2026-04-20)
+
+Two-track release. **Track A** clears the seven friction items (F1–F7)
+surfaced in Run 3 by real extension authors. **Track B** ships the
+Runbook mechanism end-to-end: schema + loader + matcher + CLI
+(U5.9–U5.10r) + reference runbook + loop-protocol Step 0 integration
++ wired escape hatch (U5.11–U5.12r). Hard constraint enforced
+throughout: every patch shipped with a unit test, full suite stayed
+green at every checkpoint (final: 27 files, 258 tests).
+
+### Added — Track A (F-items)
+
+- **F1 — `fireVerdictAppend` returns `{findings, filePath}`** instead of
+  `undefined` (commit `152ed3e`). Markdown side-effect preserved for
+  back-compat; integration drivers no longer have to grep the markdown.
+- **F2 — `nodeCapabilities`-missing WARN-once** to stderr from
+  `extensionMatches` (commit `152ed3e`). Silent-match-nothing is still
+  the default; users now get an observability hint.
+- **F3 — `extension-test --fixture-dir <path>`** flag copies a fixture
+  tree into a tmp dir and exposes it as `ctx.flowDir` (commit `0fb3a24`).
+- **F4 — `eval-extensions.json` sidecar** written alongside the markdown
+  on every `fireVerdictAppend` call (commit `23cbeca`). Integration
+  tests now assert against JSON; users still read markdown.
+- **F5 — Persistent circuit-breaker state** survives CLI invocations via
+  atomic `write→rename` to `<flowDir>/extension-breakers.json` (commit
+  `aac291f`). Cleared on `init`; honors all bypass paths.
+- **F6 — `extension-test --lint`** detects `compatibleCapabilities` /
+  `provides` / hook-name typos and exits non-zero (commit `0fb3a24`).
+- **F7 — `opc-harness --help` extension section** added with the four
+  `extension-test` subcommands (commit `23cbeca`). Closes Run 4 dx litmus
+  finding that fresh installs hid the test command.
+
+### Added — Track B (Runbook mechanism)
+
+- **`bin/lib/runbooks.mjs`** — schema v1 with YAML-lite frontmatter,
+  whole-word case-insensitive keyword matching with whitespace-flexible
+  joining (`add  feature` → `add feature`), regex-literal patterns
+  (`/PATTERN/FLAGS`), tag bonus, scoring with multi-word multiplier and
+  tie-breakers (commit `cdc07a5`, hardened in `e3f22e5`).
+- **`bin/lib/runbook-commands.mjs`** — three sub-commands: `runbook list`,
+  `runbook show <id>`, `runbook match <task...>`. JSON-to-stdout,
+  stderr-for-warnings discipline. Resolution: `--dir` flag → `OPC_RUNBOOKS_DIR`
+  env var → `~/.opc/runbooks/` default. Unknown-flag guard, `--`
+  end-of-options, exit codes 0/1/2/3.
+- **`OPC_DISABLE_RUNBOOKS=1`** wired escape hatch — `runbook match`
+  short-circuits to exit 3 with `disabled: true` payload, no disk read
+  (commit `0eba8fa`). The `/opc loop --no-runbook` flag is planned but
+  not yet wired into CLI parsing — set the env var directly until then.
+- **`docs/runbooks.md`** — full schema reference + authoring guide +
+  CLI reference + scoring table + YAML escaping warning + recognized
+  unit IDs + try-the-reference-runbook quickstart.
+- **`examples/runbooks/add-feature.md`** — canonical reference runbook
+  (flow=build-verify, tier=polished, 9 units: spec/plan/build/review/
+  fix/test-design/test-execute/acceptance/e2e). Proven to fire on
+  `add a dark-mode toggle` via the `/\badd\s+(a|an|the)\s+\w+/i` regex.
+- **`examples/runbooks/add-feature-replay.md`** — mental-replay artifact
+  walking through `/opc loop add a dark-mode toggle` end-to-end with
+  live-verified Step 0 output.
+- **`pipeline/loop-protocol.md`** — Step 0 inserted before Step 1
+  decomposition. Runbook Discovery section rewritten with 3-tier
+  resolution order matching CLI behavior (no project-local
+  auto-discovery, no auto-generate — those are out of v0.8 scope).
+- **`README.md`** — Autonomous Loop section now lists Runbook lookup
+  as step 1 with links to docs/runbooks.md and the reference runbook.
+
+### Hardened during fix-pairs
+
+- 16 schema/loader fixes from U5.10r (commit `e3f22e5`): tier enum,
+  ISO-date enforcement on `createdAt`/`updatedAt`, dotfile skip, symlink
+  resolution, >512KB skip, missing-explicit-dir WARN, slug regex.
+- All `runbook` CLI subcommands check `--help`/`-h` and reject unknown
+  flags loudly (mirrors U5.6r KNOWN_FLAGS pattern from extension-test).
+- Five-tier "discovery order" claim in loop-protocol.md downgraded to
+  what the CLI actually does (3 tiers) after U5.12r reviewers caught
+  the doc/code drift (commit `0eba8fa`).
+
+### Tests
+
+258 total across 27 files. Runbook unit + CLI tests: 55 in
+`bin/lib/runbooks.test.mjs` (52 schema/loader/matcher + 3 CLI
+spawn-tests for `OPC_DISABLE_RUNBOOKS`).
+
+### Findings closure
+
+All seven Run 3 friction items resolved; see
+`examples/extensions/run3-findings-for-run5.md` for per-F# commit refs.
+
+---
+
 ## v0.7 — Run 4: third-party extension authoring validated (2026-04-19)
 
 First third-party authored extension lands, proving the v0.5.1 extension surface
