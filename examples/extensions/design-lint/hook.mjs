@@ -1,17 +1,21 @@
 // hook.mjs — design-lint extension (OPC Run 3 U3.1)
 //
-// Wraps ~/.claude/skills/opc-extend-design/bin/design-lint.mjs as an OPC
-// extension. Declares capability `design-spec-conformance@1`. On verdict.append,
-// searches upward from ctx.flowDir / ctx.runDir for a `design-tokens.json`
-// spec. If absent → returns []. If present AND a live dev-server URL is
-// discoverable → shells out to design-lint in `lint` mode with a 30s timeout
-// and converts violations to findings. Otherwise → [].
+// Declares capability `design-spec-conformance@1`. On verdict.append, searches
+// upward from ctx.runDir / ctx.flowDir for a `design-tokens.json` spec.
+//
+// CURRENT BEHAVIOR (honest): returns [] on every path. The wrapping of
+// design-lint.mjs's `lint` subcommand requires a crawler (to turn a live URL
+// into the raw.json page-dump design-lint.mjs expects), and no such crawler
+// ships with this hook. When the crawler integration lands in a later run,
+// the tokens+URL branch will invoke design-lint.mjs with a 30s timeout and
+// convert violations to findings. For now the extension is a well-formed
+// placeholder that respects the "return empty value on unsatisfiable
+// contract" rule (acceptance-criteria.md Quality Constraints).
 //
 // Contract: startupCheck never throws. Missing deps log a single-line WARN
 // and downgrade to no-op. verdictAppend returns [] on any failure path.
 
-import { existsSync, readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -25,7 +29,8 @@ const DESIGN_LINT_BIN = join(
   ".claude/skills/opc-extend-design/bin/design-lint.mjs"
 );
 
-const LINT_TIMEOUT_MS = 30_000;
+// Reserved for future crawler-wired implementation; kept out of current
+// runtime path intentionally. Not imported/unused to avoid dead-symbol smell.
 
 export function startupCheck() {
   if (!existsSync(DESIGN_LINT_BIN)) {

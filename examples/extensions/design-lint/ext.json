@@ -1,7 +1,7 @@
 {
   "name": "design-lint",
   "version": "0.1.0",
-  "description": "Wraps opc-extend-design/bin/design-lint.mjs to flag design-spec conformance violations on review nodes.",
+  "description": "Placeholder wrapper for opc-extend-design's design-lint.mjs. Declares design-spec-conformance@1; currently a no-op (returns [] on all paths) until the crawler integration needed to feed design-lint.mjs is shipped. Included so downstream nodes can depend on the capability namespace.",
   "meta": {
     "provides": ["design-spec-conformance@1"],
     "compatibleCapabilities": ["verification@1", "design-review@1"]
