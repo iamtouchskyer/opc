@@ -29,28 +29,37 @@ If you're new to OPC extensions, read
 
 ## 2. Copy + rename recipe
 
-Pick a name in `kebab-case`. The directory name **is** the canonical
-extension name (it shows up in logs, failure sidecars, and artifact subdirs
-as `ext-<name>/`).
+Pick a name in `kebab-case`. **The directory name IS the canonical extension
+name** — it's what the loader reads (`bin/lib/extensions.mjs:366-368,453`),
+and what shows up in logs, failure sidecars, and artifact subdirs as
+`ext-<name>/`. `ext.json.name` is NOT read by the loader; just name the
+directory what you want the extension called.
+
+Locate the starter (pick whichever path exists on your box):
 
 ```bash
-# 1. Copy the starter into the OPC extensions dir.
-#    OPC_EXTENSIONS_DIR overrides the default ~/.opc/extensions location.
-cp -r examples/extensions/_starter "${OPC_EXTENSIONS_DIR:-$HOME/.opc/extensions}/my-ext"
+# If you installed the skill globally:
+STARTER=~/.claude/skills/opc/examples/extensions/_starter
+# Or from a repo checkout:
+# STARTER=/path/to/opc-checkout/examples/extensions/_starter
+# Or via npm global install:
+# STARTER="$(npm root -g)/@touchskyer/opc/examples/extensions/_starter"
+[ -d "$STARTER" ] || { echo "can't find _starter — clone the opc repo first"; exit 1; }
 
-# 2. Move into your new extension.
+# Copy into the OPC extensions dir (OPC_EXTENSIONS_DIR overrides ~/.opc/extensions).
+cp -r "$STARTER" "${OPC_EXTENSIONS_DIR:-$HOME/.opc/extensions}/my-ext"
 cd "${OPC_EXTENSIONS_DIR:-$HOME/.opc/extensions}/my-ext"
-
-# 3. Set the name field in ext.json to match the directory name.
-node -e "
-const fs = require('node:fs');
-const j = JSON.parse(fs.readFileSync('ext.json', 'utf8'));
-j.name = 'my-ext';
-fs.writeFileSync('ext.json', JSON.stringify(j, null, 2) + '\n');
-"
 ```
 
-That's it. The extension is now discoverable.
+That's it. The extension is now discoverable as `my-ext`.
+
+> **Pre-flight:** the headline `opc-harness extension-test` command in §4
+> is available on the bundled harness (`node <opc-repo>/bin/opc-harness.mjs`).
+> Globally-installed binaries from brew or older npm tags may predate the
+> extension loader and will silently print a usage banner + exit 0 instead
+> of running the subcommand. If `opc-harness extension-test --help` prints
+> the generic banner, use the bundled path explicitly:
+> `node ~/.claude/skills/opc/bin/opc-harness.mjs extension-test …`.
 
 ---
 
@@ -61,13 +70,20 @@ are safe.
 
 ### 3.1 `ext.json`
 
+`ext.json` is **descriptive only** — the loader never parses it (only `hook.mjs`
+is imported). Package indexes and `opc-harness config resolve` may read it for
+human-visible fields.
+
 | Field                          | What to set                                                              |
 |--------------------------------|--------------------------------------------------------------------------|
-| `name`                         | `kebab-case`, must match the directory name.                             |
-| `version`                      | Your extension's version. Informational only — does not affect routing.  |
-| `enabled`                      | Leave `true`. Set to `false` to keep the extension on disk but inert.    |
-| `meta.provides`                | The capability you provide, in `name@N` format. **Required.**            |
+| `version`                      | Your extension's version. Informational only.                            |
+| `description`                  | One-line human summary. Shown by tooling; keep `meta.description` in `hook.mjs` in sync. |
+| `meta.provides`                | The capability you provide, in `name@N` format. **Required in `hook.mjs`.** |
 | `meta.compatibleCapabilities`  | Older capability generations you also respond to. Optional.              |
+
+> The loader reads `meta` from `hook.mjs`, not `ext.json`. The table above is
+> for human readers + tooling only; only the values inside `hook.mjs` affect
+> routing. Keep them in sync for hygiene.
 
 `name@N` rules (lifted from `extension-authoring.md` §4.1):
 
@@ -121,10 +137,10 @@ opc-harness extension-test \
   --all-hooks
 ```
 
-Expected output: a `✅` line per hook plus `[lint]` lines for the
-capability strings. **Exit code must be 0.** A non-zero exit means the
-extension failed to load (missing `hook.mjs`, bad JSON in `--context`,
-etc.) — fix that before touching hook bodies.
+Expected output: a `✅` line per hook. **Exit code must be 0.** `[lint]`
+lines only appear when capability strings fail validation. A non-zero exit
+means the extension failed to load (missing `hook.mjs`, bad JSON in
+`--context`, etc.) — fix that before touching hook bodies.
 
 To exercise `executeRun` or `artifactEmit`, name the hook explicitly and
 provide a writable `runDir`:
