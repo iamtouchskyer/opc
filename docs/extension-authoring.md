@@ -241,6 +241,12 @@ failure records, and artifact subdir `ext-<name>/`).
 indexes) can see what the extension does without eval'ing JS. Keep `meta`
 here in sync with `hook.mjs` as a matter of discipline.
 
+In particular, `name` in `ext.json` is **purely cosmetic** — the directory
+name always wins (§3.1). The `_starter/` template omits `name` deliberately
+(no field is better than a stale field); the `memex-recall` example includes
+it for human skim-readability. Either style is legal. If you include it,
+keep it in sync with the directory name.
+
 ### 3.3 `hook.mjs` export shapes
 
 Three shapes are accepted. Pick the first one (named exports) unless you have
@@ -256,6 +262,12 @@ export async function executeRun(ctx)    { /* … */ }
 export async function artifactEmit(ctx)  { /* … */ }
 export async function startupCheck(ctx)  { /* … */ }
 ```
+
+> `meta.name` is **not read** by the loader — the canonical extension name
+> comes from the directory basename (§3.1). Omit it; the `_starter/`
+> template at `examples/extensions/_starter/hook.mjs` does. The quickstart
+> and §3.3 examples still include `name:` for historical reasons; both
+> styles load identically.
 
 **B. Kebab-case named exports:**
 
@@ -399,6 +411,35 @@ Possible outcomes per entry:
 Lint failures print a `[lint] ⚠️` line to stderr but **do not block** hook
 execution — the harness continues and reports per-hook pass/fail separately.
 
+### 4.7 Canonical core capabilities
+
+The built-in flow templates (`flow-templates.mjs`) stamp a fixed set of
+capability strings onto their nodes. Declare `compatibleCapabilities` with
+these strings if you want your extension to auto-fire on stock OPC flows —
+don't cargo-cult from other examples.
+
+| Capability string               | Emitted by (built-in node)                        | Phase        |
+|---------------------------------|---------------------------------------------------|--------------|
+| `code-quality-check@1`          | `build-verify.code-review`, `full-stack.code-review` | review    |
+| `visual-consistency-check@1`    | `code-review`, `acceptance` nodes                 | review       |
+| `user-simulation@1`             | `acceptance`, `e2e-user`, `post-launch-sim`       | review/execute |
+| `security-check@1`              | `audit`                                           | review       |
+| `a11y-check@1`                  | `audit`                                           | review       |
+| `verification@1`                | generic verification slot (widely used by examples) | review     |
+| `design-review@1`               | generic design-review slot                        | review       |
+| `execute@1`                     | generic executor slot                             | execute      |
+| `context-enrichment@1`          | any node the flow stamps with it                  | prompt       |
+
+Also widely used by the `examples/extensions/*` set as a "match all three
+generic review/execute nodes" triple: `["verification@1",
+"design-review@1", "execute@1"]` (see `memex-recall` §10.1,
+`session-logex`, `lint-prompt-length`). User-defined flows can stamp
+arbitrary capability strings — these are just the ones shipped.
+
+If you target a node that stamps a capability **not** in this table,
+your `compatibleCapabilities` must list it explicitly. The silent-no-op
+rule (§4.5) means a capability typo produces no runtime signal.
+
 ---
 
 ## 5. The hooks
@@ -440,6 +481,26 @@ export async function promptAppend(ctx) {
   if (!runDir) return "";   // not safe to write files without runDir
   // …
 }
+```
+
+**`ctx.task` is the task description, not the assembled prompt.** It is the
+first line of the node's `acceptance-criteria.md` (e.g. `"Build a login page
+with email+password"`), set by `readTaskFromAC` in `ext-commands.mjs`. There
+is **no** `ctx.assembledPrompt` — a hook cannot see the concatenation of
+every extension's `promptAppend` output. To bound prompt growth, either
+measure the inputs (`ctx.task`) or emit the finding from inside
+`promptAppend` itself as a side-channel `process.stderr.write` line.
+
+**`ctx.task` type guarantee holds in the pipeline only.** In production
+pipeline commands (`prompt-context`, `extension-verdict`, `extension-artifact`)
+`ctx.task` is always a string — `""` when `acceptance-criteria.md` is absent.
+Under `extension-test --context <json>`, the JSON is passed through verbatim,
+so your hook may receive `task: undefined`, `task: 42`, `task: [...]`, etc.
+For any schema-typed field you read, guard with a `typeof` check, not just
+`??`:
+
+```js
+const task = typeof ctx?.task === "string" ? ctx.task : "";
 ```
 
 ### 5.2 `promptAppend(ctx)` — prompt augmentation
@@ -500,6 +561,21 @@ finding is rendered into `<runDir>/eval-extensions.md`:
 🟡 contrast: Link color 4.2:1 (target 4.5:1)
 🔵 extensions: No extension findings
 ```
+
+The renderer maps `severity` → emoji with this exact table (see
+`extensions.mjs` `fireVerdictAppend` around line 556):
+
+| `severity` string | Rendered emoji |
+|-------------------|----------------|
+| `"error"`         | 🔴             |
+| `"warning"`       | 🟡             |
+| `"info"`          | 🔵             |
+| anything else     | 🔵 (fallback)  |
+
+The emoji is applied **only** by the pipeline renderer when it writes
+`<runDir>/eval-extensions.md`. The `extension-test` CLI prints the literal
+severity word instead (`warning`, `error`, `info`) with no emoji — see §9.
+The same table drives the `extension-failures.md` sidecar (§8.2).
 
 **Graceful-empty value:** `null`, `undefined`, or `[]`. All skipped silently.
 
@@ -663,6 +739,12 @@ An optional extension whose `startupCheck` throws logs a WARN and is skipped
 for the rest of the run. A **required** extension (listed in
 `config.requiredExtensions`) whose `startupCheck` throws aborts the pipeline
 with a FATAL error.
+
+> Omitting `startupCheck` entirely is identical to exporting one that
+> returns `undefined` — both succeed; the `✅ passed` line that
+> `extension-test --all-hooks` prints for `startup.check` is
+> **unconditional** (the return value is ignored by both the core and the
+> CLI, §9). Export it only when you actually need the load-time guard.
 
 ---
 
@@ -906,9 +988,49 @@ opc-harness extension-test --ext <path> [--hook <hookname>] [--all-hooks] [--con
   not-throw matters); `extension-test` prints a generic `✅ passed` for
   `startup.check` regardless of what you return. Use the return value for
   your own diagnostic output if useful.
-- Removing `nodeCapabilities` from `--context` (or passing an empty array)
-  means **no** extensions match — hooks are skipped cleanly. Try this
-  against your hello-world to feel the routing rule (§4.5).
+- `extension-test` does **not** run capability routing. `nodeCapabilities`
+  in `--context` is passed through to your hook verbatim, but the CLI
+  invokes every requested hook **unconditionally** once it's exported
+  (see `ext-commands.mjs:213-222`). It does **not** evaluate
+  `ctx.nodeCapabilities ∩ (provides ∪ compatibleCapabilities)`. To
+  observe the routing rule (§4.5) in action, use the pipeline commands
+  (`prompt-context`, `extension-verdict`, `extension-artifact`) — they
+  go through `firePromptAppend` / `fireVerdictAppend` / `fireArtifactEmit`
+  which do enforce the intersection check.
+
+**Output format per hook** (stdout — grep-friendly):
+
+- `startup.check` → `[startup.check] ✅ passed (Nms)`
+- `prompt.append` → `[prompt.append] ✅ returned N chars (Nms)`, followed
+  by a preview block (first 200 chars) when the return is non-empty:
+  ```
+    --- output preview ---
+    <first 200 chars, newlines re-indented by two spaces>
+    ---------------------
+  ```
+- `verdict.append` → `[verdict.append] ✅ returned N findings (Nms)`,
+  followed by one indented line per finding:
+  ```
+    <severity> [<category>] <message>
+  ```
+  **`severity` is the literal lowercase word (`error` / `warning` /
+  `info`) — NOT the 🔴/🟡/🔵 emoji. The `file` field is not echoed.**
+  Emoji appear only in `eval-extensions.md`, which is written by
+  `fireVerdictAppend` inside the pipeline commands (see §5.3 table).
+  To see emoji output, run `opc-harness extension-verdict …` against a
+  real `.harness/` tree and read `<runDir>/eval-extensions.md`.
+- `execute.run` / `artifact.emit` / any other hook →
+  `[<hook>] ✅ result: <JSON.stringify(result)>`
+- A thrown hook → `[<hook>] ❌ error: <err.message>` (the CLI still
+  exits 0; only load-time errors cause non-zero exit).
+
+> **Noise note (G5).** If you see `⚠️  ~/.claude/flows/ is deprecated —
+> use --flow-file instead. Found: <files>` on stderr during
+> `extension-test`, that banner is unrelated to your extension. It comes
+> from the global flow-template bootstrap in `flow-templates.mjs` and
+> fires once per process whenever `~/.claude/flows/*.json` exists.
+> Silence it with `OPC_QUIET_DEPRECATIONS=1`, or migrate those JSONs to
+> explicit `--flow-file` invocations.
 
 **Examples:**
 
@@ -1137,7 +1259,56 @@ Deliberately deferred (need speculation beyond current source):
 
 ---
 
-## Appendix A — Environment variables
+## Lessons from Run 4 outsider-build
+
+Run 4 validated this guide by having an outsider agent (read: the doc + the
+starter template, nothing else) build `lint-prompt-length`. The following
+gaps were caught by the outsider or the two reviewers and patched in this
+revision.
+
+### G1 — severity → emoji mapping
+- **Before:** §5.3 showed rendered emojis in an example block but never stated the mapping.
+- **After:** explicit table in §5.3 (`error→🔴`, `warning→🟡`, `info→🔵`, else→🔵) with a source pointer to `extensions.mjs` `fireVerdictAppend`.
+
+### G2 — `extension-test` stdout format
+- **Before:** §9 said "prints a ✅ `<hook>` / ❌ `<hook>` line per hook" and stopped there.
+- **After:** §9 now has an "Output format per hook" subsection documenting each hook's exact stdout: `startup.check` fixed `✅ passed`, `prompt.append` with preview block, `verdict.append` findings as literal `  <severity> [<category>] <message>` — no emoji, no `file`.
+
+### G3 — `ext.json.name` field
+- **Before:** §3.2 example had `"name": "memex-recall"` and prose only said "descriptive only".
+- **After:** §3.2 explicitly states `name` is cosmetic; directory name always wins; starter omits it deliberately; both styles are legal.
+
+### G4 — `meta.name` on `hook.mjs` exports
+- **Before:** every example meta had `name: "…"`; no statement on whether it was required.
+- **After:** §3.3 has a callout: `meta.name` is not read by the loader; omit it; example `name:` fields remain for historical reasons only.
+
+### G5 — `~/.claude/flows/` deprecation banner on `extension-test` stderr
+- **Before:** undocumented harness-wide noise; newcomers assumed it was their fault.
+- **After:** §9 has a "Noise note" explaining the banner comes from `flow-templates.mjs`, is unrelated to extensions, and can be silenced with `OPC_QUIET_DEPRECATIONS=1`. Appendix A now lists that env var.
+
+### MG1 — §9 self-contradiction on capability routing
+- **Before:** one bullet said `extension-test` calls hooks directly (no `fire*Append` wrapper); another invited you to remove `nodeCapabilities` from `--context` to "feel the routing rule". The second was false — `ext-commands.mjs:213-222` invokes hooks unconditionally.
+- **After:** replaced the misleading bullet with an explicit statement that `extension-test` does **not** run routing; use the pipeline commands (`prompt-context` / `extension-verdict` / `extension-artifact`) to exercise §4.5.
+
+### MG2 — `ctx.task` type contract under `extension-test --context`
+- **Before:** §5.1 documented `ctx.task` as string; §9 didn't warn that `--context <json>` is passed through verbatim.
+- **After:** §5.1 now warns: pipeline commands guarantee a string (possibly `""`), but `extension-test --context` can send `undefined` / `42` / arrays / objects. Prefer a `typeof task === "string"` guard over `?? ""` for any schema-typed field.
+
+### Reviewer A unlogged (A) — no catalog of canonical core capabilities
+- **Before:** §4.4 used an abstract `visual-check@1/@2` example; §10.1 showed the `verification@1 / design-review@1 / execute@1` triple without labelling it. Authors cargo-culted.
+- **After:** new §4.7 "Canonical core capabilities" tabulates the capability strings stamped by `flow-templates.mjs` built-ins plus the widely-reused generic triple.
+
+### Reviewer A unlogged (B) — `ctx.task` ≠ assembled prompt
+- **Before:** §5.1 typed `task` as "task description" without contrasting it with the assembled prompt. Outsider building a "lint prompt length" hook silently equated the two.
+- **After:** §5.1 states there is no `ctx.assembledPrompt`; a hook cannot observe downstream concatenation of `promptAppend` outputs. Measure the inputs, or emit the finding from inside `promptAppend` via a stderr side-channel.
+
+### Reviewer A unlogged (C) — `startupCheck` return-value wording
+- **Before:** §5.6 was silent on whether omitting `startupCheck` differed from returning `undefined`; §9 said return is ignored.
+- **After:** §5.6 adds a callout that omitting the hook is identical to returning `undefined`; the `✅ passed` emoji is unconditional.
+
+---
+
+
 
 | Variable                          | Default                        | Effect                                                                  |
 |-----------------------------------|--------------------------------|-------------------------------------------------------------------------|
@@ -1147,6 +1318,7 @@ Deliberately deferred (need speculation beyond current source):
 | `OPC_HOOK_FAILURE_LOG_CAP`        | `200`                          | Max entries in `registry.failures[]` before FIFO drops.                 |
 | `OPC_DISABLE_EXTENSIONS`          | unset                          | `1` → load zero extensions (benchmark mode).                            |
 | `OPC_STRICT_EXTENSIONS`           | unset                          | `1` → exit code `2` if any failure was recorded this process.           |
+| `OPC_QUIET_DEPRECATIONS`          | unset                          | `1` → silence the once-per-process `⚠️  ~/.claude/flows/ is deprecated …` banner emitted by `flow-templates.mjs`. |
 
 ## Appendix B — Public exports from `extensions.mjs`
 
