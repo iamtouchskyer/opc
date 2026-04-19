@@ -1,7 +1,7 @@
 // ext-commands.mjs — CLI commands for extension system
 // prompt-context, extension-test, and extension-verdict commands
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, mkdtempSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, mkdtempSync, rmSync, lstatSync, statSync, realpathSync, mkdirSync, copyFileSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
@@ -138,12 +138,34 @@ export async function cmdPromptContext(args) {
 
 export async function cmdExtensionTest(args) {
   if (args.includes("--help")) {
-    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint]");
+    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint] [--lint-strict]");
     console.error("  --fixture-dir <path>  Copy fixture dir to a fresh tmpdir and set ctx.flowDir/ctx.runDir to it.");
-    console.error("                        The tmpdir is cleaned up on exit (success or failure).");
+    console.error("                        Symlinks are dereferenced to prevent sandbox escape. The tmpdir is");
+    console.error("                        cleaned up on every exit path (success, error, lint-only).");
+    console.error("                        Overrides any flowDir/runDir passed via --context.");
     console.error("  --lint                Lint authoring metadata (capability shape + hook/provides mismatch).");
     console.error("                        Emits [lint] WARN lines to stderr; exits 0 even on lint issues.");
+    console.error("                        When combined with --hook or --all-hooks, --lint wins (hooks skipped).");
+    console.error("  --lint-strict         Like --lint, but exits 1 if any [lint] line was emitted. Use in CI.");
     return;
+  }
+
+  // U5.6r fix-pair: typo guard. Any flag starting with `--` that we don't
+  // recognize is almost certainly a typo (e.g. `--fixturedir` instead of
+  // `--fixture-dir`). Previously getFlag silently ignored these, causing
+  // fixture-dir typos to write into the user's repo. Fail loudly instead.
+  const KNOWN_FLAGS = new Set([
+    "--ext", "--hook", "--context", "--all-hooks", "--fixture-dir",
+    "--lint", "--lint-strict", "--help",
+  ]);
+  for (const a of args) {
+    if (!a.startsWith("--")) continue;
+    // Strip =VALUE form before checking
+    const flag = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
+    if (!KNOWN_FLAGS.has(flag)) {
+      console.error(`Unknown flag: ${flag}. Known flags: ${[...KNOWN_FLAGS].sort().join(", ")}`);
+      process.exit(1);
+    }
   }
 
   const extPath = getFlag(args, "ext");
@@ -151,172 +173,222 @@ export async function cmdExtensionTest(args) {
   const contextJson = getFlag(args, "context", "{}");
   const allHooks = args.includes("--all-hooks");
   const fixtureDir = getFlag(args, "fixture-dir");
-  const lintOnly = args.includes("--lint");
+  const lintOnly = args.includes("--lint") || args.includes("--lint-strict");
+  const lintStrict = args.includes("--lint-strict");
 
   if (!extPath) {
-    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint]");
+    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint|--lint-strict]");
     process.exit(1);
   }
 
-  let context = {};
-  try { context = JSON.parse(contextJson); } catch (err) {
-    console.error(`Invalid --context JSON: ${err.message}`);
-    process.exit(1);
-  }
+  // U5.6r fix-pair: capture lint WARNs to count them for --lint-strict. We
+  // tap console.error with a passthrough filter so stderr output is unchanged.
+  let lintWarnCount = 0;
+  const origStderr = console.error;
+  console.error = (...a) => {
+    const msg = a.map(String).join(" ");
+    if (msg.startsWith("[lint]")) lintWarnCount++;
+    origStderr(...a);
+  };
 
-  // F3: --fixture-dir copies the given dir into a fresh tmpdir and rewrites
-  // ctx.flowDir + ctx.runDir. The tmp dir is torn down in a finally at the
-  // end of the function so extension code can't leak state or files across
-  // runs. If the user passed flowDir/runDir in --context, we override —
-  // fixture-dir is strictly more specific.
+  // U5.6r fix-pair: single try/finally covers every exit path. All the
+  // previous inline `if (fixtureTmpDir) rmSync(...)` calls are replaced by
+  // one cleanup block so a future contributor can't accidentally leak.
   let fixtureTmpDir = null;
-  if (fixtureDir) {
-    const srcAbs = resolve(fixtureDir);
-    if (!existsSync(srcAbs)) {
-      console.error(`--fixture-dir not found: ${srcAbs}`);
-      process.exit(1);
-    }
-    try {
-      fixtureTmpDir = mkdtempSync(join(tmpdir(), "opc-fixture-"));
-      cpSync(srcAbs, fixtureTmpDir, { recursive: true });
-    } catch (err) {
-      console.error(`Failed to materialize --fixture-dir: ${err.message}`);
-      if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-      process.exit(1);
-    }
-    context.flowDir = fixtureTmpDir;
-    context.runDir = fixtureTmpDir;
-  }
-
-  const hookPath = join(resolve(extPath), "hook.mjs");
-  if (!existsSync(hookPath)) {
-    console.error(`hook.mjs not found at: ${hookPath}`);
-    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-    process.exit(1);
-  }
-
-  let mod;
+  let exitCode = 0;
   try {
-    mod = await import(hookPath);
-  } catch (err) {
-    console.error(`Failed to load ${hookPath}: ${err.message}`);
-    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-    process.exit(1);
-  }
-
-  // Use the canonical normalizer from extensions.mjs
-  const raw = mod.default || mod;
-  const hook = normalizeHook(raw, mod);
-  const hooks = hook.hooks || {};
-
-  // U1.5: Lint meta.provides and meta.compatibleCapabilities. Warn (not fail)
-  // on entries that don't match the capability shape `/^[a-z][a-z0-9-]*@[1-9]\d*$/`.
-  // Bare tokens (`foo` without `@N`) pass lint but trigger auto-upgrade WARN
-  // at load time; only malformed / wrong-type / empty values are reported here.
-  // Routed through console.error so it shares stderr with the bare-token
-  // auto-upgrade WARN emitted by normalizeCapability — one grep catches both.
-  const meta = (raw && typeof raw === "object" && raw.meta) || {};
-  function lintList(listName, list) {
-    if (list == null) return;
-    if (!Array.isArray(list)) {
-      console.error(`[lint] ⚠️  meta.${listName} is not an array (got ${typeof list})`);
+    let context = {};
+    try { context = JSON.parse(contextJson); } catch (err) {
+      console.error(`Invalid --context JSON: ${err.message}`);
+      exitCode = 1;
       return;
     }
-    for (const cap of list) {
-      const res = lintCapability(cap);
-      if (!res.ok) {
-        const shown = typeof cap === "string" ? JSON.stringify(cap) : String(cap);
-        console.error(`[lint] ⚠️  meta.${listName} entry ${shown} failed capability-shape check: ${res.reason}`);
+
+    // F3: --fixture-dir copies the given dir into a fresh mkdtemp() dir and
+    // rewrites ctx.flowDir + ctx.runDir. Override precedence: fixture-dir
+    // wins over any flowDir/runDir in --context — fixture-dir is strictly
+    // more specific. Symlinks in the source are dereferenced to prevent a
+    // symlink-pointing-at-/etc sandbox-escape (U5.6r 🟡 reviewer A).
+    if (fixtureDir) {
+      const srcAbs = resolve(fixtureDir);
+      if (!existsSync(srcAbs)) {
+        console.error(`--fixture-dir not found: ${srcAbs}`);
+        exitCode = 1;
+        return;
       }
+      try {
+        fixtureTmpDir = mkdtempSync(join(tmpdir(), "opc-fixture-"));
+        // Manual dereferencing walker — Node's cpSync({dereference:true})
+        // still produces symlinks in the output on some platforms (Node 25).
+        // Writing our own walker guarantees every entry in the sandbox is a
+        // plain file or dir, so a malicious fixture with a symlink to
+        // /etc/passwd cannot escape the tmp sandbox.
+        const copyDeref = (s, d) => {
+          const st = lstatSync(s);
+          if (st.isSymbolicLink()) {
+            const target = realpathSync(s);
+            const tst = statSync(target);
+            if (tst.isDirectory()) {
+              mkdirSync(d, { recursive: true });
+              for (const e of readdirSync(target)) copyDeref(join(target, e), join(d, e));
+            } else {
+              copyFileSync(target, d);
+            }
+          } else if (st.isDirectory()) {
+            mkdirSync(d, { recursive: true });
+            for (const e of readdirSync(s)) copyDeref(join(s, e), join(d, e));
+          } else {
+            copyFileSync(s, d);
+          }
+        };
+        copyDeref(srcAbs, fixtureTmpDir);
+      } catch (err) {
+        console.error(`Failed to materialize --fixture-dir: ${err.message}`);
+        exitCode = 1;
+        return;
+      }
+      context.flowDir = fixtureTmpDir;
+      context.runDir = fixtureTmpDir;
     }
-  }
-  lintList("provides", meta.provides);
-  lintList("compatibleCapabilities", meta.compatibleCapabilities);
 
-  // F6: hook/provides mismatch lint. Two mismatch shapes — both are authoring
-  // smells the loader won't reject but that mean the extension will never
-  // fire. Emit "hook mismatch" on stderr so `2>&1 | grep -q "hook mismatch"`
-  // works. Soft overlap between provides and compatibleCapabilities is legal
-  // (intentional versioning) — we only flag the hard shapes.
-  const hookNames = Object.keys(hooks);
-  const provides = Array.isArray(meta.provides) ? meta.provides : [];
-  if (provides.length > 0 && hookNames.length === 0) {
-    console.error(
-      `[lint] ⚠️  hook mismatch: meta.provides declares [${provides.join(", ")}] ` +
-      `but no hooks are implemented — this extension will load but never fire.`
-    );
-  }
-  if (provides.length === 0 && hookNames.some(h => h === "prompt.append" || h === "verdict.append" || h === "execute.run" || h === "artifact.emit")) {
-    console.error(
-      `[lint] ⚠️  hook mismatch: hooks [${hookNames.join(", ")}] are implemented ` +
-      `but meta.provides is empty — extensionMatches() will skip this extension on every node.`
-    );
-  }
-
-  // --lint: run all lint checks above (capability shape + hook mismatch) and
-  // return without invoking hooks. Exit 0 per OUT-1 contract.
-  if (lintOnly) {
-    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-    process.exit(0);
-  }
-
-  const hooksToRun = allHooks
-    ? ["startup.check", "prompt.append", "verdict.append"]
-    : [hookName].filter(Boolean);
-
-  if (hooksToRun.length === 0) {
-    console.error("Specify --hook <name> or --all-hooks (or --lint for lint-only mode)");
-    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-    process.exit(1);
-  }
-
-  let hadError = false;
-  for (const hName of hooksToRun) {
-    const fn = hooks[hName];
-    if (typeof fn !== "function") {
-      console.log(`[${hName}] ⚠️  not implemented`);
-      continue;
+    const hookPath = join(resolve(extPath), "hook.mjs");
+    if (!existsSync(hookPath)) {
+      console.error(`hook.mjs not found at: ${hookPath}`);
+      exitCode = 1;
+      return;
     }
-    const t0 = Date.now();
+
+    let mod;
     try {
-      const result = await fn(context);
-      const elapsed = Date.now() - t0;
-      if (hName === "startup.check") {
-        console.log(`[${hName}] ✅ passed (${elapsed}ms)`);
-      } else if (hName === "prompt.append") {
-        const str = typeof result === "string" ? result : "";
-        console.log(`[${hName}] ✅ returned ${str.length} chars (${elapsed}ms)`);
-        if (str.length > 0) {
-          const preview = str.slice(0, 200);
-          console.log(`  --- output preview ---`);
-          console.log(`  ${preview.replace(/\n/g, "\n  ")}`);
-          console.log(`  ---------------------`);
-        }
-      } else if (hName === "verdict.append") {
-        const findings = Array.isArray(result) ? result : [];
-        console.log(`[${hName}] ✅ returned ${findings.length} findings (${elapsed}ms)`);
-        for (const f of findings) {
-          console.log(`  ${f.severity} [${f.category}] ${f.message}`);
-        }
-      } else {
-        console.log(`[${hName}] ✅ result: ${JSON.stringify(result)}`);
-      }
+      mod = await import(hookPath);
     } catch (err) {
-      console.log(`[${hName}] ❌ error: ${err.message}`);
-      hadError = true;
+      console.error(`Failed to load ${hookPath}: ${err.message}`);
+      exitCode = 1;
+      return;
     }
-  }
 
-  // Per Run 2 acceptance criteria OUT-1 and CONTRACTS: extension-test is a
-  // LINT command — it runs every requested hook, reports per-hook pass/fail
-  // in stdout with ✅/❌ markers, and exits 0 even when individual hooks
-  // fail. Non-zero exit is reserved for load-time errors (no --ext, missing
-  // hook.mjs, bad --context JSON, or no hooks requested). Callers that need
-  // a machine-readable pass/fail should grep stdout for the ❌ marker.
-  void hadError;
-  // F3: always clean up the fixture tmp dir — success path.
-  if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
-  process.exit(0);
+    // Use the canonical normalizer from extensions.mjs
+    const raw = mod.default || mod;
+    const hook = normalizeHook(raw, mod);
+    const hooks = hook.hooks || {};
+
+    // U1.5: Lint meta.provides and meta.compatibleCapabilities. Warn (not fail)
+    // on entries that don't match the capability shape `/^[a-z][a-z0-9-]*@[1-9]\d*$/`.
+    // Bare tokens (`foo` without `@N`) pass lint but trigger auto-upgrade WARN
+    // at load time; only malformed / wrong-type / empty values are reported here.
+    // Routed through console.error so it shares stderr with the bare-token
+    // auto-upgrade WARN emitted by normalizeCapability — one grep catches both.
+    const meta = (raw && typeof raw === "object" && raw.meta) || {};
+    function lintList(listName, list) {
+      if (list == null) return;
+      if (!Array.isArray(list)) {
+        console.error(`[lint] ⚠️  meta.${listName} is not an array (got ${typeof list})`);
+        return;
+      }
+      for (const cap of list) {
+        const res = lintCapability(cap);
+        if (!res.ok) {
+          const shown = typeof cap === "string" ? JSON.stringify(cap) : String(cap);
+          console.error(`[lint] ⚠️  meta.${listName} entry ${shown} failed capability-shape check: ${res.reason}`);
+        }
+      }
+    }
+    lintList("provides", meta.provides);
+    lintList("compatibleCapabilities", meta.compatibleCapabilities);
+
+    // F6: hook/provides mismatch lint. Two mismatch shapes — both are authoring
+    // smells the loader won't reject but that mean the extension will never
+    // fire. Emit "hook mismatch" on stderr so `2>&1 | grep -q "hook mismatch"`
+    // works. Soft overlap between provides and compatibleCapabilities is legal
+    // (intentional versioning) — we only flag the hard shapes. `startup.check`
+    // alone with empty provides is legit (pure preflight ext) → NOT flagged;
+    // we only check the four firing hooks.
+    const hookNames = Object.keys(hooks);
+    const provides = Array.isArray(meta.provides) ? meta.provides : [];
+    const firingHookPresent = hookNames.some(h => h === "prompt.append" || h === "verdict.append" || h === "execute.run" || h === "artifact.emit");
+    if (provides.length > 0 && hookNames.length === 0) {
+      console.error(
+        `[lint] ⚠️  hook mismatch: meta.provides declares [${provides.join(", ")}] ` +
+        `but no hooks are implemented — this extension will load but never fire.`
+      );
+    }
+    if (provides.length === 0 && firingHookPresent) {
+      console.error(
+        `[lint] ⚠️  hook mismatch: hooks [${hookNames.join(", ")}] are implemented ` +
+        `but meta.provides is empty — extensionMatches() will skip this extension on every node.`
+      );
+    }
+
+    // --lint / --lint-strict: run all lint checks above and return without
+    // invoking hooks. Exit 0 per OUT-1 contract, unless --lint-strict and any
+    // [lint] WARN was emitted (captured via the console.error tap above).
+    if (lintOnly) {
+      exitCode = (lintStrict && lintWarnCount > 0) ? 1 : 0;
+      return;
+    }
+
+    const hooksToRun = allHooks
+      ? ["startup.check", "prompt.append", "verdict.append"]
+      : [hookName].filter(Boolean);
+
+    if (hooksToRun.length === 0) {
+      // Restore pre-U5.5 stderr text verbatim so scripts grepping for this
+      // message are unaffected (U5.6r DX 🟡).
+      console.error("Specify --hook <name> or --all-hooks");
+      exitCode = 1;
+      return;
+    }
+
+    let hadError = false;
+    for (const hName of hooksToRun) {
+      const fn = hooks[hName];
+      if (typeof fn !== "function") {
+        console.log(`[${hName}] ⚠️  not implemented`);
+        continue;
+      }
+      const t0 = Date.now();
+      try {
+        const result = await fn(context);
+        const elapsed = Date.now() - t0;
+        if (hName === "startup.check") {
+          console.log(`[${hName}] ✅ passed (${elapsed}ms)`);
+        } else if (hName === "prompt.append") {
+          const str = typeof result === "string" ? result : "";
+          console.log(`[${hName}] ✅ returned ${str.length} chars (${elapsed}ms)`);
+          if (str.length > 0) {
+            const preview = str.slice(0, 200);
+            console.log(`  --- output preview ---`);
+            console.log(`  ${preview.replace(/\n/g, "\n  ")}`);
+            console.log(`  ---------------------`);
+          }
+        } else if (hName === "verdict.append") {
+          const findings = Array.isArray(result) ? result : [];
+          console.log(`[${hName}] ✅ returned ${findings.length} findings (${elapsed}ms)`);
+          for (const f of findings) {
+            console.log(`  ${f.severity} [${f.category}] ${f.message}`);
+          }
+        } else {
+          console.log(`[${hName}] ✅ result: ${JSON.stringify(result)}`);
+        }
+      } catch (err) {
+        console.log(`[${hName}] ❌ error: ${err.message}`);
+        hadError = true;
+      }
+    }
+
+    // Per Run 2 acceptance criteria OUT-1 and CONTRACTS: extension-test is a
+    // LINT command — it runs every requested hook, reports per-hook pass/fail
+    // in stdout with ✅/❌ markers, and exits 0 even when individual hooks
+    // fail. Non-zero exit is reserved for load-time errors.
+    void hadError;
+    exitCode = 0;
+  } finally {
+    // Single cleanup site for the fixture tmp dir — covers all return paths.
+    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
+    // Restore the unpatched console.error for downstream callers in-process.
+    console.error = origStderr;
+    process.exit(exitCode);
+  }
 }
 
 // ─── extension-verdict ───────────────────────────────────────────

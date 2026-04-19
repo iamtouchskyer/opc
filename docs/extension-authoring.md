@@ -429,17 +429,32 @@ execution — the harness continues and reports per-hook pass/fail separately.
   Soft overlap between `provides` and `compatibleCapabilities` (legitimate
   v1→v2 migration) is NOT a mismatch.
 
+- `--lint-strict` — same as `--lint`, but exits 1 if any `[lint]` WARN is
+  printed. Use this in CI when you want lint issues to break the build:
+
+  ```bash
+  opc-harness extension-test --ext ./my-ext --lint-strict
+  ```
+
 - `--fixture-dir <path>` — copy a directory into a fresh tmpdir (cleaned up
   on exit) and set `ctx.flowDir`/`ctx.runDir` to it. Use this when your
   hook reads files from `ctx.flowDir` (design tokens, handshakes, prior
   eval files) and you want a realistic sandbox without polluting your repo.
-  Overrides any `flowDir`/`runDir` passed via `--context`.
+  Overrides any `flowDir`/`runDir` passed via `--context`. Symlinks in the
+  source are **dereferenced** — the sandbox contains only plain files/dirs,
+  so a fixture containing a symlink to `/etc/passwd` cannot escape the
+  sandbox.
 
   ```bash
   opc-harness extension-test \
     --ext ./my-ext --hook prompt.append \
     --fixture-dir test/fixtures/sample-flow-dir
   ```
+
+- **Unknown-flag guard** — any `--foo` argument not in the known-flag set
+  (e.g. a typo like `--fixturedir`) is rejected with a loud error. Previously
+  `getFlag` silently ignored these, which caused fixture-dir typos to write
+  into the user's repo.
 
 ### 4.7 Canonical core capabilities
 
