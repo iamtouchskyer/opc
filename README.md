@@ -4,6 +4,10 @@
 
 16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
+## What's Different in v0.7
+
+**Third-party extension authoring.** The v0.5.1 extension surface is now documented + template'd for outside authors. `docs/extension-authoring.md` (7800+ words, zero "see internal" pointers) + `examples/extensions/_starter/` (30-min junior-dev walkthrough) + `examples/extensions/lint-prompt-length/` (outsider-built reference). Hardened via DX litmus: an independent agent built an extension using only the doc + starter, with every gap logged and patched.
+
 ## What's Different in v0.6
 
 **Digraph engine.** Tasks flow through typed nodes (build → review → gate → ...) with mechanical verdict routing. No more linear pipelines.
