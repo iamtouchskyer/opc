@@ -591,6 +591,58 @@ export async function verdictAppend() { return []; }
     const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
     assert.equal(warns.length, 1, "empty array still warns");
   });
+
+  test("WARN stays silent when registry has zero extensions", async () => {
+    // Fix-pair F-B1: short-circuit noise when no one is listening
+    const extDir = join(tmpBase, "empty-exts");
+    mkdirSync(extDir);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir /* no caps */ });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 0, "no extensions = no warning");
+  });
+
+  test("WARN is deduped across different fire* hooks on same registry", async () => {
+    // Fix-pair F-B4: dedup is per-registry, not per-function
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export const promptAppend = async () => "";
+export const verdictAppend = async () => [];
+export const executeRun = async () => {};
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await firePromptAppend(registry, { /* no caps */ });
+    await fireVerdictAppend(registry, { runDir });
+    await fireExecuteRun(registry, { runDir });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 1, "warns once total across prompt+verdict+execute");
+  });
+
+  test("WARN message names loaded extensions (actionable)", async () => {
+    // Fix-pair F-B2: hint must be actionable
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "alpha"), `
+export const meta = { name: "alpha", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    writeExtension(join(extDir, "beta"), `
+export const meta = { name: "beta", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir });
+    const joined = captured.join("");
+    assert.ok(joined.includes("alpha"), "mentions alpha");
+    assert.ok(joined.includes("beta"), "mentions beta");
+    assert.ok(joined.includes("flow template") || joined.includes("harness CLI"), "suggests where to set caps");
+  });
 });
 
 // ─── normalizeHook (exported canonical) ──────────────────────────
