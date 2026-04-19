@@ -1,0 +1,9 @@
+{
+  "name": "design-lint",
+  "version": "0.1.0",
+  "description": "Wraps opc-extend-design/bin/design-lint.mjs to flag design-spec conformance violations on review nodes.",
+  "meta": {
+    "provides": ["design-spec-conformance@1"],
+    "compatibleCapabilities": ["verification@1", "design-review@1"]
+  }
+}
