@@ -319,6 +319,19 @@ function extensionMatches(requires, provides, compatible) {
   return provAll.some(cap => reqSet.has(cap));
 }
 
+/**
+ * F2: WARN once per registry when ctx.nodeCapabilities is unset/empty.
+ * Mutates registry._warnedMissingCaps = true on first fire. Silent thereafter.
+ */
+function warnMissingNodeCapsOnce(registry, context) {
+  if (!registry || typeof registry !== "object") return;
+  if (registry._warnedMissingCaps) return;
+  const caps = context?.nodeCapabilities;
+  if (Array.isArray(caps) && caps.length > 0) return;
+  console.error("[extensions] WARN: ctx.nodeCapabilities not set — no hooks will match");
+  registry._warnedMissingCaps = true;
+}
+
 // ─── loadExtensions ──────────────────────────────────────────────
 
 /**
@@ -470,6 +483,7 @@ export async function loadExtensions(config = {}) {
  */
 export async function firePromptAppend(registry, context) {
   const parts = [];
+  warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
   for (const ext of registry.extensions) {
@@ -513,6 +527,7 @@ export async function firePromptAppend(registry, context) {
  */
 export async function fireVerdictAppend(registry, context) {
   const allFindings = [];
+  warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
   for (const ext of registry.extensions) {
@@ -549,7 +564,7 @@ export async function fireVerdictAppend(registry, context) {
     }
   }
 
-  if (!context.runDir) return;
+  if (!context.runDir) return { findings: allFindings, filePath: null };
 
   const lines = ["# Extension Findings", ""];
   for (const f of allFindings) {
@@ -563,7 +578,8 @@ export async function fireVerdictAppend(registry, context) {
   lines.push("");
 
   mkdirSync(context.runDir, { recursive: true });
-  atomicWriteSync(join(context.runDir, "eval-extensions.md"), lines.join("\n"));
+  const filePath = join(context.runDir, "eval-extensions.md");
+  atomicWriteSync(filePath, lines.join("\n"));
 
   // Sibling failure report — observable signal for the gate.
   // Always written when runDir is set (empty file means "no failures this run").
@@ -571,6 +587,8 @@ export async function fireVerdictAppend(registry, context) {
   // ingestion does NOT pick it up — the failure report is infrastructure
   // signal, not a role evaluation, and should not trip thin-eval guards.
   writeFailureReport(registry, context.runDir);
+
+  return { findings: allFindings, filePath };
 }
 
 // ─── fireExecuteRun ──────────────────────────────────────────────
@@ -588,6 +606,7 @@ export async function fireVerdictAppend(registry, context) {
  */
 export async function fireExecuteRun(registry, context) {
   const results = [];
+  warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
   for (const ext of registry.extensions) {
@@ -629,6 +648,7 @@ export async function fireExecuteRun(registry, context) {
  */
 export async function fireArtifactEmit(registry, context) {
   const emitted = [];
+  warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
   if (!context.runDir) return emitted;
 
