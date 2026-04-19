@@ -81,6 +81,10 @@ export OPC_HOOK_TIMEOUT_MS=500
 export OPC_HOOK_FAILURE_THRESHOLD=1
 export HOME="$TMP/fake-home"
 export OPC_EXTENSIONS_DIR="$EXT_DIR"
+# U5.8r: cleaner than `rm -f .extension-state.json` between scenarios —
+# disable persistence entirely for this suite since each test phase
+# expects a fresh breaker state.
+export OPC_BREAKER_STATE=disabled
 
 cd "$TMP" || exit 1
 OPC="node $REPO_ROOT/bin/opc-harness.mjs"
@@ -131,10 +135,7 @@ echo "--- 3.1: STRICT — OPC_STRICT_EXTENSIONS=1: throw-ext failure → exit �
 rm -rf "$HARNESS_NAME/nodes/review/run_1"
 mkdir -p "$HARNESS_NAME/nodes/review/run_1"
 echo '{}' > "$HARNESS_NAME/nodes/review/run_1/handshake.json"
-# F5/U5.7: default run tripped throw-ext's breaker and persisted the state
-# to .extension-state.json. For this scenario we want throw-ext to fire
-# again under strict mode, so reset persistent breaker state.
-rm -f "$HARNESS_NAME/.extension-state.json"
+# OPC_BREAKER_STATE=disabled (set at suite top) isolates phases from each other.
 
 OPC_STRICT_EXTENSIONS=1 \
   $OPC extension-verdict --node review \

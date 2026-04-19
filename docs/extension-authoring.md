@@ -958,13 +958,44 @@ whatever you passed to `--dir`, typically `.harness`).
 **Forward-compat:** If `version` is missing or not `1`, the core logs a single
 WARN to stderr and falls back to an empty state (does not crash). Corrupt JSON
 is treated the same way. This lets future schema versions ship without
-breaking older core binaries that encounter them.
+breaking older core binaries that encounter them. A v1 writer also **preserves
+unknown top-level fields** on round-trip — so if a future v2 binary writes an
+extra field, a v1 binary reading and re-saving the same file won't clobber it.
 
-**Testing note:** If your test suite runs the same flow dir through multiple
-scenarios that each expect a "clean breaker" (e.g. default-mode trips breaker,
-then strict-mode scenario expects the same extension to fire again), `rm -f
-<flow-dir>/.extension-state.json` between scenarios. See
-`test/test-run2-strict.sh` for an example.
+**Whitelist safety:** `saveBreakerState` does a read-modify-write: it
+preserves entries for extensions that weren't loaded in the current
+invocation. So `opc-harness extension-verdict --extensions foo` won't wipe
+the breaker snapshot of `bar` that tripped in a previous run.
+
+**Observability:** When `loadExtensions` restores one or more extensions to
+`enabled=false` from the file, it prints a single stderr line naming them:
+
+```
+[opc] restored disabled state from .extension-state.json: foo, bar (use 'opc-harness init' to clear or set OPC_BREAKER_STATE=disabled)
+```
+
+If "my extension suddenly stopped firing", check this line first.
+
+**Recovery**:
+- `opc-harness init <dir>` — nuclear reset. Deletes `.extension-state.json`.
+- `resetExtension(ext, registry)` — in-code recovery after fixing root
+  cause. When `registry` is passed and has `_flowDir`, the reset is
+  persisted to disk; without `registry`, only the in-memory `ext` is
+  cleared and the next CLI invocation re-applies the disabled state.
+
+**Escape hatch — `OPC_BREAKER_STATE=disabled`**: Turns off both load and
+save. Useful for test suites that share a harness dir across scenarios and
+want each scenario to see a fresh breaker state without `rm -f`ing the file
+between them. Also handy during an extension-author debug cycle.
+
+**Bypass mode** (`--no-extensions`, `OPC_DISABLE_EXTENSIONS=1`) does NOT
+load or persist breaker state — bypass skips the entire extension system.
+Selective bypass (`--extensions foo`) DOES load/save (see whitelist safety
+above).
+
+**Version control**: add `.extension-state.json` to your `.gitignore` — it's
+runtime state, not source. For OPC flows, the whole `.harness/` dir is
+already typically gitignored.
 
 ---
 
@@ -1414,6 +1445,7 @@ revision.
 | `OPC_HOOK_FAILURE_LOG_CAP`        | `200`                          | Max entries in `registry.failures[]` before FIFO drops.                 |
 | `OPC_DISABLE_EXTENSIONS`          | unset                          | `1` → load zero extensions (benchmark mode).                            |
 | `OPC_STRICT_EXTENSIONS`           | unset                          | `1` → exit code `2` if any failure was recorded this process.           |
+| `OPC_BREAKER_STATE`               | unset                          | `disabled` → skip all load/save of `.extension-state.json` (§7.4).      |
 | `OPC_QUIET_DEPRECATIONS`          | unset                          | `1` → silence the once-per-process `⚠️  ~/.claude/flows/ is deprecated …` banner emitted by `flow-templates.mjs`. |
 
 ## Appendix B — Public exports from `extensions.mjs`
@@ -1430,7 +1462,7 @@ Useful for authoring tests or orchestrator glue code:
 | `normalizeHook(raw, mod)`      | Canonicalize any export shape to `{ hooks: { ... } }`.        |
 | `normalizeCapability(cap)`     | `foo` → `foo@1` (with WARN); pass-through if already versioned. |
 | `lintCapability(cap)`          | `{ ok, reason }` shape — used by `extension-test`.            |
-| `resetExtension(ext)`          | Clear breaker state after fixing root cause.                  |
+| `resetExtension(ext, registry?)` | Clear breaker state after fixing root cause. Pass `registry` to persist. |
 | `resolveBypass(config)`        | Resolve `--no-extensions` / `--extensions` / env precedence.  |
 | `writeFailureReport(reg, dir)` | Merge & write `extension-failures.{json,md}`.                 |
 | `survivingExtensions(reg)`     | Names of still-enabled extensions at stamp time.              |
