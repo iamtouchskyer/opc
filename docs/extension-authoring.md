@@ -6,6 +6,57 @@
 
 ---
 
+## 0. Prerequisites — how to get `opc-harness`
+
+This guide uses `opc-harness` as if it were on your `PATH`. Two ways to make
+that true:
+
+1. **npm install** (preferred, same package the README teaches):
+
+   ```bash
+   npm i -g @touchskyer/opc           # or: pnpm add -g / yarn global add
+   opc-harness --help                  # sanity check — prints usage to stderr
+   ```
+
+   The npm package ships the `opc-harness` binary alongside the `/opc` slash
+   commands. Both invoke the same Node script — they are not two products.
+
+2. **Run from a repo checkout** (no global install — handy for hacking on
+   the harness itself):
+
+   ```bash
+   node /path/to/opc/bin/opc-harness.mjs --help
+   alias opc-harness='node /path/to/opc/bin/opc-harness.mjs'  # optional
+   ```
+
+   Any command in this guide that starts with `opc-harness …` can be
+   rewritten as `node bin/opc-harness.mjs …`.
+
+Sanity check: `opc-harness` with no arguments (or `--help`) prints the full
+command list to stderr and exits 0. If you see `command not found`, you
+either skipped the install step or your shell's `PATH` doesn't include the
+global npm bin dir (`npm bin -g`).
+
+### `~/.opc/` bootstrap
+
+Extensions live under `~/.opc/extensions/<ext-name>/`. Rules:
+
+- `~/.opc/` itself does **not** need to exist ahead of time. If the
+  extensions dir is missing, the loader treats it as "zero extensions
+  installed" and moves on (unless a required extension was declared — then
+  it FATALs).
+- Nothing else in `~/.opc/` is required for extensions. The optional
+  per-user `~/.opc/config.json` (documented in the README) is read by
+  `opc-harness config resolve` for global defaults, but is not part of the
+  extension-discovery contract.
+- To relocate the scan root, set `OPC_EXTENSIONS_DIR=/custom/path`.
+- To bypass the scan entirely during development, point
+  `opc-harness extension-test --ext <abs-path>` at a single directory —
+  that command loads your extension directly without touching
+  `~/.opc/extensions/`.
+
+---
+
 ## 1. What is an OPC extension?
 
 An OPC extension is a **directory on disk** containing a `hook.mjs` ES module
@@ -28,6 +79,74 @@ returns the wrong shape is recorded to a failure sidecar (`extension-failures.js
 circuit breaker disables the extension for the remainder of the run. Healthy
 siblings keep executing. This is the core contract: **your extension cannot
 take down the pipeline.**
+
+### 1.1 Execution model
+
+This section is **SemVer-stable contract** — extensions may rely on it.
+
+- **In-process dynamic `import()`.** Each `hook.mjs` is loaded into the same
+  Node process as the harness. There is no worker, no fork, no sandbox. Your
+  hook runs with full Node privileges — `fs`, `child_process`, `process.env`,
+  the module cache, all of it. `process.exit()` in your hook **will** kill
+  the harness; don't do that.
+- **Sequential per call site.** Inside a single call site
+  (`firePromptAppend`, `fireVerdictAppend`, `fireExecuteRun`,
+  `fireArtifactEmit`), extensions are invoked one at a time with `await`.
+  Extension B does not start until extension A has resolved, thrown, or
+  timed out. One extension's throw does **not** abort siblings — the core
+  catches, records, and moves to the next.
+- **Deterministic ordering = alphabetical by directory name.** The loader
+  sorts discovered extensions alphabetically before loading. Outputs from
+  `promptAppend` are concatenated in that order with `\n\n` separators;
+  findings from `verdictAppend` are merged in that order; artifacts from
+  `artifactEmit` are written in that order into per-extension subdirs so
+  there is no name collision across extensions (see §5.5). You can override
+  the front of the order via `config.extensionOrder: ["a", "b", …]`; any
+  extensions not named there fall to alphabetical tail order.
+- **No cross-call-site ordering guarantee.** `promptAppend` vs
+  `verdictAppend` vs `artifactEmit` run at different pipeline phases in
+  different CLI invocations — never assume one finished before another
+  started unless they are the same phase.
+- **`ctx` is a shared mutable reference — do not mutate it.** The core
+  passes the same object to every matched extension without freezing or
+  cloning it. If extension A does `ctx.task = ctx.task.toUpperCase()`,
+  extension B (which runs after A) will see the upper-cased value. Treat
+  `ctx` as read-only; mutating it is undefined behavior and a future
+  minor-version change may `Object.freeze` it to enforce this.
+- **Cooperative timeouts.** The `HOOK_TIMEOUT_MS` guard races your
+  hook's promise against a `setTimeout` (see §7.1). If your hook times
+  out, the core rejects the awaited promise and continues — but any
+  in-flight subprocesses, network requests, or unresolved promises **you**
+  started keep running in the background. Always pipe an
+  `AbortController` / `AbortSignal.timeout` into `spawn` / `fetch` /
+  Playwright calls so they clean themselves up.
+
+### 1.2 Hook name mapping (camelCase ↔ kebab+dot)
+
+The same five hooks go by two names:
+
+| camelCase export (§5)  | Kebab+dot canonical name (§8, §9, logs) |
+|------------------------|------------------------------------------|
+| `promptAppend`         | `prompt.append`                          |
+| `verdictAppend`        | `verdict.append`                         |
+| `executeRun`           | `execute.run`                            |
+| `artifactEmit`         | `artifact.emit`                          |
+| `startupCheck`         | `startup.check`                          |
+
+Rules:
+
+- Export your hook under **either** the camelCase name (recommended) **or**
+  the kebab+dot name via `export { fn as "prompt.append" }`. Both are
+  normalized to the same internal `hooks["prompt.append"]` slot.
+- If you export **both** forms, the **kebab+dot form wins** (it is assigned
+  after the camelCase form in the normalizer).
+- **Unknown exports are silently ignored.** Exporting a function named
+  `prommptAppend` (typo) or `onPrompt` will not error, will not warn — the
+  hook just never fires. If your hello-world's hook never runs, grep
+  your export name against the table above first.
+- Failure sidecar, stderr logs, and `--hook` CLI flag all use the
+  **kebab+dot** form. Grep `prompt.append`, not `promptAppend`, when
+  chasing issues in logs.
 
 ---
 
@@ -180,6 +299,18 @@ Valid: `visual-check@1`, `a11y-audit@2`, `perf-check@10`.
 Invalid: `VisualCheck@1` (uppercase), `foo@0` (zero), `foo@01` (leading zero),
 `foo` (missing version — see auto-upgrade below).
 
+**No semver.** Versions are **integer generations**, not semver ranges.
+`foo@1` matches `foo@1` only; `foo@1` does **not** match `foo@2` under any
+rule. There is no `^1`, no `>=1`, no `1.x` — writing `"foo@^1"` or
+`"foo@1.0"` in `provides` / `compatibleCapabilities` is lint-FAIL
+`invalid-shape` (§4.6). To support multiple generations, list them
+individually:
+
+```js
+provides: ["visual-check@2"],
+compatibleCapabilities: ["visual-check@1"],  // widen to the older gen
+```
+
 ### 4.2 Bare-name auto-upgrade
 
 A bare name like `foo` (matching `/^[a-z][a-z0-9-]*$/`) is **auto-upgraded** to
@@ -241,6 +372,15 @@ Edge cases:
   fire for that node.
 - `ext.meta.provides` is empty AND `compatibleCapabilities` is empty → the
   extension never fires from any node.
+- Node requires a capability that **no installed extension provides** →
+  **silent no-op**. There is no "unmet capability" error. The node
+  proceeds with whatever the built-in roles produce. Debug by running
+  `opc-harness config resolve` (confirms the loaded extensions and their
+  provides) plus `opc-harness extension-test --ext <path>` (confirms your
+  extension lints clean and exports the expected provides).
+- Matching is **case-sensitive exact string equality** after normalization.
+  A capability that fails `lintCapability` (e.g. `Foo@1`) never matches
+  anything — the lint WARN in §4.6 is your only signal.
 
 ### 4.6 Lint
 
@@ -261,10 +401,16 @@ execution — the harness continues and reports per-hook pass/fail separately.
 
 ---
 
-## 5. The 4 hooks
+## 5. The hooks
 
 All hooks receive a single `ctx` argument and are called with `await`.
 Synchronous hooks are fine (the core wraps with `Promise.resolve`).
+
+There are **five** hooks in total: the four that fire per-node during a
+pipeline (`promptAppend`, `verdictAppend`, `executeRun`, `artifactEmit`)
+plus `startupCheck` which runs once at load time (§5.6). See the name
+mapping table in §1.2 for the camelCase ↔ kebab+dot correspondence used
+across logs and CLI flags.
 
 ### 5.1 `ctx` shape
 
@@ -358,8 +504,26 @@ finding is rendered into `<runDir>/eval-extensions.md`:
 **Graceful-empty value:** `null`, `undefined`, or `[]`. All skipped silently.
 
 **Wrong-shape penalty:** a non-array return records `bad-return` and is
-ignored. Individual findings that don't match either shape are silently
-dropped (no failure).
+ignored. Individual findings that don't match either shape are **silently
+dropped with no failure record** — no `extension-failures.md` entry, no
+stderr line. The finding simply never appears in `eval-extensions.md`. If
+your finding vanishes, grep your payload against this checklist first:
+
+- `severity` must be exactly one of the strings `"error"`, `"warning"`,
+  `"info"` (lowercase, full word — `"warn"`, `"ERROR"`, `"err"` all drop).
+- `category` must be a non-empty string (free-form lowercase identifier;
+  any unknown category renders identically to known ones).
+- `message` must be a string (empty string technically passes the shape
+  check but renders as a blank line — don't).
+- `file` is optional, must be a string when present. A wrong-typed `file`
+  (e.g. number) causes the whole finding to drop, not just the field.
+- `null` / `undefined` entries in the array drop.
+- Extra fields are preserved on the object but only `severity`, `category`,
+  `message`, `file` are rendered.
+
+The dropped-finding trail is **visible only through what's missing**. When
+in doubt, add a `process.stderr.write('[my-ext] emitting finding:', f)`
+just before the return to confirm the shape.
 
 **Example:**
 
@@ -424,12 +588,29 @@ Runs **after** `executeRun` in the same command.
 **Signature:** `async (ctx) => Array<{ name: string, content: string | Buffer | ArrayBufferView }> | null | undefined`
 
 **Each item:**
-- `name` — a **plain basename** (no `/`, no `..`, not empty). Anything
-  else is skipped with a WARN. Path separators are stripped via
-  `basename()`.
-- `content` — `string`, `Buffer`, or any `ArrayBufferView` (including
-  `Uint8Array` from `crypto.subtle`, `TextEncoder`, or Playwright
-  screenshots).
+- `name` — a **plain basename** (no `/`, no `..`, not empty, not `.`).
+  Anything that fails `path.basename()` equality or lands on these
+  sentinels is skipped with a stderr WARN and no file is written.
+  Note: on POSIX, backslash `\` is treated as a literal filename
+  character — `foo\bar.png` becomes a single weirdly-named file, not a
+  subdir. Sanitize upstream if you generate names from page titles /
+  URLs / user input.
+- `content` — accepted types (anything else is skipped with WARN, no
+  failure record):
+  - `string` (written as UTF-8)
+  - `Buffer`
+  - Any `ArrayBufferView` — `Uint8Array`, `Int8Array`, `DataView`, other
+    TypedArrays. Modern APIs (`crypto.subtle.digest`, `TextEncoder`,
+    Playwright `page.screenshot()`, `sharp(x).toBuffer()`) all return
+    types that satisfy this.
+  - **Not** supported: raw `ArrayBuffer` (wrap it: `new Uint8Array(buf)`),
+    `Blob`, `ReadableStream`, `AsyncIterable<Uint8Array>`, `Promise<Buffer>`
+    (await it first — `content: await page.screenshot()`, not
+    `content: page.screenshot()`).
+- Name collisions within a single `artifactEmit` return array
+  (`[{name:"a.png", …}, {name:"a.png", …}]`) result in **last-write-wins**
+  silently, since each item is written in turn to the same path. Ensure
+  unique names yourself.
 
 **Where files land:** `<runDir>/ext-<extname>/<name>`. Each emitted path is
 appended to `handshake.artifacts[]` as `{ type: "ext-artifact", ext, path }`.
@@ -704,6 +885,31 @@ opc-harness extension-test --ext <path> [--hook <hookname>] [--all-hooks] [--con
    `hook.mjs`, bad `--context` JSON, or neither `--hook` nor `--all-hooks`
    specified.
 
+**What `extension-test` does and does NOT do:**
+
+- `--all-hooks` runs exactly **three** hooks: `startup.check`,
+  `prompt.append`, `verdict.append`. It does **not** run `execute.run` or
+  `artifact.emit` — those need a live `runDir` and are exercised by the
+  pipeline commands `extension-artifact` / `extension-verdict` against a
+  real `.harness/` tree.
+- To test `artifact.emit` via `extension-test`, pass `--hook artifact.emit`
+  explicitly and put a writable `runDir` into `--context`. The command
+  does **not** auto-create a tmpdir; if `runDir` is missing the hook
+  short-circuits inside the core (see §5.5) and you'll see `✅` with no
+  files written.
+- `extension-test` calls your hook function **directly** (no `fire*Append`
+  wrapper). The core timeout, circuit breaker, and failure sidecar are
+  **not** exercised — a throw in your hook is reported as `❌` but no
+  `extension-failures.md` is written. For end-to-end integration with
+  those guards, use the pipeline commands below.
+- Return values from `startupCheck` are ignored by the core (only throw vs
+  not-throw matters); `extension-test` prints a generic `✅ passed` for
+  `startup.check` regardless of what you return. Use the return value for
+  your own diagnostic output if useful.
+- Removing `nodeCapabilities` from `--context` (or passing an empty array)
+  means **no** extensions match — hooks are skipped cleanly. Try this
+  against your hello-world to feel the routing rule (§4.5).
+
 **Examples:**
 
 ```bash
@@ -858,6 +1064,76 @@ export function promptAppend(ctx) {
   during dev doesn't hammer `which`.
 
 Copy this structure. Rename. Ship.
+
+---
+
+## Change log
+
+U4.1r → U4.1 fix-pair. Entries tagged with originating reviewer + finding ID.
+
+- **[A1]** Added §0 Prerequisites: `npm i -g @touchskyer/opc` install vs
+  `node bin/opc-harness.mjs` fallback, sanity-check command.
+- **[A2]** Added §0 `~/.opc/` bootstrap paragraph: directory is not required
+  to pre-exist, `OPC_EXTENSIONS_DIR` override, no other scaffolding needed.
+- **[A3 + friction-§5-mapping]** Added §1.2 hook name mapping table
+  (camelCase ↔ kebab+dot), explicit duplicate-export precedence (kebab
+  wins), unknown-export silent-ignore rule.
+- **[B1]** Added §1.1 Execution model: sequential per call site,
+  alphabetical ordering (with `config.extensionOrder` override), sibling
+  isolation on throw, no cross-call-site ordering guarantee.
+- **[B2]** Added §1.1 `ctx` mutability paragraph: shared reference, do not
+  mutate, treat as read-only.
+- **[B3]** Added §4.1 "No semver" paragraph: integer generations only,
+  explicit examples of what fails lint.
+- **[B4]** Rewrote §5.3 wrong-shape paragraph: explicit checklist of what
+  passes the validation predicate, "dropped with no failure record"
+  stated, debug guidance.
+- **[A-friction §5 title]** Retitled §5 from "The 4 hooks" to "The hooks",
+  stated 4-per-node + 1-load-time.
+- **[A-friction execution model]** Covered by §1.1 (in-process, full Node
+  privileges, `process.exit` kills harness).
+- **[A-friction timeout cooperative]** §1.1 now states cooperative-timeout
+  semantics explicitly: in-flight subprocesses/promises keep running.
+- **[A-friction no matching ext]** §4.5 now documents silent no-op when no
+  extension matches + debugging commands.
+- **[A-friction case sensitivity]** §4.5 now states case-sensitive exact
+  equality + lint failure = never-matches.
+- **[A-friction extension-test artifactEmit]** §9 now has a "does and does
+  NOT do" block: `--all-hooks` only covers 3 hooks; `artifact.emit` needs
+  explicit `--hook` + `runDir`; no auto-tmpdir; timeouts/breaker not
+  exercised.
+- **[A-friction startupCheck return]** §9 block states return value is
+  ignored; `extension-test` prints generic pass regardless.
+- **[A-friction multi-ext ordering]** Covered by §1.1 (alphabetical) +
+  §5.5 note on intra-emit collisions.
+- **[B-friction binary types]** §5.5 content list expanded: explicit
+  supported types, explicit unsupported types (ArrayBuffer, Blob,
+  ReadableStream, unawaited Promise), name-collision last-write-wins
+  rule.
+- **[B-friction backslash]** §5.5 notes POSIX basename treats `\` as
+  literal character.
+
+Deliberately deferred (need speculation beyond current source):
+
+- **[B-friction error-vs-empty decision rule]** A categorical throw-vs-return
+  rule is editorial advice that the source cannot confirm; §6 already
+  enumerates three environmental classes. Future Run 4 lesson-learned pass
+  may formalize.
+- **[B-friction unit-test story]** No `makeTestRegistry` / `makeTestCtx`
+  helper exists in source; documenting an imagined API would be invention.
+  Authors can build their own with the Appendix B exports.
+- **[B-friction sidecar schema version]** The code does not emit a
+  `schemaVersion` field today; promising one would misrepresent current
+  behavior. Future-proofing left to a real schema-evolution change.
+- **[B-friction breaking-change policy]** SemVer commitments for the public
+  surface require coordination with the packaging story; out of scope for
+  a docs patch.
+- **[B-friction breaker per-item trail]** Current source records per-item
+  WARNs but not sidecar entries — existing behavior documented, policy
+  change deferred.
+- **[A-nit circuit-breaker-reset / Appendix B import path / timeout-table
+  advisory]** Left unchanged — editorial nits that don't block newcomer
+  first-hour success.
 
 ---
 
