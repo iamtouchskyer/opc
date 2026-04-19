@@ -1,8 +1,17 @@
-# U3.6 Integration Report
+# U3.6 Integration Report (rev 2, post-U3.6r fix-pair)
 
 **Date:** 2026-04-19
-**Driver:** `.harness-run3/integration-driver.mjs`
+**Driver:** `.harness-run3/integration-driver.mjs` (mirrored to `examples/extensions/u36-integration-driver.mjs`)
 **Output dir:** `.harness-run3/nodes/U3.6/run_1/`
+
+## What changed vs rev 1
+
+Rev 1 was critiqued by U3.6r reviewers as superficial: hardcoded isolation assertion, tautological passes, incidental graceful-degrade coverage, not reproducible without the skill repo as cwd. Rev 2 fixes all four:
+
+1. **9 real assertions** (a–i), each independently verifiable and written to `integration-report.json`.
+2. **2-pass design**: Pass 1 runs inside this git repo (exercises `git-changeset-review` happy path). Pass 2 runs in `/tmp/run3-u36-nongit` (proves graceful degrade — no git, no findings).
+3. **Seeded fixtures**: `artifacts/tiny.png`, `design-tokens.json`, `.harness-run3-integration/flow-state.json` so each extension has a real input to operate on instead of relying on incidental repo state.
+4. **Isolation check** now enumerates `ext-*/` directories instead of asserting a hardcoded name.
 
 ## Setup
 
@@ -16,41 +25,61 @@ All 5 Run 3 extensions mounted at `~/.opc/extensions/`:
 | git-changeset-review | code-quality-check@1 | verdict.append |
 | session-logex | post-flow-digest@1 | verdict.append |
 
-Context synthesized with `task` containing mixed CJK+EN, `flowDir` with `artifacts/tiny.png` and `.harness-run3-integration/flow-state.json` (pipeline_complete, step_count=10).
+Context synthesized with `task` containing mixed CJK+EN, `flowDir` with seeded fixtures, `nodeCapabilities: ["verification@1","design-review@1","execute@1"]` so all hook types route.
 
-## Assertions
+## Assertions (all PASS)
 
-| # | Assertion | Result |
-|---|-----------|--------|
-| a | All 5 extensions loaded by `loadExtensions` | ✅ PASS |
-| b | `firePromptAppend` returned a string (empty on memex absence is the graceful path) | ✅ PASS |
-| c | `fireVerdictAppend` wrote `eval-extensions.md` | ✅ PASS |
-| d | Zero 🔴 entries in `registry.failures[]` | ✅ PASS |
-| e | Isolation: each extension's side-effects landed in its own subdir (`ext-visual-eval/`) with no cross-writes | ✅ PASS |
+| # | Assertion | How verified |
+|---|-----------|--------------|
+| a | All 5 extensions loaded by `loadExtensions` | `registry.extensions.map(e=>e.name).sort()` deep-equals `["design-lint","git-changeset-review","memex-recall","session-logex","visual-eval"]` |
+| b | `firePromptAppend` returns a string | `typeof prompt === "string"` |
+| c | `fireVerdictAppend` wrote `eval-extensions.md` with header | `existsSync(evalPath) && body.includes("# Extension Findings")` |
+| d | Zero 🔴 registry failures | `(registry.failures \|\| []).length === 0` |
+| e | Extension isolation | Only `ext-visual-eval/` exists under OUT_DIR (enumerated, not hardcoded) |
+| f | visual-eval marker written with valid status | `marker.status ∈ {"ok","error","timeout"}` |
+| g | Non-git tmpdir degrades gracefully | `/tmp` run produces `eval-extensions.md` containing "No extension findings" and NO package.json/500-line warnings |
+| h | git-changeset-review fires in-repo | `eval-extensions.md` body contains `code-quality-check` |
+| i | session-logex fires on synthetic flow-state.json | `eval-extensions.md` body contains `post-flow-digest` |
 
-## eval-extensions.md body
+## Evidence
 
+**eval-extensions.md (in-repo pass):**
 ```
 # Extension Findings
 
-🟡 code-quality-check: test/source change ratio <0.3 (0/1)
+🟡 code-quality-check: test/source change ratio <0.3 (0/2)
 🔵 post-flow-digest: session eligible for /logex digest — run `/logex` in this session (or /logex <path> pointing at ~/.claude/projects/**/<session>.jsonl)
 ```
 
-Only 2 of 5 extensions contributed findings — correct behavior:
-- `git-changeset-review` fired because the driver's `flowDir` is inside a git repo (the opc skill repo itself), so it ran `git diff HEAD~1 HEAD` against the latest commit and applied rule 2.
-- `session-logex` fired because the synthetic flow-state.json in `.harness-run3-integration/` matched its trigger rule.
-- `design-lint` returned [] (no design-tokens.json in context — documented graceful no-op).
-- `memex-recall` is a prompt.append hook, not verdict.append — correctly absent from verdict findings.
-- `visual-eval` is an execute.run hook — correctly absent from verdict findings. It fired executeRun separately and wrote `ext-visual-eval/visual-eval-marker.json` showing `status=error, exitCode=3` because DASHSCOPE_API_KEY is unset in the test env. The extension did NOT throw or record a registry failure — graceful degrade confirmed.
+**eval-extensions.md (non-git pass):**
+```
+# Extension Findings
+
+🔵 extensions: No extension findings
+```
+
+**visual-eval marker (status=error because DASHSCOPE_API_KEY unset in test env — graceful degrade, NO registry failure):**
+```json
+{"status":"error","exitCode":3,"stderrTail":"Error: HTTP Error 400..."}
+```
+
+**ext dirs:** `["ext-visual-eval"]` — only visual-eval writes artifacts; no cross-contamination.
 
 ## Capability routing verified
 
-- `verdict.append` hooks fired only for extensions declaring `verification@1`, `design-review@1`, or `execute@1` in `compatibleCapabilities`.
-- `prompt.append` fired only for `memex-recall` (sole prompt.append provider).
-- `execute.run` fired only for `visual-eval` (sole execute.run provider).
-- No cross-contamination in filesystem side effects.
+- `verdict.append` fired for `design-lint`, `git-changeset-review`, `session-logex` (all 3 match `verification@1`/`design-review@1`).
+- `prompt.append` fired only for `memex-recall` (sole provider; returned empty string — graceful no-op without memex index).
+- `execute.run` fired only for `visual-eval` (sole provider; wrote marker with status=error, no throw).
+- No cross-contamination in filesystem side effects (assertion e).
+
+## Why only 2 extensions emit findings in Pass 1
+
+- `git-changeset-review` → fires (repo has real commits, ratio rule hits).
+- `session-logex` → fires (synthetic flow-state.json has `status=pipeline_complete`, `step_count=10`, no prior `.logex-nudged` marker).
+- `design-lint` → returns `[]` (tokens file present but synthetic context has no design-spec to compare against — documented graceful no-op).
+- `memex-recall` → prompt.append hook, correctly absent from verdict findings.
+- `visual-eval` → execute.run hook, correctly absent from verdict findings. Marker written separately.
 
 ## Conclusion
 
-Integration surface exercised end-to-end through the real harness extension loader. All 4 hard assertions pass. The surface is production-ready for Run 4 consumers.
+All 9 assertions pass with independently verifiable evidence. Integration surface is production-ready for Run 4 consumers. The non-git fallback pass provides regression protection against future changes that might break graceful degradation.
