@@ -645,6 +645,119 @@ export async function verdictAppend() { return []; }
   });
 });
 
+// ─── F4: eval-extensions.json sidecar ────────────────────────────
+
+describe("F4 — eval-extensions.json sidecar", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("writes canonical JSON alongside markdown", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() {
+  return [{ severity: "warning", category: "lint", message: "missing semicolon", file: "a.js" }];
+}
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+
+    assert.ok(typeof result.jsonPath === "string" && result.jsonPath.endsWith("eval-extensions.json"));
+    assert.ok(existsSync(result.jsonPath), "json file exists");
+
+    const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
+    assert.equal(doc.version, 1, "schema version is 1");
+    assert.equal(typeof doc.generatedAt, "string");
+    assert.ok(!Number.isNaN(Date.parse(doc.generatedAt)), "generatedAt is ISO timestamp");
+    assert.deepEqual(doc.extensionsLoaded, ["linter"]);
+    assert.equal(doc.findings.length, 1);
+    assert.deepEqual(doc.findings[0], {
+      extension: "linter",
+      severity: "warning",
+      category: "lint",
+      message: "missing semicolon",
+      file: "a.js",
+    });
+  });
+
+  test("empty findings → JSON has findings:[], markdown still written", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+
+    const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
+    assert.deepEqual(doc.findings, []);
+    const md = readFileSync(result.filePath, "utf8");
+    assert.ok(md.includes("No extension findings"), "markdown fallback still present");
+  });
+
+  test("markdown is derived from JSON — field-for-field consistent", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() {
+  return [
+    { severity: "error", category: "security", message: "xss risk" },
+    { severity: "warning", category: "style", message: "too long", file: "b.js" },
+    { severity: "info", category: "note", message: "FYI" },
+  ];
+}
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+
+    const md = readFileSync(result.filePath, "utf8");
+    assert.ok(md.includes("🔴 security: xss risk"), "red for error");
+    assert.ok(md.includes("🟡 style: too long in b.js"), "yellow + file suffix for warning");
+    assert.ok(md.includes("🔵 note: FYI"), "blue for info");
+  });
+
+  test("jsonPath is null when runDir not set", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const result = await fireVerdictAppend(registry, { nodeCapabilities: ["cap"] });
+    assert.equal(result.jsonPath, null);
+    assert.equal(result.filePath, null);
+  });
+
+  test("malformed findings are dropped; JSON only contains normalized", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() {
+  return [
+    { severity: "warning", category: "ok", message: "kept" },
+    null,
+    "not-an-object",
+    42,
+  ];
+}
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+    const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
+    assert.equal(doc.findings.length, 1, "only the normalized finding survives");
+    assert.equal(doc.findings[0].message, "kept");
+  });
+});
+
 // ─── normalizeHook (exported canonical) ──────────────────────────
 
 describe("normalizeHook (exported)", () => {
