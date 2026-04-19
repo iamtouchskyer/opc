@@ -13,7 +13,7 @@
 
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const meta = {
   provides: ["code-quality-check@1"],
@@ -30,9 +30,12 @@ const LOCKFILES = [
   "yarn.lock",
 ];
 
+let _gitAvailable = null;
 function hasGit() {
+  if (_gitAvailable !== null) return _gitAvailable;
   const r = spawnSync("git", ["--version"], { encoding: "utf8", timeout: 2000 });
-  return r.status === 0;
+  _gitAvailable = r.status === 0;
+  return _gitAvailable;
 }
 
 export function startupCheck() {
@@ -63,12 +66,14 @@ function parseNumstat(stdout) {
   const files = [];
   for (const line of (stdout || "").split("\n")) {
     if (!line.trim()) continue;
-    // Format: "<ins>\t<del>\t<path>"; renamed paths use "old => new" syntax.
+    // Format: "<ins>\t<del>\t<path>". With --no-renames we won't see
+    // "old => new" syntax, but strip {a => b} defensively just in case.
     const m = line.match(/^(\S+)\s+(\S+)\s+(.+)$/);
     if (!m) continue;
     const ins = m[1] === "-" ? 0 : parseInt(m[1], 10) || 0;
     const del = m[2] === "-" ? 0 : parseInt(m[2], 10) || 0;
-    files.push({ path: m[3], ins, del });
+    const path = m[3].replace(/\{[^{}]* => ([^{}]*)\}/g, "$1");
+    files.push({ path, ins, del });
   }
   return files;
 }
@@ -82,8 +87,9 @@ function analyze(files) {
     const isTest = TEST_RE.test(f.path);
     if (isTest) test++;
     else src++;
-    if (f.path.endsWith("package.json")) pkgJsonChanged = true;
-    if (LOCKFILES.some((lf) => f.path.endsWith(lf))) lockfileChanged = true;
+    const base = basename(f.path);
+    if (base === "package.json") pkgJsonChanged = true;
+    if (LOCKFILES.includes(base)) lockfileChanged = true;
   }
 
   if (total > LINE_THRESHOLD) {
@@ -122,7 +128,7 @@ export function verdictAppend(ctx) {
 
     const r = spawnSync(
       "git",
-      ["-C", repoRoot, "diff", "--numstat", "HEAD~1", "HEAD"],
+      ["-c", "core.quotepath=false", "-C", repoRoot, "diff", "--numstat", "--no-renames", "HEAD~1", "HEAD"],
       { encoding: "utf8", timeout: GIT_TIMEOUT_MS }
     );
     if (r.status !== 0) return []; // shallow / no prior commit / perms — graceful
