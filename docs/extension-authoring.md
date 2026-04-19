@@ -411,6 +411,36 @@ Possible outcomes per entry:
 Lint failures print a `[lint] ⚠️` line to stderr but **do not block** hook
 execution — the harness continues and reports per-hook pass/fail separately.
 
+**Run 5 additions:**
+
+- `--lint` — run lint checks only, do not invoke any hook. Exits 0 even on
+  lint issues (WARNs go to stderr). Useful in CI as a pre-commit check:
+
+  ```bash
+  opc-harness extension-test --ext ./my-ext --lint
+  ```
+
+  Besides capability-shape lint, `--lint` also detects **hook/provides
+  mismatch**:
+    - `provides` declared but zero hooks implemented → the extension loads
+      but never fires.
+    - Hooks implemented but `provides` is empty → `extensionMatches()` skips
+      the extension on every node.
+  Soft overlap between `provides` and `compatibleCapabilities` (legitimate
+  v1→v2 migration) is NOT a mismatch.
+
+- `--fixture-dir <path>` — copy a directory into a fresh tmpdir (cleaned up
+  on exit) and set `ctx.flowDir`/`ctx.runDir` to it. Use this when your
+  hook reads files from `ctx.flowDir` (design tokens, handshakes, prior
+  eval files) and you want a realistic sandbox without polluting your repo.
+  Overrides any `flowDir`/`runDir` passed via `--context`.
+
+  ```bash
+  opc-harness extension-test \
+    --ext ./my-ext --hook prompt.append \
+    --fixture-dir test/fixtures/sample-flow-dir
+  ```
+
 ### 4.7 Canonical core capabilities
 
 The built-in flow templates (`flow-templates.mjs`) stamp a fixed set of

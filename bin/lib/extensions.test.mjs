@@ -2520,3 +2520,212 @@ describe("U1.6r — extension-artifact CLI includes nodeCapabilities (contract #
     assert.deepEqual(parsed.nodeCapabilities, ["nodecap@1"]);
   });
 });
+
+// ─── U5.5 — F3 (--fixture-dir) + F6 (--lint hook/provides mismatch) ──────
+
+describe("U5.5 F3 — extension-test --fixture-dir", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("copies fixture dir into tmp and sets ctx.flowDir/ctx.runDir", async () => {
+    const fixtureSrc = join(tmpBase, "fixture");
+    mkdirSync(fixtureSrc, { recursive: true });
+    writeFileSync(join(fixtureSrc, "marker.txt"), "hello-u55", "utf8");
+    const extDir = join(tmpBase, "reader");
+    writeExtension(extDir, `
+      import { existsSync, readFileSync } from "fs";
+      import { join } from "path";
+      export const meta = { provides: ["verification@1"] };
+      export function promptAppend(ctx) {
+        const p = join(ctx.flowDir || "", "marker.txt");
+        if (!existsSync(p)) return "no marker; flowDir=" + ctx.flowDir;
+        // Assert runDir === flowDir (both point at fixture tmp copy)
+        const same = ctx.runDir === ctx.flowDir ? "same" : "different";
+        return "marker=" + readFileSync(p, "utf8") + " flow=" + ctx.flowDir + " rd=" + same;
+      }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55a=${Date.now()}`);
+    const { out, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "prompt.append", "--fixture-dir", fixtureSrc])
+    );
+    assert.equal(exitCode, 0);
+    assert.match(out, /marker=hello-u55/);
+    assert.match(out, /rd=same/);
+    // Must not be the original src path (copy, not pass-through)
+    assert.doesNotMatch(out, new RegExp("flow=" + fixtureSrc.replace(/[.\-]/g, "\\$&")));
+  });
+
+  test("--fixture-dir tmp is cleaned up after success", async () => {
+    const fixtureSrc = join(tmpBase, "fx2");
+    mkdirSync(fixtureSrc, { recursive: true });
+    writeFileSync(join(fixtureSrc, "a.txt"), "a", "utf8");
+    const extDir = join(tmpBase, "noop");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      let capturedFlowDir = null;
+      export function promptAppend(ctx) { capturedFlowDir = ctx.flowDir; return "ok"; }
+      export function _getCaptured() { return capturedFlowDir; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55b=${Date.now()}`);
+    // Capture the fixture tmp path via a log pattern
+    let capturedPath = null;
+    const origLog = console.log;
+    console.log = (...a) => {
+      const msg = a.map(String).join(" ");
+      const m = msg.match(/opc-fixture-[A-Za-z0-9]+/);
+      if (m) capturedPath = m[0];
+      origLog(...a);
+    };
+    try {
+      // Patch prompt.append to log its flowDir so we can observe the tmp path
+      writeExtension(extDir, `
+        export const meta = { provides: ["verification@1"] };
+        export function promptAppend(ctx) { return "flowDir=" + ctx.flowDir; }
+      `);
+      const { out, exitCode } = await captureAll(() =>
+        cmdExtensionTest(["--ext", extDir, "--hook", "prompt.append", "--fixture-dir", fixtureSrc])
+      );
+      assert.equal(exitCode, 0);
+      const m = out.match(/flowDir=([^\s]+)/);
+      assert.ok(m, "flowDir appeared in output: " + out);
+      const tmpPath = m[1];
+      // After cmdExtensionTest returns (process.exit), the tmp dir should be gone.
+      assert.equal(existsSync(tmpPath), false, `expected tmp dir cleaned: ${tmpPath}`);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test("--fixture-dir with missing source path → exit 1 stderr error", async () => {
+    const missing = join(tmpBase, "does-not-exist");
+    const extDir = join(tmpBase, "ext");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function promptAppend(ctx) { return "ok"; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55c=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--hook", "prompt.append", "--fixture-dir", missing])
+    );
+    assert.equal(exitCode, 1);
+    assert.match(err, /--fixture-dir not found/);
+  });
+});
+
+describe("U5.5 F6 — extension-test --lint hook/provides mismatch", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("provides declared but no hooks → stderr 'hook mismatch'; exit 0", async () => {
+    const extDir = join(tmpBase, "declared-no-hooks");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55d=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    assert.match(err, /hook mismatch/);
+    assert.match(err, /no hooks are implemented/);
+  });
+
+  test("hooks implemented but provides empty → stderr 'hook mismatch'; exit 0", async () => {
+    const extDir = join(tmpBase, "hooks-no-provides");
+    writeExtension(extDir, `
+      export const meta = { provides: [] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55e=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    assert.match(err, /hook mismatch/);
+    assert.match(err, /meta\.provides is empty/);
+  });
+
+  test("well-formed ext (provides+hooks) → no 'hook mismatch' line", async () => {
+    const extDir = join(tmpBase, "good");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55f=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    assert.doesNotMatch(err, /hook mismatch/);
+  });
+
+  test("--lint does not invoke hooks (side-effect-free)", async () => {
+    const extDir = join(tmpBase, "side-effect");
+    writeExtension(extDir, `
+      export const meta = { provides: ["verification@1"] };
+      let fired = false;
+      export function verdictAppend(ctx) { fired = true; throw new Error("SHOULD NOT FIRE"); }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55g=${Date.now()}`);
+    const { out, err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    // No hook was invoked → no ✅/❌ lines, no SHOULD NOT FIRE error.
+    assert.doesNotMatch(out, /verdict\.append/);
+    assert.doesNotMatch(err, /SHOULD NOT FIRE/);
+  });
+
+  test("soft overlap between provides and compatibleCapabilities is NOT a mismatch", async () => {
+    // This was Reviewer B's explicit concern in U5.6r protocol — an extension
+    // legitimately migrating v1→v2 that declares both should NOT get flagged.
+    const extDir = join(tmpBase, "versioned");
+    writeExtension(extDir, `
+      export const meta = {
+        provides: ["visual-check@2"],
+        compatibleCapabilities: ["visual-check@1"],
+      };
+      export function verdictAppend(ctx) { return []; }
+    `);
+    const { cmdExtensionTest } = await import(`./ext-commands.mjs?u55h=${Date.now()}`);
+    const { err, exitCode } = await captureAll(() =>
+      cmdExtensionTest(["--ext", extDir, "--lint"])
+    );
+    assert.equal(exitCode, 0);
+    assert.doesNotMatch(err, /hook mismatch/);
+  });
+});
