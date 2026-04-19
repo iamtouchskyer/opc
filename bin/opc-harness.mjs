@@ -97,8 +97,8 @@ switch (command) {
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
     console.log();
     console.log("Extension commands:");
-    console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks]");
-    console.log("                                                     Dry-run extension hook(s); use --all-hooks to fire every hook");
+    console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks] [--fixture-dir <p>] [--lint]");
+    console.log("                                                     Dry-run extension hook(s); --fixture-dir seeds ctx.flowDir; --lint runs authoring checks only");
     console.log("  extension-verdict --node <id> --dir <p>            Fire verdict.append → writes eval-extensions.{md,json}");
     console.log("  extension-artifact --node <id> --dir <p>           Fire artifact.emit → writes artifacts/");
     console.log("  prompt-context --node <id> --role <role> --dir <p> Fire prompt.append → emit extra prompt context");

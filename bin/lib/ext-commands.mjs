@@ -1,8 +1,9 @@
 // ext-commands.mjs — CLI commands for extension system
 // prompt-context, extension-test, and extension-verdict commands
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, mkdtempSync, rmSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
+import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode, survivingExtensions } from "./extensions.mjs";
 import { getFlag } from "./util.mjs";
@@ -137,7 +138,11 @@ export async function cmdPromptContext(args) {
 
 export async function cmdExtensionTest(args) {
   if (args.includes("--help")) {
-    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks]");
+    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint]");
+    console.error("  --fixture-dir <path>  Copy fixture dir to a fresh tmpdir and set ctx.flowDir/ctx.runDir to it.");
+    console.error("                        The tmpdir is cleaned up on exit (success or failure).");
+    console.error("  --lint                Lint authoring metadata (capability shape + hook/provides mismatch).");
+    console.error("                        Emits [lint] WARN lines to stderr; exits 0 even on lint issues.");
     return;
   }
 
@@ -145,9 +150,11 @@ export async function cmdExtensionTest(args) {
   const hookName = getFlag(args, "hook");
   const contextJson = getFlag(args, "context", "{}");
   const allHooks = args.includes("--all-hooks");
+  const fixtureDir = getFlag(args, "fixture-dir");
+  const lintOnly = args.includes("--lint");
 
   if (!extPath) {
-    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks]");
+    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint]");
     process.exit(1);
   }
 
@@ -157,9 +164,34 @@ export async function cmdExtensionTest(args) {
     process.exit(1);
   }
 
+  // F3: --fixture-dir copies the given dir into a fresh tmpdir and rewrites
+  // ctx.flowDir + ctx.runDir. The tmp dir is torn down in a finally at the
+  // end of the function so extension code can't leak state or files across
+  // runs. If the user passed flowDir/runDir in --context, we override —
+  // fixture-dir is strictly more specific.
+  let fixtureTmpDir = null;
+  if (fixtureDir) {
+    const srcAbs = resolve(fixtureDir);
+    if (!existsSync(srcAbs)) {
+      console.error(`--fixture-dir not found: ${srcAbs}`);
+      process.exit(1);
+    }
+    try {
+      fixtureTmpDir = mkdtempSync(join(tmpdir(), "opc-fixture-"));
+      cpSync(srcAbs, fixtureTmpDir, { recursive: true });
+    } catch (err) {
+      console.error(`Failed to materialize --fixture-dir: ${err.message}`);
+      if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
+      process.exit(1);
+    }
+    context.flowDir = fixtureTmpDir;
+    context.runDir = fixtureTmpDir;
+  }
+
   const hookPath = join(resolve(extPath), "hook.mjs");
   if (!existsSync(hookPath)) {
     console.error(`hook.mjs not found at: ${hookPath}`);
+    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
     process.exit(1);
   }
 
@@ -168,6 +200,7 @@ export async function cmdExtensionTest(args) {
     mod = await import(hookPath);
   } catch (err) {
     console.error(`Failed to load ${hookPath}: ${err.message}`);
+    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
     process.exit(1);
   }
 
@@ -200,12 +233,40 @@ export async function cmdExtensionTest(args) {
   lintList("provides", meta.provides);
   lintList("compatibleCapabilities", meta.compatibleCapabilities);
 
+  // F6: hook/provides mismatch lint. Two mismatch shapes — both are authoring
+  // smells the loader won't reject but that mean the extension will never
+  // fire. Emit "hook mismatch" on stderr so `2>&1 | grep -q "hook mismatch"`
+  // works. Soft overlap between provides and compatibleCapabilities is legal
+  // (intentional versioning) — we only flag the hard shapes.
+  const hookNames = Object.keys(hooks);
+  const provides = Array.isArray(meta.provides) ? meta.provides : [];
+  if (provides.length > 0 && hookNames.length === 0) {
+    console.error(
+      `[lint] ⚠️  hook mismatch: meta.provides declares [${provides.join(", ")}] ` +
+      `but no hooks are implemented — this extension will load but never fire.`
+    );
+  }
+  if (provides.length === 0 && hookNames.some(h => h === "prompt.append" || h === "verdict.append" || h === "execute.run" || h === "artifact.emit")) {
+    console.error(
+      `[lint] ⚠️  hook mismatch: hooks [${hookNames.join(", ")}] are implemented ` +
+      `but meta.provides is empty — extensionMatches() will skip this extension on every node.`
+    );
+  }
+
+  // --lint: run all lint checks above (capability shape + hook mismatch) and
+  // return without invoking hooks. Exit 0 per OUT-1 contract.
+  if (lintOnly) {
+    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
+    process.exit(0);
+  }
+
   const hooksToRun = allHooks
     ? ["startup.check", "prompt.append", "verdict.append"]
     : [hookName].filter(Boolean);
 
   if (hooksToRun.length === 0) {
-    console.error("Specify --hook <name> or --all-hooks");
+    console.error("Specify --hook <name> or --all-hooks (or --lint for lint-only mode)");
+    if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
     process.exit(1);
   }
 
@@ -253,6 +314,8 @@ export async function cmdExtensionTest(args) {
   // hook.mjs, bad --context JSON, or no hooks requested). Callers that need
   // a machine-readable pass/fail should grep stdout for the ❌ marker.
   void hadError;
+  // F3: always clean up the fixture tmp dir — success path.
+  if (fixtureTmpDir) { try { rmSync(fixtureTmpDir, { recursive: true, force: true }); } catch {} }
   process.exit(0);
 }
 
