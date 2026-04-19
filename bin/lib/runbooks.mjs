@@ -36,8 +36,11 @@
 // Schema is deliberately narrow at v1. Unknown frontmatter keys are
 // preserved on the parsed object (future-forward) but not validated.
 
-import { readdirSync, readFileSync, existsSync, statSync } from "fs";
+import { readdirSync, readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { join } from "path";
+
+const TIER_ENUM = new Set(["functional", "polished", "delightful"]);
+const ISO_DATE_HEAD = /^\d{4}-\d{2}-\d{2}/;
 
 export const RUNBOOK_SCHEMA_VERSION = 1;
 
@@ -125,7 +128,24 @@ export function parseFrontmatter(src) {
     const restTrim = rest.trim();
 
     if (restTrim === "") {
-      // Block-style list: consume following `  - item` lines.
+      // Look ahead: is this actually a block-style list (following `- item`
+      // lines), or a bare scalar with empty value? A bare `title:` with no
+      // list items should parse as "" — assigning [] confuses validation
+      // (title-missing vs title-empty).
+      let j = i + 1;
+      let sawItem = false;
+      while (j < fmLines.length) {
+        const l = fmLines[j];
+        const lt = l.trim();
+        if (!lt || lt.startsWith("#")) { j++; continue; }
+        if (/^\s*-\s+/.test(l)) { sawItem = true; }
+        break;
+      }
+      if (!sawItem) {
+        meta[key] = "";
+        i++;
+        continue;
+      }
       const items = [];
       i++;
       while (i < fmLines.length) {
@@ -158,7 +178,7 @@ export function parseFrontmatter(src) {
 
 // ─── Validation ──────────────────────────────────────────────────
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 function isRegexLiteral(s) {
   return typeof s === "string" && /^\/.*\/[gimsuy]*$/.test(s);
@@ -169,6 +189,9 @@ function parseRegexLiteral(s) {
   const lastSlash = s.lastIndexOf("/");
   const pattern = s.slice(1, lastSlash);
   const flags = s.slice(lastSlash + 1);
+  if (pattern.length === 0) {
+    throw new Error("empty regex pattern");
+  }
   return new RegExp(pattern, flags);
 }
 
@@ -218,11 +241,24 @@ export function validateRunbook(obj) {
   if (obj.flow !== undefined && typeof obj.flow !== "string") {
     errors.push("flow must be a string if present");
   }
-  if (obj.tier !== undefined && typeof obj.tier !== "string") {
-    errors.push("tier must be a string if present");
+  if (obj.tier !== undefined) {
+    if (typeof obj.tier !== "string") {
+      errors.push("tier must be a string if present");
+    } else if (!TIER_ENUM.has(obj.tier)) {
+      errors.push(`tier must be one of functional|polished|delightful (got ${JSON.stringify(obj.tier)})`);
+    }
   }
   if (obj.protocolRefs !== undefined && !Array.isArray(obj.protocolRefs)) {
     errors.push("protocolRefs must be an array if present");
+  }
+  for (const dk of ["createdAt", "updatedAt"]) {
+    if (obj[dk] !== undefined) {
+      if (typeof obj[dk] !== "string") {
+        errors.push(`${dk} must be a string if present (ISO date)`);
+      } else if (!ISO_DATE_HEAD.test(obj[dk])) {
+        errors.push(`${dk} must start with YYYY-MM-DD (got ${JSON.stringify(obj[dk])})`);
+      }
+    }
   }
   return { ok: errors.length === 0, errors };
 }
@@ -248,14 +284,22 @@ export function parseRunbook(path, src) {
 // ─── loadRunbooks ────────────────────────────────────────────────
 
 /**
- * loadRunbooks(dir) → [{ path, runbook }]
+ * loadRunbooks(dir, opts?) → [{ path, runbook }]
  *
  * Scans dir (non-recursive) for *.md files. Invalid runbooks are
  * skipped with a stderr WARN naming the file + error. Duplicate ids
- * (second occurrence) are skipped with WARN. Missing dir returns [].
+ * (second occurrence) are skipped with WARN. Missing dir returns [];
+ * if opts.explicit is true, a WARN is emitted for the missing dir
+ * (default `~/.opc/runbooks/` legitimately may not exist yet).
  */
-export function loadRunbooks(dir) {
-  if (!dir || !existsSync(dir)) return [];
+export function loadRunbooks(dir, opts = {}) {
+  if (!dir) return [];
+  if (!existsSync(dir)) {
+    if (opts.explicit) {
+      console.error(`WARN: runbooks dir ${dir} does not exist`);
+    }
+    return [];
+  }
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -263,13 +307,36 @@ export function loadRunbooks(dir) {
     console.error(`WARN: runbooks dir ${dir} unreadable: ${err.message}`);
     return [];
   }
-  const mdFiles = entries
-    .filter(e => e.isFile() && e.name.endsWith(".md"))
-    .map(e => join(dir, e.name))
-    .sort();
+  const mdFiles = [];
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;            // skip dotfiles / .DS_Store.md
+    if (!e.name.endsWith(".md")) continue;
+    const full = join(dir, e.name);
+    if (e.isFile()) {
+      mdFiles.push(full);
+      continue;
+    }
+    if (e.isSymbolicLink()) {
+      try {
+        const real = realpathSync(full);
+        const st = statSync(real);
+        if (st.isFile()) mdFiles.push(full);
+      } catch (err) {
+        console.error(`WARN: runbook symlink ${full} unresolvable: ${err.message}`);
+      }
+    }
+  }
+  mdFiles.sort();
   const result = [];
   const seen = new Set();
   for (const path of mdFiles) {
+    try {
+      const st = statSync(path);
+      if (st.size > 512 * 1024) {
+        console.error(`WARN: runbook ${path} exceeds 512KB — skipping`);
+        continue;
+      }
+    } catch { /* fall through to readFile which will also fail */ }
     let src;
     try { src = readFileSync(path, "utf8"); }
     catch (err) {
@@ -303,7 +370,11 @@ function escapeRegExp(s) {
 function wholeWordMatch(task, keyword) {
   // Case-insensitive whole-word boundary check. "add" must NOT match
   // inside "address" — hence boundary, not substring.
-  const pat = new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escapeRegExp(keyword)}(?:$|[^\\p{L}\\p{N}_])`, "iu");
+  // Multi-word keywords are whitespace-flexible: "add feature" matches
+  // "add  feature" (2 spaces), "add\tfeature" (tab), or "add\nfeature".
+  const parts = keyword.trim().split(/\s+/).map(escapeRegExp);
+  const body = parts.join("\\s+");
+  const pat = new RegExp(`(?:^|[^\\p{L}\\p{N}_])${body}(?:$|[^\\p{L}\\p{N}_])`, "iu");
   return pat.test(task);
 }
 

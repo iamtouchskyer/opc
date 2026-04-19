@@ -150,6 +150,150 @@ test("validateRunbook: rejects bad regex in match", () => {
   assert.ok(errors.some(e => /regex/i.test(e)));
 });
 
+// ─── Fix-pair tests (U5.10r review findings) ─────────────────────
+
+test("validateRunbook: rejects unknown tier value [S1]", () => {
+  const rb = { version: 1, id: "x", title: "x", units: ["a"], tier: "sparkles" };
+  const { ok, errors } = validateRunbook(rb);
+  assert.equal(ok, false);
+  assert.ok(errors.some(e => /tier/i.test(e)));
+});
+
+test("validateRunbook: accepts all three tier enum values [S1]", () => {
+  for (const t of ["functional", "polished", "delightful"]) {
+    const rb = { version: 1, id: "x", title: "x", units: ["a"], tier: t };
+    assert.equal(validateRunbook(rb).ok, true, `tier=${t} should be valid`);
+  }
+});
+
+test("validateRunbook: rejects non-string createdAt [S2]", () => {
+  const rb = { version: 1, id: "x", title: "x", units: ["a"], createdAt: 42 };
+  const { ok } = validateRunbook(rb);
+  assert.equal(ok, false);
+});
+
+test("validateRunbook: rejects createdAt not starting with YYYY-MM-DD [S2]", () => {
+  const rb = { version: 1, id: "x", title: "x", units: ["a"], createdAt: "yesterday" };
+  const { ok } = validateRunbook(rb);
+  assert.equal(ok, false);
+});
+
+test("validateRunbook: rejects non-string updatedAt [S2]", () => {
+  const rb = { version: 1, id: "x", title: "x", units: ["a"], updatedAt: ["2026-04-19"] };
+  const { ok } = validateRunbook(rb);
+  assert.equal(ok, false);
+});
+
+test("validateRunbook: rejects empty regex literal // [S11]", () => {
+  const rb = { version: 1, id: "x", title: "x", units: ["a"], match: ["//"] };
+  const { ok, errors } = validateRunbook(rb);
+  assert.equal(ok, false);
+  assert.ok(errors.some(e => /regex/i.test(e)));
+});
+
+test("validateRunbook: rejects trailing-hyphen slug [S6]", () => {
+  const r = validateRunbook({ version: 1, id: "add-feature-", title: "x", units: ["a"] });
+  assert.equal(r.ok, false);
+});
+
+test("validateRunbook: rejects double-hyphen slug [S6]", () => {
+  const r = validateRunbook({ version: 1, id: "foo--bar", title: "x", units: ["a"] });
+  assert.equal(r.ok, false);
+});
+
+test("parseFrontmatter: bare `key:` → empty string, not [] [S3]", () => {
+  const src = "---\nkey:\nnext: v\n---\n";
+  const { meta } = parseFrontmatter(src);
+  assert.equal(meta.key, "");
+  assert.equal(meta.next, "v");
+});
+
+test("parseFrontmatter: `key:` followed by blank then non-list → empty string [S3]", () => {
+  const src = "---\ntitle:\n\nnext: v\n---\n";
+  const { meta } = parseFrontmatter(src);
+  assert.equal(meta.title, "");
+});
+
+test("matchRunbook: whitespace-flexible multi-word phrase [S4]", () => {
+  const rbs = [mkRB("a", ["add feature"])];
+  assert.equal(matchRunbook("please add  feature now", rbs).runbook?.id, "a"); // 2 spaces
+  assert.equal(matchRunbook("please add\tfeature now", rbs).runbook?.id, "a"); // tab
+  assert.equal(matchRunbook("please add\nfeature now", rbs).runbook?.id, "a"); // newline
+});
+
+test("loadRunbooks: skips dotfiles [S7]", () => {
+  const { dir, cleanup } = sandbox();
+  try {
+    writeFileSync(join(dir, ".hidden.md"), "---\nversion: 1\nid: hidden\ntitle: H\nunits: [x]\n---");
+    writeFileSync(join(dir, "visible.md"), "---\nversion: 1\nid: visible\ntitle: V\nunits: [x]\n---");
+    const res = loadRunbooks(dir);
+    assert.equal(res.length, 1);
+    assert.equal(res[0].runbook.id, "visible");
+  } finally { cleanup(); }
+});
+
+test("loadRunbooks: missing dir with explicit:true emits WARN [W6]", () => {
+  const { dir, cleanup } = sandbox();
+  const origErr = console.error;
+  const captured = [];
+  console.error = (...a) => captured.push(a.join(" "));
+  try {
+    const res = loadRunbooks(join(dir, "nope"), { explicit: true });
+    assert.deepEqual(res, []);
+    assert.ok(captured.some(l => /WARN/.test(l) && /does not exist/.test(l)));
+  } finally {
+    console.error = origErr;
+    cleanup();
+  }
+});
+
+test("loadRunbooks: missing dir without explicit → silent [W6]", () => {
+  const { dir, cleanup } = sandbox();
+  const origErr = console.error;
+  const captured = [];
+  console.error = (...a) => captured.push(a.join(" "));
+  try {
+    const res = loadRunbooks(join(dir, "nope"));
+    assert.deepEqual(res, []);
+    assert.equal(captured.length, 0);
+  } finally {
+    console.error = origErr;
+    cleanup();
+  }
+});
+
+test("loadRunbooks: resolves symlinks to files [S5]", async () => {
+  const { symlinkSync } = await import("fs");
+  const { dir, cleanup } = sandbox();
+  try {
+    const target = join(dir, "real.md");
+    writeFileSync(target, "---\nversion: 1\nid: linked\ntitle: L\nunits: [x]\n---");
+    symlinkSync(target, join(dir, "link.md"));
+    const res = loadRunbooks(dir);
+    // Both the real file and the symlink point to the same id — dedup
+    // takes one, so length is 1 with id 'linked'.
+    assert.equal(res.length, 1);
+    assert.equal(res[0].runbook.id, "linked");
+  } finally { cleanup(); }
+});
+
+test("loadRunbooks: skips files > 512KB [S8]", () => {
+  const { dir, cleanup } = sandbox();
+  const origErr = console.error;
+  const captured = [];
+  console.error = (...a) => captured.push(a.join(" "));
+  try {
+    const huge = "---\nversion: 1\nid: huge\ntitle: H\nunits: [x]\n---\n" + "x".repeat(600 * 1024);
+    writeFileSync(join(dir, "huge.md"), huge);
+    const res = loadRunbooks(dir);
+    assert.equal(res.length, 0);
+    assert.ok(captured.some(l => /512KB/.test(l)));
+  } finally {
+    console.error = origErr;
+    cleanup();
+  }
+});
+
 // ─── parseRunbook ────────────────────────────────────────────────
 
 test("parseRunbook: wraps validation errors", () => {
