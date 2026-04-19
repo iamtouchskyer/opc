@@ -17,6 +17,7 @@ import { cmdReinitLoop } from "./lib/loop-reinit.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
+import { cmdRunbook } from "./lib/runbook-commands.mjs";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -53,6 +54,7 @@ switch (command) {
   case "extension-verdict":     await cmdExtensionVerdict(args); break;
   case "extension-artifact":    await cmdExtensionArtifact(args); break;
   case "config":                await cmdConfigResolve(args);    break;
+  case "runbook":               cmdRunbook(args);                break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -95,6 +97,11 @@ switch (command) {
     console.log();
     console.log("Config commands:");
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
+    console.log();
+    console.log("Runbook commands:");
+    console.log("  runbook list [--dir <p>]                           List all runbooks");
+    console.log("  runbook show <id> [--dir <p>]                      Print runbook details");
+    console.log("  runbook match <task...> [--dir <p>]                Match task to best runbook");
     console.log();
     console.log("Extension commands:");
     console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks] [--fixture-dir <p>] [--lint]");
