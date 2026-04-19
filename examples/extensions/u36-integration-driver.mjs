@@ -15,7 +15,7 @@ import {
   fireVerdictAppend,
   fireExecuteRun,
   fireArtifactEmit,
-} from "../bin/lib/extensions.mjs";
+} from "../../bin/lib/extensions.mjs";
 
 const EXT_DIR = process.env.OPC_EXTENSIONS_DIR ||
   join(process.env.HOME, ".opc/extensions");

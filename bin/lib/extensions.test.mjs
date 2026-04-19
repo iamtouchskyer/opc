@@ -484,6 +484,115 @@ export async function verdictAppend() { return "not an array"; }
   });
 });
 
+// ─── F1: fireVerdictAppend structured return ─────────────────────
+
+describe("F1 — fireVerdictAppend return shape", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("returns {findings, filePath} with findings array tagged by _ext", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return [{ severity: "warning", category: "x", message: "m1" }]; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const result = await fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] }));
+    assert.ok(result && typeof result === "object", "returns object");
+    assert.ok(Array.isArray(result.findings), "findings is array");
+    assert.equal(result.findings.length, 1);
+    assert.equal(result.findings[0].category, "x");
+    assert.equal(result.findings[0].message, "m1");
+    assert.equal(result.findings[0]._ext, "linter");
+    assert.ok(typeof result.filePath === "string" && result.filePath.endsWith("eval-extensions.md"));
+  });
+
+  test("returns filePath:null when context.runDir is undefined", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const result = await fireVerdictAppend(registry, { nodeCapabilities: ["cap"] });
+    assert.ok(result, "still returns object");
+    assert.equal(result.filePath, null);
+    assert.ok(Array.isArray(result.findings));
+  });
+});
+
+// ─── F2: nodeCapabilities WARN-once ──────────────────────────────
+
+describe("F2 — nodeCapabilities WARN-once", () => {
+  let tmpBase;
+  let origStderrWrite;
+  let captured;
+  beforeEach(() => {
+    tmpBase = makeTmpDir();
+    captured = [];
+    origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      captured.push(String(chunk));
+      return true;
+    };
+  });
+  afterEach(() => {
+    process.stderr.write = origStderrWrite;
+    rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  test("WARN fires once when nodeCapabilities is missing", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir /* no nodeCapabilities */ });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 1, "fires exactly once");
+
+    // Second call on same registry → silent
+    captured.length = 0;
+    await fireVerdictAppend(registry, { runDir });
+    const warns2 = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns2.length, 0, "silent on second call (same registry)");
+  });
+
+  test("WARN does NOT fire when nodeCapabilities is supplied", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir, nodeCapabilities: ["cap"] });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 0, "happy path stays silent");
+  });
+
+  test("WARN fires for empty-array nodeCapabilities too", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir, nodeCapabilities: [] });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 1, "empty array still warns");
+  });
+});
+
 // ─── normalizeHook (exported canonical) ──────────────────────────
 
 describe("normalizeHook (exported)", () => {
