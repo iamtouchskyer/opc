@@ -44,16 +44,18 @@ Do NOT use for single-cycle tasks (a code review, a single bug fix, a brainstorm
 Before decomposing a task from scratch, check for existing runbooks:
 
 ```
-Discovery order:
-1. --runbook-dir <path> (flag passed to /opc loop)
-2. OPC_RUNBOOKS_DIR env var
-3. .opc/runbooks/       (project-local, checked into repo)
-4. ~/.opc/runbooks/     (user-global)
-5. Auto-generate        (OPC decomposes task into units, writes to .opc/runbooks/)
+Discovery order (matches `opc-harness runbook` CLI exactly):
+1. --dir <path>          (flag passed to opc-harness runbook)
+2. OPC_RUNBOOKS_DIR      env var
+3. ~/.opc/runbooks/      (user-global default)
 ```
 
-The resolution matches `opc-harness runbook`'s `--dir` / env / default
-precedence — see `docs/runbooks.md` for the full schema and the
+The CLI does **not** scan project-local `.opc/runbooks/` automatically
+and does **not** auto-generate runbooks on a miss. If you want a
+project-local runbook, point `OPC_RUNBOOKS_DIR` at `.opc/runbooks/`
+in the project's setup script (or pass `--dir .opc/runbooks/` to the
+harness invocation). Saving generated plans back to disk is a manual
+step today — see `docs/runbooks.md` for the full schema and the
 `examples/runbooks/add-feature.md` seed as a reference.
 
 **If runbook found (matchRunbook returns a match):**
@@ -65,13 +67,19 @@ precedence — see `docs/runbooks.md` for the full schema and the
    auto mode, print the match + score and proceed
 
 **Disable runbooks per-invocation:**
-- `/opc loop --no-runbook <task>` — skip runbook lookup entirely
-- Also honored: `OPC_DISABLE_RUNBOOKS=1`
+- `OPC_DISABLE_RUNBOOKS=1 opc-harness runbook match …` — forces a
+  match-miss without scanning disk (exit 3, payload `disabled: true`).
+  This is the wired escape hatch; use it in the orchestrator when the
+  user wants to force fresh decomposition.
+- `/opc loop --no-runbook <task>` is *planned* CLI sugar that would
+  set the env var for one invocation. **Not yet wired into `/opc loop`
+  arg parsing as of v0.8** — until it lands, set the env var directly.
 
 **If no runbook found:**
 1. Proceed to Step 1 (Plan Decomposition) as normal
-2. After decomposition, save the generated plan to `.opc/runbooks/{task-slug}.md`
-3. Ask user: "Runbook saved to `.opc/runbooks/{task-slug}.md`. Check it in for reuse?"
+2. (Optional) After decomposition, suggest the user save the generated
+   plan to `~/.opc/runbooks/{task-slug}.md` for reuse. There is no
+   auto-write step — the orchestrator only emits the suggestion.
 
 ## Procedure
 
@@ -88,8 +96,10 @@ opc-harness runbook match "<task phrase>" [--dir <runbook-dir>]
   them into `.harness/plan.md` with a header noting which runbook fired
   and the score.
 - Exit `3` (match-miss) → proceed to Step 1.
-- `--no-runbook` on `/opc loop` skips this step entirely (exit with no
-  runbook query; always decompose fresh).
+- To force a miss without scanning disk, prepend `OPC_DISABLE_RUNBOOKS=1`
+  to the command. The CLI returns exit 3 with `disabled: true` in the
+  payload. (Once `/opc loop --no-runbook` ships in CLI parsing, it will
+  set this env var for you.)
 
 Rationale: matching is cheap (O(#runbooks × #patterns)), and a reused
 plan avoids a full LLM decompose round. See `docs/runbooks.md` for the

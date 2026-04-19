@@ -509,3 +509,67 @@ test("matchRunbook: malformed regex in match is treated as literal (graceful)", 
 test("RUNBOOK_SCHEMA_VERSION is 1", () => {
   assert.equal(RUNBOOK_SCHEMA_VERSION, 1);
 });
+
+// ─── CLI: OPC_DISABLE_RUNBOOKS escape hatch (U5.12r fix) ─────────
+
+import { spawnSync } from "child_process";
+import { fileURLToPath } from "url";
+import { dirname, join as joinPath } from "path";
+
+const HARNESS = joinPath(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "opc-harness.mjs",
+);
+
+test("CLI: OPC_DISABLE_RUNBOOKS=1 forces match-miss (exit 3, disabled:true, no disk read)", () => {
+  // Pass --dir to a *non-existent* path. With env=1 the CLI must short-
+  // circuit before loadRunbooks would WARN/error on the missing dir.
+  const res = spawnSync(
+    process.execPath,
+    [HARNESS, "runbook", "match", "add a feature", "--dir", "/no/such/dir/xyz123"],
+    { env: { ...process.env, OPC_DISABLE_RUNBOOKS: "1" }, encoding: "utf8" },
+  );
+  assert.equal(res.status, 3, `expected exit 3, got ${res.status}; stderr=${res.stderr}`);
+  const payload = JSON.parse(res.stdout);
+  assert.equal(payload.matched, false);
+  assert.equal(payload.disabled, true);
+  assert.equal(payload.runbook, null);
+  assert.equal(payload.task, "add a feature");
+});
+
+test("CLI: OPC_DISABLE_RUNBOOKS=0 leaves matching enabled (no disabled flag)", () => {
+  const sb = sandbox();
+  try {
+    // empty dir → match-miss with disabled:undefined (omitted from payload)
+    const res = spawnSync(
+      process.execPath,
+      [HARNESS, "runbook", "match", "add a feature", "--dir", sb.dir],
+      { env: { ...process.env, OPC_DISABLE_RUNBOOKS: "0" }, encoding: "utf8" },
+    );
+    assert.equal(res.status, 3);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.matched, false);
+    assert.equal(payload.disabled, undefined);
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test("CLI: OPC_DISABLE_RUNBOOKS unset = matching enabled", () => {
+  const sb = sandbox();
+  try {
+    const env = { ...process.env };
+    delete env.OPC_DISABLE_RUNBOOKS;
+    const res = spawnSync(
+      process.execPath,
+      [HARNESS, "runbook", "match", "add a feature", "--dir", sb.dir],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(res.status, 3);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.disabled, undefined);
+  } finally {
+    sb.cleanup();
+  }
+});

@@ -105,7 +105,7 @@ quickstart + reference, plus a starter template at `examples/extensions/_starter
 ```
 
 What happens:
-1. **Runbook lookup** — `opc-harness runbook match "<task>"` checks `.opc/runbooks/` → `~/.opc/runbooks/` for a matching recipe. If one hits, its `units` / `flow` / `tier` become the plan. See [docs/runbooks.md](docs/runbooks.md) and [examples/runbooks/add-feature.md](examples/runbooks/add-feature.md).
+1. **Runbook lookup** — `opc-harness runbook match "<task>"` checks `--dir` flag → `OPC_RUNBOOKS_DIR` → `~/.opc/runbooks/` for a matching recipe. If one hits, its `units` / `flow` / `tier` become the plan; otherwise fall through to step 2. Disable per-invocation with `OPC_DISABLE_RUNBOOKS=1`. See [docs/runbooks.md](docs/runbooks.md) and [examples/runbooks/add-feature.md](examples/runbooks/add-feature.md).
 2. **Decompose** (runbook miss only) — breaks task into atomic units (spec, implement, review, fix, e2e)
 3. **Definition of done** — establishes verify/eval criteria per unit before any work starts
 4. **Schedule** — durable cron (survives process restart) fires every 10 min
