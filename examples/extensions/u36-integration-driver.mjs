@@ -80,6 +80,9 @@ const nonGitEval = readFileSync(join(NONGIT, "eval-extensions.md"), "utf8");
 // ── Assertions ───────────────────────────────────────────────────
 const evalPath = join(OUT_DIR, "eval-extensions.md");
 const evalBody = readFileSync(evalPath, "utf8");
+const jsonPath = join(OUT_DIR, "eval-extensions.json");
+const jsonDoc = existsSync(jsonPath)
+  ? JSON.parse(readFileSync(jsonPath, "utf8")) : null;
 const markerPath = join(OUT_DIR, "ext-visual-eval/visual-eval-marker.json");
 const marker = existsSync(markerPath)
   ? JSON.parse(readFileSync(markerPath, "utf8")) : null;
@@ -108,6 +111,10 @@ const assertions = {
     nonGitEval.includes("No extension findings"),
   h_git_changeset_fires_in_repo: evalBody.includes("code-quality-check"),
   i_session_logex_fires: evalBody.includes("post-flow-digest"),
+  j_json_sidecar_written: jsonDoc !== null && jsonDoc.version === 1 &&
+    Array.isArray(jsonDoc.findings) && Array.isArray(jsonDoc.extensionsLoaded),
+  k_json_matches_markdown: jsonDoc !== null &&
+    jsonDoc.findings.every((f) => evalBody.includes(f.category) && evalBody.includes(f.message)),
 };
 
 const allPass = Object.values(assertions).every(Boolean);

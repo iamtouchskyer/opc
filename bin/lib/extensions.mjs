@@ -532,13 +532,17 @@ export async function firePromptAppend(registry, context) {
  * Call verdict.append on extensions whose `provides` matches context.nodeCapabilities.
  * Writes findings to {context.runDir}/eval-extensions.md.
  *
- * Returns `{ findings, filePath }`:
+ * Returns `{ findings, filePath, jsonPath }`:
  *   - `findings`: array of normalized findings, each tagged with `_ext` (string,
  *     the extension's directory/name) so callers can attribute which extension
  *     produced which finding. The `_ext` key is part of the public return
  *     contract — not a private field — callers may read it.
  *   - `filePath`: absolute path to the written `eval-extensions.md`, or `null`
  *     when `context.runDir` is not set (findings still collected in-memory).
+ *   - `jsonPath`: absolute path to the canonical `eval-extensions.json` sidecar
+ *     (F4). Markdown at `filePath` is derived from this JSON. Schema v1:
+ *     `{ version: 1, generatedAt, extensionsLoaded[], findings[] }`. `null`
+ *     when `context.runDir` is not set.
  */
 export async function fireVerdictAppend(registry, context) {
   const allFindings = [];
@@ -579,22 +583,30 @@ export async function fireVerdictAppend(registry, context) {
     }
   }
 
-  if (!context.runDir) return { findings: allFindings, filePath: null };
-
-  const lines = ["# Extension Findings", ""];
-  for (const f of allFindings) {
-    const emoji = f.severity === "error" ? "🔴" : f.severity === "warning" ? "🟡" : "🔵";
-    const filePart = f.file ? ` in ${f.file}` : "";
-    lines.push(`${emoji} ${f.category}: ${f.message}${filePart}`);
-  }
-  if (allFindings.length === 0) {
-    lines.push("🔵 extensions: No extension findings");
-  }
-  lines.push("");
+  if (!context.runDir) return { findings: allFindings, filePath: null, jsonPath: null };
 
   mkdirSync(context.runDir, { recursive: true });
+
+  // F4 — canonical JSON sidecar. Markdown is derived from this JSON.
+  // Schema v1 is the public contract; tooling may depend on these field names.
+  const jsonPath = join(context.runDir, "eval-extensions.json");
+  const jsonDoc = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    extensionsLoaded: registry.extensions.map((e) => e.name),
+    findings: allFindings.map((f) => ({
+      extension: f._ext,
+      severity: f.severity,
+      category: f.category,
+      message: f.message,
+      ...(f.file ? { file: f.file } : {}),
+    })),
+  };
+  atomicWriteSync(jsonPath, JSON.stringify(jsonDoc, null, 2) + "\n");
+
+  // Markdown view — derived from jsonDoc, kept back-compat.
   const filePath = join(context.runDir, "eval-extensions.md");
-  atomicWriteSync(filePath, lines.join("\n"));
+  atomicWriteSync(filePath, renderEvalMarkdown(jsonDoc));
 
   // Sibling failure report — observable signal for the gate.
   // Always written when runDir is set (empty file means "no failures this run").
@@ -603,7 +615,25 @@ export async function fireVerdictAppend(registry, context) {
   // signal, not a role evaluation, and should not trip thin-eval guards.
   writeFailureReport(registry, context.runDir);
 
-  return { findings: allFindings, filePath };
+  return { findings: allFindings, filePath, jsonPath };
+}
+
+/**
+ * Render the canonical JSON doc as the legacy markdown view.
+ * Public contract: markdown is derived — JSON is the source of truth.
+ */
+function renderEvalMarkdown(jsonDoc) {
+  const lines = ["# Extension Findings", ""];
+  for (const f of jsonDoc.findings) {
+    const emoji = f.severity === "error" ? "🔴" : f.severity === "warning" ? "🟡" : "🔵";
+    const filePart = f.file ? ` in ${f.file}` : "";
+    lines.push(`${emoji} ${f.category}: ${f.message}${filePart}`);
+  }
+  if (jsonDoc.findings.length === 0) {
+    lines.push("🔵 extensions: No extension findings");
+  }
+  lines.push("");
+  return lines.join("\n");
 }
 
 // ─── fireExecuteRun ──────────────────────────────────────────────
