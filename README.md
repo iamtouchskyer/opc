@@ -105,12 +105,13 @@ quickstart + reference, plus a starter template at `examples/extensions/_starter
 ```
 
 What happens:
-1. **Decompose** — breaks task into atomic units (spec, implement, review, fix, e2e)
-2. **Definition of done** — establishes verify/eval criteria per unit before any work starts
-3. **Schedule** — durable cron (survives process restart) fires every 10 min
-4. **Execute** — each tick runs one unit through the appropriate OPC flow
-5. **Guard** — `opc-harness` enforces: git commit required, ≥2 independent reviewers, no plan tampering, no state forgery, artifact freshness, tick limits
-6. **Terminate** — auto-stops when plan complete, tick limit hit, or wall-clock deadline reached
+1. **Runbook lookup** — `opc-harness runbook match "<task>"` checks `.opc/runbooks/` → `~/.opc/runbooks/` for a matching recipe. If one hits, its `units` / `flow` / `tier` become the plan. See [docs/runbooks.md](docs/runbooks.md) and [examples/runbooks/add-feature.md](examples/runbooks/add-feature.md).
+2. **Decompose** (runbook miss only) — breaks task into atomic units (spec, implement, review, fix, e2e)
+3. **Definition of done** — establishes verify/eval criteria per unit before any work starts
+4. **Schedule** — durable cron (survives process restart) fires every 10 min
+5. **Execute** — each tick runs one unit through the appropriate OPC flow
+6. **Guard** — `opc-harness` enforces: git commit required, ≥2 independent reviewers, no plan tampering, no state forgery, artifact freshness, tick limits
+7. **Terminate** — auto-stops when plan complete, tick limit hit, or wall-clock deadline reached
 
 ### Guardrails (code-enforced, not prompt-level)
 
