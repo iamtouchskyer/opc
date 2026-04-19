@@ -82,7 +82,7 @@ export async function cmdPromptContext(args) {
   }
 
   const config = loadOpcConfig(dir);
-  Object.assign(config, parseBypassArgs(args));
+  Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
 
   let registry;
@@ -409,7 +409,7 @@ export async function cmdExtensionVerdict(args) {
   }
 
   const config = loadOpcConfig(dir);
-  Object.assign(config, parseBypassArgs(args));
+  Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
 
   let registry;
@@ -483,7 +483,7 @@ export async function cmdExtensionArtifact(args) {
   }
 
   const config = loadOpcConfig(dir);
-  Object.assign(config, parseBypassArgs(args));
+  Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
 
   let registry;
