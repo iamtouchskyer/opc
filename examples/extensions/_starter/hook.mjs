@@ -75,6 +75,11 @@ export async function verdictAppend(ctx) {
   // findings into the array. For file-scanning hooks you may want to
   // `if (!ctx?.runDir) return [];` early — skip that guard for task-string
   // checks (e.g. scanning ctx.task for "FIXME").
+  //
+  // Note: pipelines guarantee ctx.task is a string (possibly ""), but
+  // `extension-test --context <json>` passes the JSON through verbatim.
+  // For any schema-typed field, prefer a `typeof` guard over `?? ""`:
+  //   const task = typeof ctx?.task === "string" ? ctx.task : "";
   const findings = [];
   return findings;
 }
