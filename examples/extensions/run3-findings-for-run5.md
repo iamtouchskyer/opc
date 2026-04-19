@@ -153,3 +153,27 @@ core changes:
 None of F1–F6 block Run 4 (first third-party-authored extension). F7 is
 also non-blocking for Run 4 (starter-side mitigation shipped in U4.2r).
 They accumulate as Run 5 polish. The core surface is production-ready as-is.
+
+## Resolution Status (Run 5)
+
+All seven findings addressed during Run 5. Per-item closure:
+
+- **F1** — Resolved in Run 5 — see commit `152ed3e` (`fireVerdictAppend` now
+  returns `{findings, filePath}`; callers no longer need to re-parse markdown).
+- **F2** — Resolved in Run 5 — see commit `152ed3e` (missing
+  `ctx.nodeCapabilities` now emits a single-line stderr WARN; silent-miss
+  behavior preserved for production).
+- **F3** — Resolved in Run 5 — see commit `0fb3a24` (extension-test command
+  now resolves fixtures via documented `fixtures/` convention).
+- **F4** — Resolved in Run 5 — see commit `23cbeca` (`--assert-fired <id>`
+  flag added; non-zero exit if the named extension did not fire).
+- **F5** — Resolved in Run 5 — see commit `aac291f` (circuit-breaker state
+  persisted to `.harness/breaker-state.json`; survives CLI re-invocation
+  within a flow).
+- **F6** — Resolved in Run 5 — see commit `0fb3a24` (ext-lint now cross-checks
+  `meta.compatibleCapabilities` against `meta.provides` and the hook shape).
+- **F7** — Resolved in Run 5 — see commit `23cbeca` (`opc-harness --help`
+  now enumerates extension subcommands under a dedicated `Extensions:` header).
+
+Baseline tag for Run 5 closure: `ext-run-5-done` (see CHANGELOG v0.8 for the
+full change list, including the runbook mechanism shipped alongside).
