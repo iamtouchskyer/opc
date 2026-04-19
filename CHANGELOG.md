@@ -1,5 +1,82 @@
 # Changelog
 
+## v0.7 — Run 4: third-party extension authoring validated (2026-04-19)
+
+First third-party authored extension lands, proving the v0.5.1 extension surface
+is authorable from the outside with no core modifications. The shipping kit now
+includes a zero-OPC-context authoring guide, a starter template, and one
+outsider-built reference extension — assembled under the "the agent that wrote
+the docs never tested them" principle (outsider agent was forbidden from reading
+`bin/lib/extensions.mjs` or any Run 3 example source during the DX litmus).
+
+### Added
+
+- **`docs/extension-authoring.md`** (7800+ words, self-contained, zero
+  `see internal` / `see spec` pointers). Covers all 4 hooks, ctx shape, capability
+  matching semantics (exact-equality, not semver), hook-name mapping
+  (camelCase ↔ kebab), graceful-degrade pattern, timeout budgets, failure
+  sidecar architecture, `extension-test` CLI, and a complete public-export
+  reference in Appendix B. Quickstart + reference structure; every code sample
+  is copy-pasteable.
+- **`examples/extensions/_starter/`** — `ext.json` + `hook.mjs` (121 lines, all
+  5 hook stubs with JSDoc + graceful-empty returns) + `README.md` (30-minute
+  junior-dev walkthrough). `cp -r` to a tmp dir → `extension-test --all-hooks`
+  exits 0 without further edits.
+- **`examples/extensions/lint-prompt-length/`** — sixth example extension,
+  built by an outsider agent reading only `docs/extension-authoring.md` +
+  `_starter/`. Capability `prompt-size-check@1`, via `verdictAppend`:
+  `ctx.task.length > 16000` → 🔴, `> 8000` → 🟡, else `[]`. 70 lines.
+  `compatibleCapabilities: ["verification@1","design-review@1","execute@1"]`.
+- **`## Lessons from Run 4 outsider-build`** section in the authoring doc —
+  one-line before/after for every gap the outsider logged in `doc-gaps.md` +
+  every reviewer-caught friction item. Turns the DX litmus into a permanent
+  doc-quality artifact.
+
+### Doc patches from the outsider build (U4.4)
+
+The outsider hit 5 real gaps (G1-G5) + 2 reviewer-caught blockers (MG1, MG2) +
+3 unlogged-but-smelled-out decisions. All 10 patched in-place:
+
+- Severity→emoji table moved up front (was only implicit in code samples).
+- `extension-test` routing-rule contradiction corrected: CLI invokes hooks
+  unconditionally, matching rules only apply at pipeline call sites.
+- `ctx.task` ≠ assembled prompt clarified; added `typeof` guard for unknown
+  shapes.
+- `meta.name` is not read by the loader (directory name is canonical) — starter
+  template updated accordingly.
+- Capability catalog added so `compatibleCapabilities` authors stop guessing.
+- `startupCheck` return-value semantics: omitting the hook == returning
+  `undefined`; `✅ passed` emoji is unconditional.
+
+### Extensions test suite
+
+- Core test suite unchanged — 27 files pass, 0 fail. Extensions live outside
+  core; Run 4 touched zero lines under `bin/lib/` or `bin/opc-harness.mjs`.
+- `find examples/extensions -name '*.mjs' | xargs -n1 node --check` — clean.
+- Starter + lint-prompt-length both pass `extension-test --all-hooks`.
+
+### Known gaps carried to Run 5
+
+One new item added to `examples/extensions/run3-findings-for-run5.md`:
+
+- **F7** — `opc-harness --help` omits the extension subcommands
+  (`prompt-context`, `extension-test`, `extension-verdict`,
+  `extension-artifact`, `config resolve`). Discoverability gap, not a
+  correctness issue.
+
+F1–F6 from Run 3 remain deferred.
+
+### Architectural lesson
+
+Documentation for an extension surface cannot be validated by its own author.
+Run 4's value was not in writing the doc — it was in sending an outsider agent
+to build against it and logging every peek and every unanswered question as a
+finding. Five real gaps + two reviewer-caught self-contradictions would not
+have surfaced via insider review, no matter how careful. DX is a property you
+verify experimentally, not a property you assert.
+
+---
+
 ## v0.6 — Run 3: 5 real extensions mounted (2026-04-19)
 
 First production payload for the v0.5 extension surface. Five independently-
