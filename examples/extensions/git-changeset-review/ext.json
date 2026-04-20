@@ -1,9 +1,0 @@
-{
-  "name": "git-changeset-review",
-  "version": "0.1.0",
-  "description": "verdictAppend hook that runs `git diff --stat HEAD~1 HEAD` and emits findings for: >500 line changeset (🟡), low test/source ratio (🟡), package.json without lockfile update (🔴).",
-  "meta": {
-    "provides": ["code-quality-check@1"],
-    "compatibleCapabilities": ["verification@1", "design-review@1"]
-  }
-}

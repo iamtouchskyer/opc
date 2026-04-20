@@ -1,9 +1,0 @@
-{
-  "name": "session-logex",
-  "version": "0.1.0",
-  "description": "verdictAppend soft-nudge hook: when a long-running flow completes, emits an info-level finding suggesting the user run `/logex <session.jsonl>` to generate a blog-style session paper. Does NOT invoke /logex directly (calling a skill from an extension hook is out-of-spec).",
-  "meta": {
-    "provides": ["post-flow-digest@1"],
-    "compatibleCapabilities": ["verification@1", "design-review@1", "execute@1"]
-  }
-}

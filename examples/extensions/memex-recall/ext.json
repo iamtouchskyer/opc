@@ -1,9 +1,0 @@
-{
-  "name": "memex-recall",
-  "version": "0.1.0",
-  "description": "promptAppend hook that enriches review/build prompts with 1-3 relevant Zettelkasten notes via `memex search`. Graceful no-op when memex CLI is absent.",
-  "meta": {
-    "provides": ["context-enrichment@1"],
-    "compatibleCapabilities": ["verification@1", "execute@1", "design-review@1"]
-  }
-}

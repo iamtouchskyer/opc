@@ -1,9 +1,0 @@
-{
-  "name": "visual-eval",
-  "version": "0.1.0",
-  "description": "Execute-node hook that runs opc-extend-visual-eval (VLM-as-judge Python CLI) against images found in ctx.runDir/artifacts/ and writes eval-result.json as evidence. No-op when no images present or python3/skill unavailable.",
-  "meta": {
-    "provides": ["visual-consistency-check@1"],
-    "compatibleCapabilities": ["execute@1", "verification@1"]
-  }
-}

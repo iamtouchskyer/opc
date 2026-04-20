@@ -1,9 +1,0 @@
-{
-  "name": "lint-prompt-length",
-  "version": "0.1.0",
-  "description": "verdictAppend that flags oversized ctx.task prompts (🟡 > 8000 chars, 🔴 > 16000 chars).",
-  "meta": {
-    "provides": ["prompt-size-check@1"],
-    "compatibleCapabilities": ["verification@1", "design-review@1", "execute@1"]
-  }
-}
