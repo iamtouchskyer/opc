@@ -2,6 +2,8 @@
 # D2 Compound Gate Calibration — 25 synthetic evals
 # Purpose: Run diverse eval patterns through synthesize to validate
 # shadow/enforce behavior and collect data for the shadow→enforce decision.
+# NOTE: As of v0.8, --strict is the DEFAULT (enforce mode).
+# Use --no-strict to get shadow mode.
 #
 # Each test creates a synthetic eval, runs synthesize, checks:
 #   1. Whether evalQualityGate fires (triggered/not)
@@ -201,15 +203,15 @@ setup_review_node
 } > .harness/nodes/code-review/run_1/eval-padded.md
 
 OUT=$($HARNESS synthesize .harness --node code-review)
-assert_gate_triggered "3 layers: shadow trigger" "$OUT" "shadow"
-assert_field_eq "3 layers: verdict still ITERATE" "$OUT" "verdict" '"ITERATE"'
+assert_gate_triggered "3 layers: enforce trigger" "$OUT" "enforce"
+assert_field_eq "3 layers: verdict FAIL (enforce default)" "$OUT" "verdict" '"FAIL"'
 
 # ───────────────────────────────────────────────────────────────
 echo ""
-echo "--- Profile 5: Same as 4 with --strict → FAIL ---"
-OUT=$($HARNESS synthesize .harness --node code-review --strict)
-assert_gate_triggered "3 layers strict: enforce" "$OUT" "enforce"
-assert_field_eq "3 layers strict: verdict FAIL" "$OUT" "verdict" '"FAIL"'
+echo "--- Profile 5: Same as 4 with --no-strict → shadow mode ---"
+OUT=$($HARNESS synthesize .harness --node code-review --no-strict)
+assert_gate_triggered "3 layers no-strict: shadow" "$OUT" "shadow"
+assert_field_eq "3 layers no-strict: verdict ITERATE (shadow)" "$OUT" "verdict" '"ITERATE"'
 
 # ───────────────────────────────────────────────────────────────
 echo ""
@@ -226,7 +228,7 @@ setup_review_node
 } > .harness/nodes/code-review/run_1/eval-copypaste.md
 
 OUT=$($HARNESS synthesize .harness --node code-review)
-assert_gate_triggered "copypaste: triggers shadow" "$OUT" "shadow"
+assert_gate_triggered "copypaste: triggers enforce" "$OUT" "enforce"
 
 # ───────────────────────────────────────────────────────────────
 echo ""
@@ -241,43 +243,37 @@ cat > .harness/nodes/code-review/run_1/eval-fabricated.md << 'EVALEOF'
 
 🔵 src/nonexistent.ts:999 — Missing validation
 
-**Reasoning:** Input not validated before processing.
-
-**Fix:** Add zod schema validation.
-
 ## Performance
 
 🔵 src/also-fake.ts:42 — Slow query
-
-**Reasoning:** Query is not indexed.
-
-**Fix:** Add database index.
 
 ## Architecture
 
 🔵 src/real.ts:1 — Good structure
 
-**Reasoning:** Well-organized module.
-
-**Fix:** No change needed.
-
 ## Testing
 
 🔵 src/ghost-file.ts:100 — No tests
 
-**Reasoning:** Critical path untested.
-
-**Fix:** Add unit tests.
-
 ## Summary
 
 4 findings reviewed across security, performance, architecture, and testing.
+Code quality needs improvement in multiple areas.
+The application has several security concerns that need addressing.
+Performance bottlenecks identified in database layer.
+Test coverage is insufficient for critical paths.
+Architecture is reasonable but needs refinement.
+Recommended follow-up review after fixes are applied.
+Additional static analysis tools should be integrated.
+Consider implementing automated security scanning.
+Database query optimization should be prioritized.
+End of review.
 EVALEOF
 
 OUT=$($HARNESS synthesize .harness --node code-review --base /tmp/opc-d2-cal-base)
 # 3 fabricated refs → invalidRefCount = 3 → +2 weight = contribution of 2
 # Plus possibly other layers
-assert_gate_triggered "fabricated refs: triggers shadow" "$OUT" "shadow"
+assert_gate_triggered "fabricated refs: triggers enforce" "$OUT" "enforce"
 
 # ───────────────────────────────────────────────────────────────
 echo ""
@@ -388,11 +384,11 @@ setup_review_node
 } > .harness/nodes/code-review/run_1/eval-worstcase.md
 
 OUT=$($HARNESS synthesize .harness --node code-review)
-assert_gate_triggered "all layers: triggers shadow" "$OUT" "shadow"
+assert_gate_triggered "all layers: triggers enforce" "$OUT" "enforce"
 
-OUT=$($HARNESS synthesize .harness --node code-review --strict)
-assert_gate_triggered "all layers strict: enforce" "$OUT" "enforce"
-assert_field_eq "all layers strict: FAIL" "$OUT" "verdict" '"FAIL"'
+OUT=$($HARNESS synthesize .harness --node code-review --no-strict)
+assert_gate_triggered "all layers no-strict: shadow" "$OUT" "shadow"
+assert_field_eq "all layers no-strict: ITERATE" "$OUT" "verdict" '"ITERATE"'
 
 # ───────────────────────────────────────────────────────────────
 echo ""
@@ -441,8 +437,8 @@ EVALEOF
 } > .harness/nodes/code-review/run_1/eval-bad.md
 
 OUT=$($HARNESS synthesize .harness --node code-review)
-assert_gate_triggered "mixed roles: shadow (bad role triggers)" "$OUT" "shadow"
-assert_field_eq "mixed roles: verdict ITERATE" "$OUT" "verdict" '"ITERATE"'
+assert_gate_triggered "mixed roles: enforce (bad role triggers)" "$OUT" "enforce"
+assert_field_eq "mixed roles: verdict FAIL" "$OUT" "verdict" '"FAIL"'
 
 # ───────────────────────────────────────────────────────────────
 echo ""
@@ -854,6 +850,81 @@ setup_review_node
 OUT=$($HARNESS synthesize .harness --node code-review)
 # singleHeading(1 heading in 50+ lines) + noCodeRefs(no file:line refs) = 2 layers, threshold is 3
 assert_gate_not_triggered "boundary 2 layers: no trigger" "$OUT"
+
+# ───────────────────────────────────────────────────────────────
+echo ""
+echo "--- Profile 26: thinEval substance exemption (45 lines, all findings substantive) ---"
+setup_review_node
+{
+  echo "# Code Review"
+  echo ""
+  echo "## Security Assessment"
+  echo ""
+  echo "🔴 src/auth.ts:15 — SQL injection in login query"
+  echo "**Reasoning:** User input concatenated directly into SQL string without parameterization."
+  echo "**Fix:** Use parameterized queries via prepared statements."
+  echo ""
+  echo "🟡 src/auth.ts:42 — Weak password hashing"
+  echo "**Reasoning:** MD5 is used for password hashing, which is cryptographically broken."
+  echo "**Fix:** Switch to bcrypt or argon2 with appropriate cost factor."
+  echo ""
+  echo "## Architecture"
+  echo ""
+  echo "🔵 src/routes.ts:8 — Route handler too large"
+  echo "**Reasoning:** Single function handles validation, business logic, and response formatting."
+  echo "**Fix:** Extract validation and formatting into separate middleware functions."
+  echo ""
+  echo "## Testing"
+  echo ""
+  echo "🟡 src/auth.test.ts:1 — Missing edge case tests"
+  echo "**Reasoning:** No tests for empty password, unicode chars, or max-length inputs."
+  echo "**Fix:** Add parameterized test cases covering boundary inputs."
+  echo ""
+  echo "## Summary"
+  echo ""
+  echo "VERDICT: ITERATE FINDINGS[4]"
+  echo ""
+  echo "4 findings: 1 critical, 2 warnings, 1 suggestion."
+  echo "Focus on SQL injection fix as highest priority."
+  echo "Password hashing upgrade is straightforward."
+  echo "Route refactor can wait for next sprint."
+  echo "Test coverage gaps are moderate risk."
+  echo "Overall: solid codebase with specific security issues."
+  echo "Review complete."
+} > .harness/nodes/code-review/run_1/eval-substance.md
+
+OUT=$($HARNESS synthesize .harness --node code-review)
+# 45 lines but ALL findings have reasoning + fix + file refs → thinEval exempt
+# Should not trigger thinEval layer
+assert_not_contains "substance exempt: no thinEval warning" "$OUT" "eval is thin"
+
+# ───────────────────────────────────────────────────────────────
+echo ""
+echo "--- Profile 27: thinEval NOT exempt (45 lines, findings lack reasoning) ---"
+setup_review_node
+{
+  echo "# Code Review"
+  echo ""
+  echo "## Security"
+  echo ""
+  echo "🔴 src/auth.ts:15 — SQL injection"
+  echo ""
+  echo "🟡 src/auth.ts:42 — Weak hashing"
+  echo ""
+  echo "## Architecture"
+  echo ""
+  echo "🔵 src/routes.ts:8 — Too large"
+  echo ""
+  echo "## Summary"
+  echo ""
+  echo "VERDICT: ITERATE FINDINGS[3]"
+  echo ""
+  for i in $(seq 1 25); do echo "Review padding line $i with varied content."; done
+} > .harness/nodes/code-review/run_1/eval-nosubstance.md
+
+OUT=$($HARNESS synthesize .harness --node code-review)
+# Findings lack reasoning and fix → NOT exempt → thinEval fires
+assert_contains "no substance: thinEval warning fires" "$OUT" "eval is thin"
 
 # ═══════════════════════════════════════════════════════════════
 echo ""

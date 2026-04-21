@@ -242,8 +242,14 @@ export function cmdSynthesize(args) {
     const blocked = /BLOCKED/i.test(parsed.verdict);
 
     // ── Thin eval detection (mechanical) ──────────────────────
-    // Eval under 50 lines is too thin to be a real review.
-    if (parsed.thinEval) {
+    // Eval under 50 lines is too thin to be a real review — UNLESS
+    // every finding has reasoning + fix + file refs (substance exemption).
+    let thinEvalExempt = false;
+    if (parsed.thinEval && parsed.findings_count > 0) {
+      const allSubstantive = parsed.findings.every(f => f.reasoning && f.fix && f.file);
+      if (allSubstantive && parsed.has_file_refs) thinEvalExempt = true;
+    }
+    if (parsed.thinEval && !thinEvalExempt) {
       totals.warning += 1;
       thinEvalWarnings.push(`${roleName}: eval is thin (${parsed.lineCount} lines, min 50)`);
     }
@@ -320,7 +326,8 @@ export function cmdSynthesize(args) {
       warning: parsed.warning,
       suggestion: parsed.suggestion,
       blocked,
-      thinEval: parsed.thinEval || false,
+      thinEval: (parsed.thinEval && !thinEvalExempt) || false,
+      thinEvalExempt: thinEvalExempt || false,
       noCodeRefs: parsed.noCodeRefs || false,
       lineCount: parsed.lineCount,
       findingsCount: parsed.findings_count || 0,
@@ -353,7 +360,8 @@ export function cmdSynthesize(args) {
     role._compoundFails = compoundFails;
   }
   const qualityFailRoles = roles.filter(r => r._compoundFails >= 3);
-  const strict = args.includes("--strict");
+  const noStrict = args.includes("--no-strict");
+  const strict = !noStrict; // D2 enforce by default; --no-strict reverts to shadow
   let qfDetail = "";
   if (qualityFailRoles.length > 0) {
     qfDetail = qualityFailRoles.map(r => `${r.role}(${r._compoundFails} layers)`).join(", ");

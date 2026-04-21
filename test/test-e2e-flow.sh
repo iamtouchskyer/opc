@@ -572,10 +572,10 @@ write_handshake .harness review "Review done" "ITERATE"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
 
 SYNTH=$($HARNESS synthesize .harness --node review)
-assert_contains "12.1: D2 shadow fires in flow" "$SYNTH" "evalQualityGate"
-assert_contains "12.2: shadow mode" "$SYNTH" "shadow"
-# Verdict should be ITERATE (shadow doesn't change it), not FAIL
-assert_field_eq "12.3: shadow doesn't change verdict" "$SYNTH" "verdict" '"ITERATE"'
+assert_contains "12.1: D2 gate fires in flow" "$SYNTH" "evalQualityGate"
+assert_contains "12.2: enforce mode (default)" "$SYNTH" "enforce"
+# With enforce default, D2 gate triggers FAIL
+assert_field_eq "12.3: enforce changes verdict to FAIL" "$SYNTH" "verdict" '"FAIL"'
 
 echo ""
 
@@ -623,6 +623,158 @@ write_handshake .harness gate "Gate" "PASS" gate
 
 REPLAY=$($HARNESS replay --dir .harness 2>/dev/null || echo '{"error":"replay failed"}')
 assert_contains "15.1: replay has flow state" "$REPLAY" "currentNode\|history\|flowState"
+# Test replay metadata (P2)
+assert_contains "15.2: replay has meta" "$REPLAY" '"meta"'
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+echo "=== E2E TEST 16: full-stack discussion node path ==="
+# ═══════════════════════════════════════════════════════════════
+
+rm -rf .harness
+$HARNESS init --flow full-stack --entry discuss --dir .harness 2>/dev/null
+
+# Discussion node — handshake type is discussion
+write_handshake .harness discuss "Discussion round complete" "PASS" discussion
+$HARNESS transition --from discuss --to build --verdict PASS --flow full-stack --dir .harness 2>/dev/null
+
+# Build node
+write_handshake .harness build "Implementation done" "PASS" build
+$HARNESS transition --from build --to code-review --verdict PASS --flow full-stack --dir .harness 2>/dev/null
+
+# Code review node
+write_good_eval .harness code-review frontend
+write_good_eval .harness code-review backend
+write_handshake .harness code-review "Review done" "PASS"
+$HARNESS transition --from code-review --to test-design --verdict PASS --flow full-stack --dir .harness 2>/dev/null
+
+assert_contains "16.1: reached test-design" "$(cat .harness/flow-state.json)" '"test-design"'
+
+# Verify discuss node in history
+assert_contains "16.2: discuss in history" "$(cat .harness/flow-state.json)" '"discuss"'
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+echo "=== E2E TEST 17: oscillation detection via diff ==="
+# ═══════════════════════════════════════════════════════════════
+
+rm -rf .harness
+$HARNESS init --flow review --entry review --dir .harness 2>/dev/null
+
+# Round 1 eval
+mkdir -p .harness/nodes/review/run_1
+cat > .harness/round1-eval.md << 'EVALEOF'
+# Review Round 1
+
+## Security
+
+🟡 src/auth.ts:10 — Session fixation vulnerability
+
+Reasoning: Session ID not regenerated after login.
+→ Call session.regenerate() after authentication.
+
+## Performance
+
+🟡 src/db.ts:42 — Missing connection pooling
+
+Reasoning: Each request creates a new database connection.
+→ Use connection pool with max 10 connections.
+
+## Error Handling
+
+🟡 src/api.ts:15 — Unhandled promise rejection
+
+Reasoning: Async route handlers don't catch errors properly.
+→ Wrap in try/catch or use express-async-errors.
+
+## Testing
+
+🔵 src/service.ts:30 — Insufficient test coverage
+
+Reasoning: Core business logic has only 40% coverage.
+→ Add tests for payment processing edge cases.
+
+## Summary
+
+VERDICT: ITERATE FINDINGS[4]
+3 warnings, 1 suggestion.
+EVALEOF
+
+# Round 2 eval — mostly same findings (oscillation)
+cat > .harness/round2-eval.md << 'EVALEOF'
+# Review Round 2
+
+## Security
+
+🟡 src/auth.ts:10 — Session fixation vulnerability
+
+Reasoning: Still not fixed since round 1.
+→ Call session.regenerate() after authentication.
+
+## Performance
+
+🟡 src/db.ts:42 — Missing connection pooling
+
+Reasoning: Connection pooling still not implemented.
+→ Use connection pool with max 10 connections.
+
+## Error Handling
+
+🟡 src/api.ts:15 — Unhandled promise rejection
+
+Reasoning: Async errors still unhandled.
+→ Wrap in try/catch or use express-async-errors.
+
+## Summary
+
+VERDICT: ITERATE FINDINGS[3]
+3 recurring warnings.
+EVALEOF
+
+DIFF_OUT=$($HARNESS diff .harness/round1-eval.md .harness/round2-eval.md 2>/dev/null)
+assert_contains "17.1: diff detects recurring" "$DIFF_OUT" '"recurring"'
+# 3 of 4 round1 findings recur = 75% > 60% threshold → oscillation
+assert_contains "17.2: oscillation detected" "$DIFF_OUT" '"oscillation": true'
+assert_contains "17.3: resolved count" "$DIFF_OUT" '"resolved"'
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════════
+echo "=== E2E TEST 18: stub extension hook in flow ==="
+# ═══════════════════════════════════════════════════════════════
+
+rm -rf .harness
+# Create a minimal stub extension
+STUB_EXT_DIR="$TMPDIR/opc-stub-ext"
+mkdir -p "$STUB_EXT_DIR/stub-test"
+cat > "$STUB_EXT_DIR/stub-test/ext.json" << 'EXTEOF'
+{
+  "name": "stub-test",
+  "version": "1.0.0",
+  "meta": { "provides": ["stub-check@1"] }
+}
+EXTEOF
+cat > "$STUB_EXT_DIR/stub-test/hook.mjs" << 'HOOKEOF'
+export const meta = { provides: ["stub-check@1"] };
+export function promptAppend(ctx) {
+  return "<!-- stub-ext-injected -->";
+}
+export function verdictAppend(ctx) {
+  return { warnings: ["stub-ext-verdict-warning"] };
+}
+HOOKEOF
+
+# Init with extension directory override
+OPC_EXTENSION_DIR="$STUB_EXT_DIR" $HARNESS init --flow review --entry review --dir .harness --extensions stub-test 2>/dev/null
+
+write_good_eval .harness review analyst
+write_good_eval .harness review checker
+write_handshake .harness review "Review" "PASS"
+
+# Check that init loaded the extension (look at flow-state for extension info)
+assert_contains "18.1: extension loaded" "$(cat .harness/flow-state.json)" "stub-test\|extensions"
 
 echo ""
 

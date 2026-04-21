@@ -128,6 +128,26 @@ export function cmdReplayData(args) {
           }
         } catch { /* no run dirs */ }
         hs.details = details;
+        // Replay metadata: timing, agent count, finding summary
+        const meta = {};
+        if (hs.startedAt && hs.completedAt) {
+          meta.durationMs = new Date(hs.completedAt).getTime() - new Date(hs.startedAt).getTime();
+        } else if (hs.timestamp) {
+          meta.durationMs = null;
+        }
+        meta.agentCount = Array.isArray(hs.artifacts) ? hs.artifacts.filter(a => /eval-.*\.md$/.test(a)).length : 0;
+        // Finding summary: count severity emojis across eval details
+        let fCritical = 0, fWarning = 0, fSuggestion = 0;
+        for (const d of details) {
+          if (d.file.startsWith("eval")) {
+            const content = d.content || "";
+            fCritical += (content.match(/🔴/g) || []).length;
+            fWarning += (content.match(/🟡/g) || []).length;
+            fSuggestion += (content.match(/🔵/g) || []).length;
+          }
+        }
+        meta.findingSummary = { critical: fCritical, warning: fWarning, suggestion: fSuggestion };
+        hs.meta = meta;
         handshakes[nodeId] = hs;
       } catch { /* skip */ }
     }

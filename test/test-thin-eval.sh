@@ -135,8 +135,9 @@ VERDICT: PASS FINDINGS[3]
 EVALEOF
 
 OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
-assert_contains "thin eval warning present" "$OUT" "eval is thin"
-assert_field_eq "verdict ITERATE (thin bumps warning)" "$OUT" "verdict" '"ITERATE"'
+# Short eval has reasoning + fix + file ref → substance exempt from thinEval
+assert_not_contains "thin eval exempted (substance)" "$OUT" "eval is thin"
+assert_field_eq "verdict PASS (substance exempt)" "$OUT" "verdict" '"PASS"'
 
 echo ""
 echo "--- 1.2: All evals thick → no thinEvalWarnings ---"

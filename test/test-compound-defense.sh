@@ -584,7 +584,7 @@ assert_contains "triggers low unique content" "$OUT" "low unique content"
 assert_contains "triggers single heading" "$OUT" "heading"
 assert_contains "triggers no code refs" "$OUT" "0 file:line references"
 assert_contains "triggers finding density" "$OUT" "finding density"
-assert_field_eq "verdict ITERATE (stacked)" "$OUT" "verdict" '"ITERATE"'
+assert_field_eq "verdict FAIL (D2 enforce default)" "$OUT" "verdict" '"FAIL"'
 
 # Count total warnings — should be at least 4 from compound layers
 WARN_COUNT=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['totals']['warning'])" 2>/dev/null)
@@ -898,7 +898,7 @@ echo ""
 echo "=== TEST GROUP 9: D2 — Compound eval quality gate ==="
 # ═══════════════════════════════════════════════════════════════
 
-echo "--- 9.1: ≥3 layers tripped → shadow mode (evalQualityGate.triggered) ---"
+echo "--- 9.1: ≥3 layers tripped → enforce mode (evalQualityGate.triggered) ---"
 rm -f .harness/nodes/code-review/run_1/eval-*.md
 {
   echo "# Only Heading"
@@ -913,11 +913,11 @@ rm -f .harness/nodes/code-review/run_1/eval-*.md
 } > .harness/nodes/code-review/run_1/eval-garbage.md
 
 OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
-# Should trigger ≥3 layers: thinEval? no—60 lines. But: lowUniqueContent, singleHeading, noCodeRefs, findingDensityLow = 4
+# Should trigger ≥3 layers: lowUniqueContent, singleHeading, noCodeRefs, findingDensityLow = 4
 assert_contains "evalQualityGate triggered" "$OUT" "evalQualityGate"
-assert_contains "shadow mode" "$OUT" '"shadow"'
-# Without --strict, verdict should still be ITERATE (shadow doesn't change verdict)
-assert_field_eq "verdict still ITERATE in shadow" "$OUT" "verdict" '"ITERATE"'
+assert_contains "enforce mode (default)" "$OUT" '"enforce"'
+# With enforce default, verdict is FAIL
+assert_field_eq "verdict FAIL (D2 enforce default)" "$OUT" "verdict" '"FAIL"'
 
 echo ""
 echo "--- 9.2: ≥3 layers + --strict → verdict FAIL ---"
@@ -993,9 +993,9 @@ assert_field_eq "iteration 2 escalates to FAIL" "$OUT" "verdict" '"FAIL"'
 assert_contains "escalation reason" "$OUT" "persist after 2 iterations"
 
 echo ""
-echo "--- 10.2: --iteration 1 + thinEvalWarnings → ITERATE (no escalation) ---"
+echo "--- 10.2: --iteration 1 + D2 triggers → FAIL (enforce default) ---"
 OUT=$($HARNESS synthesize .harness --node code-review --iteration 1 2>/dev/null)
-assert_field_eq "iteration 1 stays ITERATE" "$OUT" "verdict" '"ITERATE"'
+assert_field_eq "iteration 1 FAIL (D2 enforce)" "$OUT" "verdict" '"FAIL"'
 
 echo ""
 echo "--- 10.3: --iteration 2 but clean eval → no escalation ---"

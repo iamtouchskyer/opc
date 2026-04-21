@@ -371,7 +371,7 @@ echo ""
 echo "=== GAP-7: Synthesize verdict paths ==="
 # ═══════════════════════════════════════════════════════════════
 
-echo "--- 7.1: Synthesize ITERATE verdict (warnings, no criticals) ---"
+echo "--- 7.1: Synthesize FAIL verdict (thin eval + D2 enforce) ---"
 rm -rf .h-synth && mkdir -p .h-synth/nodes/code-review/run_1
 cat > .h-synth/nodes/code-review/run_1/eval-engineer.md << 'EVAL'
 # Engineer Review
@@ -380,8 +380,8 @@ VERDICT: PASS FINDINGS[2]
 🟡 Warning B — api.js:20 — timeout not set
 EVAL
 OUT=$($HARNESS synthesize .h-synth --node code-review)
-assert_contains "ITERATE verdict" "$OUT" "ITERATE"
-assert_contains "warning reason" "$OUT" "warning"
+# Thin eval (5 lines) + singleHeading + missingReasoning + missingFix = 4 layers → D2 enforce → FAIL
+assert_contains "FAIL verdict (D2)" "$OUT" "FAIL"
 
 echo ""
 echo "--- 7.2: Synthesize PASS verdict (suggestions only) ---"
