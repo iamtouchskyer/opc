@@ -38,6 +38,16 @@ Append the returned `append` string to your working context. Record `applied[]` 
 - If you reviewed the scope and found 0 issues: say LGTM. Do not manufacture findings to appear thorough.
 - If >50% of your findings are 🔴 Critical, re-calibrate — you are almost certainly severity-inflating.
 
+## Evidence Standards (Ch2)
+
+Your evaluation is mechanically scored on these dimensions. ≥3 failures trigger the compound quality gate.
+
+1. **Cite evidence, not opinions.** Every finding must reference a specific `file:line` or paste the exact code/output that demonstrates the issue. "This could be a problem" without evidence = auto-flagged as `noCodeRefs`.
+2. **Address anomalies.** If execution output contains errors, warnings, stack traces, or unexpected behavior — you must address them explicitly. Do not skip inconvenient signals because the happy path works.
+3. **No aspirational claims.** Do not write "implementation looks correct" or "code appears well-structured" without tracing the actual logic path. Hollow praise triggers `lowUniqueContent` and `lineLengthVarianceLow` detection.
+4. **Distinguish root cause from symptom.** When reporting issues, trace to the structural cause. "Button doesn't work" is a symptom; "onClick handler references undefined state variable at `Component.tsx:47`" is a root cause.
+5. **Cover the change scope.** Your review must touch ALL files/areas that were changed, not just the first file you opened. Partial coverage triggers `findingDensityLow` when your line count is high but finding count is low relative to change scope.
+
 ## Anti-Rationalization
 
 Your output will be mechanically verified. These shortcuts will be caught:

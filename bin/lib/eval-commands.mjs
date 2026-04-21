@@ -214,6 +214,11 @@ export function cmdSynthesize(args) {
   // --base <dir> — project root for validating file:line references in findings
   const baseDir = getFlag(args, "base", null);
 
+  // D1: --base deprecation warning — next version makes this a hard error
+  if (!baseDir) {
+    console.error("⚠️  --base not provided — file:line reference validation skipped. Pass --base <project-root> to enable.");
+  }
+
   for (const f of files) {
     let roleName;
     if (f.name.startsWith("eval-")) {
@@ -318,14 +323,40 @@ export function cmdSynthesize(args) {
       thinEval: parsed.thinEval || false,
       noCodeRefs: parsed.noCodeRefs || false,
       lineCount: parsed.lineCount,
+      findingsCount: parsed.findings_count || 0,
       lowUniqueContent: parsed.lowUniqueContent || false,
       singleHeading: parsed.singleHeading || false,
       findingDensityLow: parsed.findingDensityLow || false,
+      missingReasoningTripped: parsed.findings_count > 0 && parsed.missingReasoningRatio > 50,
+      missingFixTripped: parsed.findings_count > 0 && parsed.missingFixRatio > 50,
+      lineLengthVarianceLow: parsed.lineLengthVarianceLow || false,
+      invalidRefCount,
     });
 
     totals.critical += parsed.critical;
     totals.warning += parsed.warning;
     totals.suggestion += parsed.suggestion;
+  }
+
+  // ── D2: Compound eval quality gate ─────────────────────────────
+  for (const role of roles) {
+    let compoundFails = 0;
+    if (role.thinEval) compoundFails++;
+    if (role.noCodeRefs && role.findingsCount > 0) compoundFails++;
+    if (role.lowUniqueContent) compoundFails++;
+    if (role.singleHeading) compoundFails++;
+    if (role.findingDensityLow) compoundFails++;
+    if (role.missingReasoningTripped) compoundFails++;
+    if (role.missingFixTripped) compoundFails++;
+    if (role.lineLengthVarianceLow) compoundFails++;
+    if (role.invalidRefCount > 0) compoundFails += 2; // weighted: fabricated refs
+    role._compoundFails = compoundFails;
+  }
+  const qualityFailRoles = roles.filter(r => r._compoundFails >= 3);
+  const strict = args.includes("--strict");
+  let qfDetail = "";
+  if (qualityFailRoles.length > 0) {
+    qfDetail = qualityFailRoles.map(r => `${r.role}(${r._compoundFails} layers)`).join(", ");
   }
 
   let verdict, reason;
@@ -336,12 +367,23 @@ export function cmdSynthesize(args) {
   } else if (totals.critical > 0) {
     verdict = "FAIL";
     reason = `${totals.critical} validated critical finding(s)`;
+  } else if (qualityFailRoles.length > 0 && strict) {
+    // D2: --strict mode enforces compound gate as hard FAIL
+    verdict = "FAIL";
+    reason = `eval quality gate: ${qfDetail}`;
   } else if (totals.warning > 0) {
     verdict = "ITERATE";
     reason = `${totals.warning} warning finding(s)`;
   } else {
     verdict = "PASS";
     reason = "all roles LGTM or suggestions only";
+  }
+
+  // ── D3: Iteration escalation ──────────────────────────────────
+  const iterationN = getFlag(args, "iteration", null);
+  if (iterationN && parseInt(iterationN) >= 2 && thinEvalWarnings.length > 0) {
+    verdict = "FAIL";
+    reason = `eval quality warnings persist after ${iterationN} iterations — escalating to FAIL`;
   }
 
   // ── Tier baseline coverage check ──────────────────────────────
@@ -475,6 +517,9 @@ export function cmdSynthesize(args) {
   console.log(JSON.stringify({
     roles, totals, verdict, reason, tierCoverage,
     thinEvalWarnings: thinEvalWarnings.length > 0 ? thinEvalWarnings : undefined,
+    evalQualityGate: qualityFailRoles.length > 0
+      ? { triggered: true, mode: strict ? "enforce" : "shadow", roles: qfDetail }
+      : undefined,
     testPlanCoverage: testPlanCoverage || undefined,
   }, null, 2));
 }

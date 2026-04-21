@@ -214,7 +214,26 @@ Before dispatching ANY work, the orchestrator MUST establish a clear definition 
 
 Write the finalized acceptance criteria to `.harness/acceptance-criteria.md` and include them in every subagent prompt.
 
-**Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint .harness/acceptance-criteria.md`. If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the 14 mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
+**Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint .harness/acceptance-criteria.md`. If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
+
+### Task Scope — Mandatory for Loop Mode
+
+In loop mode, every `plan.md` MUST include a `## Task Scope` section listing the user's original requirements:
+
+```markdown
+## Task Scope
+- SCOPE-1: Backend API for user auth
+- SCOPE-2: Frontend login page with form validation
+- SCOPE-3: Browser E2E tests covering login flow
+- SCOPE-4: Unit tests with 100% coverage on new code
+```
+
+The harness enforces this mechanically:
+- **init-loop** refuses to start if `## Task Scope` is missing (bypass: `--skip-scope`)
+- **complete-tick** on the final tick checks that every SCOPE-N item was covered by at least one completed unit (keyword overlap or explicit reference). Uncovered items = hard error, pipeline cannot complete (bypass: `--skip-scope-check`)
+- **next-tick** termination output includes `uncovered_scope` if any items lack coverage
+
+This prevents the #1 failure mode: LLM decomposition misses part of the original task, pipeline declares "complete" while major scope items are untouched.
 
 ### Interactive Mode Details (with `-i`)
 
@@ -296,6 +315,13 @@ Launching {N} agents...
 ---
 
 ## Node Execution
+
+**Auto mode = no pause.** In auto mode, the orchestrator MUST NOT pause to ask "should I continue?", "this will take a while", or "want to stop here?". The only acceptable reasons to stop are:
+- Escape hatch triggered (cycle limit hit, stall detected, blocked transition)
+- Tool failure after retry
+- Context critically low (write state to disk, tell user to re-invoke)
+
+Anything else = keep executing. The user chose auto mode precisely because they don't want interruptions. If the pipeline has 14 nodes, run all 14 nodes. Do not ask permission at node 4.
 
 The orchestrator uses **cursor-based execution** — `flow-state.json.currentNode` is the single pointer. No topological sort.
 

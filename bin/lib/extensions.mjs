@@ -295,7 +295,7 @@ function resolveExtensionsDir(config = {}) {
   return (
     process.env.OPC_EXTENSIONS_DIR ||
     config.extensionsDir ||
-    join(os.homedir(), ".opc", "extensions")
+    join(os.homedir(), ".claude", "skills", "opc-extension")
   );
 }
 

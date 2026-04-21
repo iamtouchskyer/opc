@@ -842,3 +842,221 @@ OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
 assert_not_contains "no ref check without --base" "$OUT" "fabricated refs"
 
 print_results
+
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== TEST GROUP 8: D1 — --base deprecation warning ==="
+# ═══════════════════════════════════════════════════════════════
+
+echo "--- 8.1: No --base → stderr deprecation warning ---"
+mkdir -p .harness/nodes/code-review/run_1
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+cat > .harness/nodes/code-review/run_1/eval-simple.md <<'EVALEOF'
+# Code Review
+
+## Architecture
+Clean structure.
+
+## Findings
+
+🔵 src/main.ts:10 — Minor issue
+→ Fix it
+Reasoning: Convention.
+
+## Security
+No issues found in review.
+CORS configured properly.
+
+## Performance
+Queries indexed properly.
+No N+1 patterns found.
+
+## Testing
+Good coverage on core.
+Integration tests pass.
+
+## Summary
+One minor suggestion found.
+Code quality is good overall.
+Patterns followed consistently.
+
+VERDICT: PASS FINDINGS[1]
+EVALEOF
+
+STDERR=$($HARNESS synthesize .harness --node code-review 2>&1 1>/dev/null)
+assert_contains "--base deprecation warning emitted" "$STDERR" "base not provided"
+
+echo ""
+echo "--- 8.2: With --base → no deprecation warning ---"
+mkdir -p project/src
+python3 -c "for i in range(50): print(f'const x{i} = 1;')" > project/src/main.ts
+STDERR=$($HARNESS synthesize .harness --node code-review --base project 2>&1 1>/dev/null)
+assert_not_contains "no deprecation with --base" "$STDERR" "base not provided"
+
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== TEST GROUP 9: D2 — Compound eval quality gate ==="
+# ═══════════════════════════════════════════════════════════════
+
+echo "--- 9.1: ≥3 layers tripped → shadow mode (evalQualityGate.triggered) ---"
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+{
+  echo "# Only Heading"
+  echo ""
+  echo "🔵 Something is wrong — no real finding"
+  echo ""
+  for i in $(seq 1 55); do
+    echo "This is a padding line that should not count."
+  done
+  echo ""
+  echo "VERDICT: PASS FINDINGS[1]"
+} > .harness/nodes/code-review/run_1/eval-garbage.md
+
+OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
+# Should trigger ≥3 layers: thinEval? no—60 lines. But: lowUniqueContent, singleHeading, noCodeRefs, findingDensityLow = 4
+assert_contains "evalQualityGate triggered" "$OUT" "evalQualityGate"
+assert_contains "shadow mode" "$OUT" '"shadow"'
+# Without --strict, verdict should still be ITERATE (shadow doesn't change verdict)
+assert_field_eq "verdict still ITERATE in shadow" "$OUT" "verdict" '"ITERATE"'
+
+echo ""
+echo "--- 9.2: ≥3 layers + --strict → verdict FAIL ---"
+OUT=$($HARNESS synthesize .harness --node code-review --strict 2>/dev/null)
+assert_field_eq "verdict FAIL with --strict" "$OUT" "verdict" '"FAIL"'
+assert_contains "enforce mode" "$OUT" '"enforce"'
+
+echo ""
+echo "--- 9.3: <3 layers → no evalQualityGate ---"
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+cat > .harness/nodes/code-review/run_1/eval-ok.md <<'EVALEOF'
+# Thorough Code Review
+
+## Architecture Analysis
+The codebase follows a well-structured MVC pattern.
+Dependency injection is used consistently.
+Module boundaries are clearly defined.
+
+## Findings
+
+🔵 src/main.ts:10 — Import ordering inconsistent
+→ Group external imports before internal ones
+Reasoning: Convention.
+
+🔵 src/utils.ts:25 — Unused helper function
+→ Remove dead code
+Reasoning: Maintenance burden.
+
+🟡 src/auth.ts:42 — Token refresh too narrow
+→ Increase refresh window to 300s
+Reasoning: Users with slow connections lose session.
+
+🔵 src/db.ts:88 — Pool size hardcoded
+→ Move to env var
+Reasoning: Prod needs more.
+
+## Security
+No injection. Auth applied. CORS configured.
+Input validation on all endpoints.
+
+## Performance
+Queries indexed. No N+1. Caching applied.
+Bundle splitting configured.
+
+## Summary
+4 issues: 1 warning, 3 suggestions.
+Code quality strong overall.
+
+VERDICT: ITERATE FINDINGS[4]
+EVALEOF
+
+OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
+assert_not_contains "no evalQualityGate for clean eval" "$OUT" "evalQualityGate"
+
+# ═══════════════════════════════════════════════════════════════
+echo ""
+echo "=== TEST GROUP 10: D3 — Iteration escalation ==="
+# ═══════════════════════════════════════════════════════════════
+
+echo "--- 10.1: --iteration 2 + thinEvalWarnings → FAIL ---"
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+{
+  echo "# Short"
+  echo ""
+  echo "🔵 issue — bad"
+  echo "→ fix"
+  echo ""
+  echo "VERDICT: PASS FINDINGS[1]"
+} > .harness/nodes/code-review/run_1/eval-thin.md
+
+OUT=$($HARNESS synthesize .harness --node code-review --iteration 2 2>/dev/null)
+assert_field_eq "iteration 2 escalates to FAIL" "$OUT" "verdict" '"FAIL"'
+assert_contains "escalation reason" "$OUT" "persist after 2 iterations"
+
+echo ""
+echo "--- 10.2: --iteration 1 + thinEvalWarnings → ITERATE (no escalation) ---"
+OUT=$($HARNESS synthesize .harness --node code-review --iteration 1 2>/dev/null)
+assert_field_eq "iteration 1 stays ITERATE" "$OUT" "verdict" '"ITERATE"'
+
+echo ""
+echo "--- 10.3: --iteration 2 but clean eval → no escalation ---"
+rm -f .harness/nodes/code-review/run_1/eval-*.md
+cat > .harness/nodes/code-review/run_1/eval-clean.md <<'EVALEOF'
+# Thorough Code Review
+
+## Architecture
+Well-structured MVC pattern throughout the codebase.
+Clean module boundaries with explicit exports.
+Dependency injection is used consistently across services.
+
+## Findings
+
+🔵 src/main.ts:10 — Import ordering inconsistent with project convention
+→ Group external imports before internal ones, alphabetize within groups
+Reasoning: Following the project's established convention seen in other files.
+
+🔵 src/utils.ts:25 — Unused helper function formatDate is dead code
+→ Remove formatDate — not called anywhere in codebase
+Reasoning: Dead code increases maintenance burden.
+
+🟡 src/auth.ts:42 — Token refresh window is too narrow at 30 seconds
+→ Increase refresh window to 300s to prevent auth races
+Reasoning: Users with slow connections may lose their session.
+
+🔵 src/db.ts:88 — Connection pool size is hardcoded to 10
+→ Move to DATABASE_POOL_SIZE environment variable with default 10
+Reasoning: Production environments with higher traffic need larger pools.
+
+## Security
+No SQL injection vectors found in database query layer.
+Authentication middleware properly validates JWT tokens on protected routes.
+CORS is configured to allow only approved origins.
+Input sanitization covers all user-facing endpoints.
+
+## Performance
+Database queries use proper indexing on frequently queried columns.
+No N+1 query patterns detected in the ORM usage throughout.
+Response caching is applied to read-heavy endpoints.
+Bundle splitting is configured for optimal code loading.
+
+## Error Handling
+All async route handlers have try-catch blocks.
+Error responses include proper HTTP status codes.
+Validation errors distinguished from server errors.
+
+## Testing
+Unit test coverage at 85% for core business logic.
+Integration tests cover the four critical user flows.
+E2E tests verify login-to-checkout journey.
+
+## Summary
+Found 4 issues: 1 warning, 3 suggestions.
+Code quality is strong. Auth issue should be fixed before release.
+Overall patterns are consistent and well-maintained.
+
+VERDICT: ITERATE FINDINGS[4]
+EVALEOF
+
+OUT=$($HARNESS synthesize .harness --node code-review --iteration 2 2>/dev/null)
+assert_not_contains "no escalation for clean eval" "$OUT" "persist after"
+
+print_results
