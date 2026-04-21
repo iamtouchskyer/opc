@@ -7,3 +7,5 @@ node_modules/
 .harness-*/
 .opc-loop-*/
 .validation-corpus/
+docs/*.mp4
+docs/*.gif
