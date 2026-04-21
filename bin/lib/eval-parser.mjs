@@ -166,18 +166,23 @@ export function parseEvaluation(text) {
       continue;
     }
 
-    // Fix line
-    if (currentFinding && trimmed.startsWith("→")) {
-      currentFinding.fix = trimmed.slice(1).trim();
+    // Fix line — accept: "→ ...", "Fix: ...", "**Fix:** ..."
+    const fixMatch = currentFinding && (trimmed.startsWith("→") || /^\*{0,2}fix\*{0,2}:/i.test(trimmed));
+    if (fixMatch) {
+      if (trimmed.startsWith("→")) {
+        currentFinding.fix = trimmed.slice(1).trim();
+      } else {
+        currentFinding.fix = trimmed.replace(/^\*{0,2}fix\*{0,2}:\s*/i, "").trim();
+      }
       if (HEDGING_RE.test(trimmed)) {
         hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
       }
       continue;
     }
 
-    // Reasoning line
-    if (currentFinding && /^reasoning:/i.test(trimmed)) {
-      currentFinding.reasoning = trimmed.replace(/^reasoning:\s*/i, "").trim();
+    // Reasoning line — accept: "Reasoning: ...", "**Reasoning:** ..."
+    if (currentFinding && /^\*{0,2}reasoning\*{0,2}:/i.test(trimmed)) {
+      currentFinding.reasoning = trimmed.replace(/^\*{0,2}reasoning\*{0,2}:\s*/i, "").trim();
       if (HEDGING_RE.test(trimmed)) {
         hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
       }
