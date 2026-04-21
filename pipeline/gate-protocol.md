@@ -12,7 +12,14 @@ Run the harness to compute the aggregate verdict:
 opc-harness synthesize .harness --node {UPSTREAM_NODE_ID}
 ```
 
-Output: `{ verdict, totals: { critical, warning, suggestion }, roles[] }`
+Output: `{ verdict, totals: { critical, warning, suggestion }, roles[], evalQualityGate? }`
+
+**D2 Compound Eval Quality Gate (enforce by default):**
+The synthesize command stacks 9 defense layers per role (thinEval, noCodeRefs, lowUniqueContent, singleHeading, findingDensityLow, missingReasoning, missingFix, lineLengthVarianceLow, invalidRefCount×2). If ≥3 layers trip on any role → `verdict = FAIL`. Pass `--no-strict` to downgrade to shadow mode (output `evalQualityGate.triggered=true` without changing verdict).
+
+**thinEval substance exemption:** Evals under 50 lines are exempt from thinEval if every finding has reasoning + fix + file ref.
+
+**--base ref validation:** Pass `--base <project-root>` to validate file:line references against the filesystem. Fabricated refs count as 2 layers in the compound gate.
 
 ### Step 2 — Mechanical Validation
 

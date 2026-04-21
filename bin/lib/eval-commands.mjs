@@ -297,6 +297,7 @@ export function cmdSynthesize(args) {
     // Layer: file:line reality check (requires --base) — detect fabricated references
     // This is the highest-value layer because it requires findings to reference REAL code.
     let invalidRefCount = 0;
+    let weakRefCount = 0;
     if (baseDir && parsed.findings.length > 0) {
       for (const f of parsed.findings) {
         if (f.file) {
@@ -306,9 +307,23 @@ export function cmdSynthesize(args) {
           } else if (f.line != null) {
             try {
               const content = readFileSync(resolved, "utf8");
-              const fileLineCount = content.split("\n").length;
-              if (f.line < 1 || f.line > fileLineCount) {
+              const srcLines = content.split("\n");
+              if (f.line < 1 || f.line > srcLines.length) {
                 invalidRefCount++;
+              } else {
+                // Content relevance: extract source line, check token overlap with finding issue
+                const srcLine = srcLines[f.line - 1].toLowerCase();
+                const issueTokens = (f.issue || "").toLowerCase()
+                  .replace(/[^a-z0-9_]/g, " ").split(/\s+/)
+                  .filter(t => t.length >= 3); // skip noise words
+                const srcTokens = srcLine.replace(/[^a-z0-9_]/g, " ").split(/\s+/)
+                  .filter(t => t.length >= 3);
+                if (issueTokens.length >= 2 && srcTokens.length >= 1) {
+                  const shared = issueTokens.filter(t => srcTokens.some(s => s.includes(t) || t.includes(s)));
+                  if (shared.length === 0) {
+                    weakRefCount++;
+                  }
+                }
               }
             } catch { invalidRefCount++; }
           }
@@ -317,6 +332,9 @@ export function cmdSynthesize(args) {
       if (invalidRefCount > 0) {
         totals.warning += invalidRefCount;
         thinEvalWarnings.push(`${roleName}: ${invalidRefCount} finding(s) reference non-existent or out-of-range file:line — fabricated refs detected`);
+      }
+      if (weakRefCount > 0) {
+        thinEvalWarnings.push(`${roleName}: ${weakRefCount} finding(s) reference valid file:line but issue text shares no tokens with actual source — possible mismatch`);
       }
     }
 

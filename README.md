@@ -6,7 +6,7 @@
 
 ## What's Different in v0.8
 
-**Compound eval quality gate (D2).** 9-layer substance check on every eval — thin content, missing code refs, low uniqueness, fabricated references, etc. ≥3 layers tripped → shadow "would-fail" (visible in output); `--strict` → hard FAIL. The evaluator can no longer phone it in.
+**Compound eval quality gate (D2).** 9-layer substance check on every eval — thin content, missing code refs, low uniqueness, fabricated references, etc. ≥3 layers tripped → hard FAIL (enforce by default); `--no-strict` downgrades to shadow mode. thinEval substance exemption: short evals with complete reasoning/fix/refs are exempt.
 
 **Iteration escalation (D3).** Persistent eval warnings across ≥2 iterations auto-escalate to FAIL. No more infinite loops of shallow reviews.
 
@@ -184,7 +184,7 @@ Available immediately, no configuration needed.
 bash test/run-all.sh
 ```
 
-29 test suites covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, and pipeline E2E lint.
+31 test suites covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, pipeline E2E lint, D2 calibration, and orchestrator-level E2E flow tests.
 
 ## Reproducing benchmarks
 

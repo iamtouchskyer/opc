@@ -926,6 +926,50 @@ OUT=$($HARNESS synthesize .harness --node code-review)
 # Findings lack reasoning and fix → NOT exempt → thinEval fires
 assert_contains "no substance: thinEval warning fires" "$OUT" "eval is thin"
 
+# ───────────────────────────────────────────────────────────────
+echo ""
+echo "--- Profile 28: --base content relevance check (weak ref detection) ---"
+setup_review_node
+# Create a source file with specific content
+mkdir -p /tmp/opc-d2-cal-base/src
+cat > /tmp/opc-d2-cal-base/src/auth.ts << 'SRCEOF'
+import { hash } from 'bcrypt';
+const SALT_ROUNDS = 12;
+export async function hashPassword(plain: string) {
+  return hash(plain, SALT_ROUNDS);
+}
+SRCEOF
+
+{
+  echo "# Security Review"
+  echo ""
+  echo "## Findings"
+  echo ""
+  echo "🔵 src/auth.ts:3 — Missing input validation on hashPassword"
+  echo "**Reasoning:** The plain parameter is not checked for empty string or null."
+  echo "**Fix:** Add guard clause: if (!plain) throw new Error('empty password')."
+  echo ""
+  echo "🔵 src/auth.ts:1 — Completely unrelated claim about database pooling"
+  echo "**Reasoning:** The database connection pool is too small."
+  echo "**Fix:** Increase pool size to 20."
+  echo ""
+  echo "## Architecture"
+  echo ""
+  echo "Well-structured auth module with clean separation."
+  echo ""
+  echo "## Summary"
+  echo ""
+  echo "VERDICT: PASS FINDINGS[2]"
+  echo "Two findings, one relevant, one weak ref."
+  echo ""
+  for i in $(seq 1 30); do echo "Review line $i: detailed analysis of authentication patterns."; done
+} > .harness/nodes/code-review/run_1/eval-relevance.md
+
+OUT=$($HARNESS synthesize .harness --node code-review --base /tmp/opc-d2-cal-base 2>/dev/null)
+# Finding 1 refs auth.ts:3 (hashPassword line) and mentions "hashPassword" → relevant
+# Finding 2 refs auth.ts:1 (import line) but talks about "database pooling" → weak ref
+assert_contains "28: weak ref detected" "$OUT" "possible mismatch"
+
 # ═══════════════════════════════════════════════════════════════
 echo ""
 echo "=== D2 Calibration Summary ==="
