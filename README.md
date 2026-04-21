@@ -4,9 +4,21 @@
 
 16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
+## What's Different in v0.8
+
+**Compound eval quality gate (D2).** 9-layer substance check on every eval — thin content, missing code refs, low uniqueness, fabricated references, etc. ≥3 layers tripped → shadow "would-fail" (visible in output); `--strict` → hard FAIL. The evaluator can no longer phone it in.
+
+**Iteration escalation (D3).** Persistent eval warnings across ≥2 iterations auto-escalate to FAIL. No more infinite loops of shallow reviews.
+
+**Task Scope Registry.** Loop mode plans require `## Task Scope` with SCOPE-N items. The harness validates at init and blocks completion if any scope item is uncovered — preventing the #1 failure mode where LLM decomposition silently drops requirements.
+
+**Pipeline E2E lint.** Tasks containing pipeline keywords (cron, webhook, CI/CD) must have an e2e-live-trigger acceptance criterion. Proxy evidence (unit tests) ≠ live evidence.
+
+**Evaluator prompt hardening (D6).** 5 evidence standards baked into the evaluator protocol: cite evidence, address anomalies, no aspirational claims, distinguish root cause vs symptom, cover change scope.
+
 ## What's Different in v0.7
 
-**Third-party extension authoring.** The v0.5.1 extension surface is now documented + template'd for outside authors. `docs/extension-authoring.md` (7800+ words, zero "see internal" pointers) + `examples/extensions/_starter/` (30-min junior-dev walkthrough) + `examples/extensions/lint-prompt-length/` (outsider-built reference). Hardened via DX litmus: an independent agent built an extension using only the doc + starter, with every gap logged and patched.
+**Third-party extension authoring.** `docs/extension-authoring.md` (7800+ words) + `examples/extensions/_starter/` (30-min walkthrough). Hardened via DX litmus: an independent agent built an extension using only the doc + starter.
 
 ## What's Different in v0.6
 
@@ -14,7 +26,7 @@
 
 **Autonomous loop.** `opc loop` decomposes a feature into units, schedules a durable cron, and runs 8-16 hours unattended — with code-enforced guardrails that survive context compaction.
 
-**Code-enforced, not honor-system.** 34 automated tests verify: tamper detection (write nonce), atomic state writes, review independence checks (eval distinctness), oscillation detection, tick limits, and JSON crash recovery.
+**Code-enforced, not honor-system.** 29 test suites verify: tamper detection (write nonce), atomic state writes, review independence, oscillation detection, tick limits, scope coverage, compound defense, and JSON crash recovery.
 
 **External validator integration.** Pre-commit hooks, test suites, Playwright E2E, and CI pipelines are formally part of the quality architecture — the agent is supervised by tools it doesn't control.
 
@@ -80,11 +92,14 @@ cp -r opc ~/.claude/skills/opc
 
 ## Extensions
 
-OPC has a capability-routed extension surface. Drop a directory into
-`~/.opc/extensions/<name>/` with `ext.json` + `hook.mjs` exporting any of
-`promptAppend` / `verdictAppend` / `executeRun` / `artifactEmit` hooks — no
-fork, no rebuild. Hooks are sandboxed via per-extension timeouts + circuit
-breakers, so a broken third-party extension can't take down the harness.
+OPC has a capability-routed extension surface. Extensions live in
+`~/.claude/skills/opc-extension/<name>/` — each with `ext.json` (capability
+declarations) + `hook.mjs` exporting any of `promptAppend` / `verdictAppend`
+/ `executeRun` / `artifactEmit` hooks. No fork, no rebuild. Hooks are
+sandboxed via per-extension timeouts + circuit breakers, so a broken
+third-party extension can't take down the harness.
+
+The companion repo **[opc-extensions](https://github.com/iamtouchskyer/opc-extensions)** ships 4 extensions: `design-intelligence` (theme injection + design coverage + VLM visual eval), `git-changeset-review`, `memex-recall`, and `session-logex`.
 
 Full authoring guide: **[docs/extension-authoring.md](docs/extension-authoring.md)** — zero-OPC-context
 quickstart + reference, plus a starter template at `examples/extensions/_starter/`.
@@ -166,10 +181,10 @@ Available immediately, no configuration needed.
 ## Testing
 
 ```bash
-bash test/test-harness.sh
+bash test/run-all.sh
 ```
 
-34 end-to-end tests covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, and plan parsing.
+29 test suites covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, and pipeline E2E lint.
 
 ## Reproducing benchmarks
 
@@ -186,7 +201,7 @@ node bin/opc-harness.mjs init --flow review --entry review --dir .harness --no-e
 node bin/opc-harness.mjs init --flow review --entry review --dir .harness --extensions visual-check,a11y
 ```
 
-Priority order: `OPC_DISABLE_EXTENSIONS=1` env var > `--no-extensions` CLI flag > `--extensions foo,bar` whitelist > config in `.opc/config.json` and `~/.opc/config.json`. See `docs/specs/2026-04-16-opc-extension-system-design.md` for the full contract.
+Priority order: `OPC_DISABLE_EXTENSIONS=1` env var > `--no-extensions` CLI flag > `--extensions foo,bar` whitelist > config in `~/.claude/skills/opc-extension/config.json`. See `docs/specs/2026-04-16-opc-extension-system-design.md` for the full contract.
 
 **Note:** `bash test/run-all.sh` runs OPC's own internal test suite, which includes tests that intentionally *load* extensions to exercise the system. Don't set `OPC_DISABLE_EXTENSIONS=1` when running the suite — use the bypasses only on real benchmarking / workflow invocations.
 
