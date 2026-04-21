@@ -51,6 +51,10 @@ const HAS_CONCRETE_TEST = /\b(returns|outputs|responds with|status code|HTTP \d|
 // ── Manual-only verification ───────────────────────────────────
 const MANUAL_ONLY = /\b(manual inspection|code review|looks correct|it should be obvious|visually inspect)\b/i;
 
+// ── Pipeline E2E trigger detection ────────────────────────────
+const PIPELINE_KEYWORDS = /\b(pipeline|cron|webhook|ci\/?cd|deploy|end-to-end|integration|automated trigger)\b/i;
+const E2E_TRIGGER_PHRASES = /\b(live trigger|end-to-end trigger|e2e trigger|live verification|live-trigger|e2e-trigger|upstream.*trigger|trigger.*downstream)\b/i;
+
 // ── Run all checks ─────────────────────────────────────────────
 export function runLint(text, tier) {
   const sections = extractSections(text);
@@ -167,6 +171,18 @@ export function runLint(text, tier) {
       if (sim > 0.8) {
         fail("outcomes-unique", `${outcomes[i].id} and ${outcomes[j].id} are >80% similar — merge or differentiate`);
       }
+    }
+  }
+
+  // 12. pipeline-e2e-trigger — tasks involving pipelines must have an e2e live-trigger OUT
+  checksRun++;
+  const outcomesText = outcomes.map(o => o.text).join(" ");
+  if (PIPELINE_KEYWORDS.test(outcomesText)) {
+    const hasE2eTriggerOut = outcomes.some(o => E2E_TRIGGER_PHRASES.test(o.text));
+    if (!hasE2eTriggerOut) {
+      fail("pipeline-e2e-trigger",
+        "task involves pipeline/cron/webhook/deploy but no OUT-N contains an end-to-end live trigger — " +
+        "add an OUT requiring a real upstream-to-downstream trigger verification (not just per-node PASS)");
     }
   }
 

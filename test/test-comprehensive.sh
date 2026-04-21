@@ -301,8 +301,8 @@ cat > plan.md << 'EOF'
   - eval: check quality
 EOF
 
-R=$(opc init-loop --plan plan.md --dir .harness)
-check_json "init-loop parses plan" "d['initialized']==True and d['total_units']==2" "$R"
+R=$(opc init-loop --skip-scope --plan plan.md --dir .harness)
+check_json "init-loop --skip-scope parses plan" "d['initialized']==True and d['total_units']==2" "$R"
 
 R=$(opc next-tick --dir .harness)
 check_json "next-tick returns first unit" "d['next_unit']=='T1.1'" "$R"

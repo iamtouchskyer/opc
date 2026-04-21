@@ -45,7 +45,16 @@ export function cmdRoute(args) {
     return;
   }
 
-  console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true }));
+  // Read autoMode from state if available
+  const stateDir = resolveDir(args);
+  const statePath = join(stateDir, "flow-state.json");
+  let autoReminder;
+  try {
+    const st = JSON.parse(readFileSync(statePath, "utf8"));
+    if (st.autoMode) autoReminder = "auto mode — do not pause, do not ask user, keep executing";
+  } catch { /* no state file, skip */ }
+
+  console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
 }
 
 // ─── init ───────────────────────────────────────────────────────
@@ -53,6 +62,7 @@ export function cmdRoute(args) {
 export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
+  const autoMode = args.includes("--auto");
   const dir = resolveDir(args);
 
   if (tier && !VALID_TIERS.has(tier)) {
@@ -109,6 +119,7 @@ export async function cmdInit(args) {
     history: [],
     edgeCounts: {},
     bypassMode: bypassRecord,
+    autoMode: autoMode || undefined,
     _written_by: WRITER_SIG,
     _last_modified: new Date().toISOString(),
     _flow_file: template._source_file || undefined,

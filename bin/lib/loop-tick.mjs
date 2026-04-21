@@ -4,7 +4,7 @@
 import { readFileSync, appendFileSync, existsSync, statSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
-import { parsePlan, hashContent, getGitHeadHash } from "./loop-helpers.mjs";
+import { parsePlan, hashContent, getGitHeadHash, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 
@@ -135,6 +135,20 @@ export function cmdCompleteTick(args) {
     }
   }
 
+  // ── Scope coverage check on final tick ──
+  const skipScopeCheck = args.includes("--skip-scope-check");
+  if (nextUnit === null && state._task_scope && state._task_scope.length > 0 && !skipScopeCheck) {
+    const tickHistory = [...(state._tick_history || []), { unit, tick: (state.tick || 0) + 1, status, verdict: reviewVerdict, description: description || undefined }];
+    const uncovered = checkScopeCoverage(state._task_scope, tickHistory, allUnits);
+    if (uncovered.length > 0) {
+      errors.push(
+        `pipeline cannot complete — ${uncovered.length} scope item(s) not covered by any completed unit: ${uncovered.map(s => s.id).join(", ")}. ` +
+        `Uncovered: ${uncovered.map(s => `${s.id}: ${s.text}`).join("; ")}. ` +
+        `Use --skip-scope-check to bypass.`
+      );
+    }
+  }
+
   // Check for errors accumulated by summary lint
   if (errors.length > 0) {
     console.log(JSON.stringify({ completed: false, errors, warnings: warnings.length > 0 ? warnings : undefined }));
@@ -155,7 +169,7 @@ export function cmdCompleteTick(args) {
   state._git_head = getGitHeadHash();
 
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
-  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict });
+  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict, description: description || undefined });
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 

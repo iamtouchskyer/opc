@@ -4,7 +4,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { parsePlan, hashContent } from "./loop-helpers.mjs";
+import { parsePlan, hashContent, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 
@@ -244,12 +244,26 @@ export function cmdNextTick(args) {
     // Carry-forward: seed next loop with open backlog items
     _writeNextLoopSeed(dir, state, backlogSummary);
 
+    // Scope coverage check — informational at next-tick level (hard gate is in complete-tick)
+    let uncoveredScope = undefined;
+    if (state._task_scope && state._task_scope.length > 0) {
+      const planFile = state.plan_file || join(dir, "plan.md");
+      if (existsSync(planFile)) {
+        const planUnits = parsePlan(readFileSync(planFile, "utf8"));
+        const uncovered = checkScopeCoverage(state._task_scope, state._tick_history || [], planUnits);
+        if (uncovered.length > 0) {
+          uncoveredScope = uncovered.map(s => `${s.id}: ${s.text}`);
+        }
+      }
+    }
+
     console.log(JSON.stringify({
       ready: false,
       terminate: true,
       reason: "next_unit is null — pipeline complete",
       total_ticks: state.tick,
       backlog: backlogSummary,
+      uncovered_scope: uncoveredScope,
       hint: backlogSummary && backlogSummary.open_items > 0
         ? `\u26a0\ufe0f ${backlogSummary.open_items} open backlog items — review before closing`
         : undefined,
@@ -332,6 +346,7 @@ export function cmdNextTick(args) {
       handler: handler || undefined,
       context_hints: contextHints,
       recommended_flow: contextHints.recommended_flow,
+      reminder: state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;

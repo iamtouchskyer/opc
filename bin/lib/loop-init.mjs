@@ -5,7 +5,7 @@ import { readFileSync, existsSync, mkdirSync } from "fs";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
 import {
-  parsePlan, validatePlanStructure, hashContent,
+  parsePlan, validatePlanStructure, hashContent, parseTaskScope,
   getGitHeadHash, detectPreCommitHooks, detectTestScript,
 } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
@@ -80,6 +80,18 @@ export function cmdInitLoop(args) {
     return;
   }
 
+  // ── G2.5: Task Scope validation ──────────────────────────────
+  const skipScope = args.includes("--skip-scope");
+  const taskScope = parseTaskScope(planText);
+  if (taskScope.length === 0 && !skipScope) {
+    console.log(JSON.stringify({
+      initialized: false,
+      errors: ["plan.md has no '## Task Scope' section with SCOPE-N items — every plan must declare what the original task requires so the harness can verify coverage at pipeline end"],
+      hint: "add '## Task Scope' with '- SCOPE-1: ...' items, or pass --skip-scope to bypass",
+    }));
+    return;
+  }
+
   // ── G3: Criteria-lint gate ────────────────────────────────────
   const criteriaFile = join(dir, "acceptance-criteria.md");
   const initWarnings = [...structureWarnings];
@@ -143,6 +155,8 @@ export function cmdInitLoop(args) {
     _max_duration_hours: 24,
     _flow_template: flowTemplate || undefined,
     _flow_file: flowFile ? resolve(flowFile) : undefined,
+    _task_scope: taskScope.length > 0 ? taskScope : undefined,
+    autoMode: args.includes("--auto") || undefined,
   };
 
   // Parse --handlers JSON if provided (unit type → skill/command dispatch)

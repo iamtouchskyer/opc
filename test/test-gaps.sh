@@ -777,22 +777,22 @@ echo ""
 echo "=== GAP-12: Loop-init gaps ==="
 # ═══════════════════════════════════════════════════════════════
 
-echo "--- 12.1: init-loop plan not found ---"
+echo "--- 12.1: init-loop --skip-scope plan not found ---"
 rm -rf .h-li1 && mkdir -p .h-li1
-OUT=$($HARNESS init-loop --plan /nonexistent/plan.md --dir .h-li1 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan /nonexistent/plan.md --dir .h-li1 2>/dev/null)
 assert_field_eq "plan not found" "$OUT" "initialized" "false"
 assert_contains "not found msg" "$OUT" "plan file not found"
 
 echo ""
-echo "--- 12.2: init-loop empty plan ---"
+echo "--- 12.2: init-loop --skip-scope empty plan ---"
 rm -rf .h-li2 && mkdir -p .h-li2
 echo "nothing here" > .h-li2/plan.md
-OUT=$($HARNESS init-loop --plan .h-li2/plan.md --dir .h-li2 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-li2/plan.md --dir .h-li2 2>/dev/null)
 assert_field_eq "empty plan" "$OUT" "initialized" "false"
 assert_contains "no units" "$OUT" "no units"
 
 echo ""
-echo "--- 12.3: init-loop corrupt existing state overwritten ---"
+echo "--- 12.3: init-loop --skip-scope corrupt existing state overwritten ---"
 rm -rf .h-li3 && mkdir -p .h-li3
 # Create corrupt loop-state.json
 echo "not json" > .h-li3/loop-state.json
@@ -801,16 +801,16 @@ cat > .h-li3/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review it
 PLAN
-OUT=$($HARNESS init-loop --plan .h-li3/plan.md --dir .h-li3 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-li3/plan.md --dir .h-li3 2>/dev/null)
 assert_field_eq "corrupt overwritten" "$OUT" "initialized" "true"
 
 echo ""
-echo "--- 12.4: init-loop plan ends with implement ---"
+echo "--- 12.4: init-loop --skip-scope plan ends with implement ---"
 rm -rf .h-li4 && mkdir -p .h-li4
 cat > .h-li4/plan.md << 'PLAN'
 - F1.1: implement — build it
 PLAN
-OUT=$($HARNESS init-loop --plan .h-li4/plan.md --dir .h-li4 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-li4/plan.md --dir .h-li4 2>/dev/null)
 assert_field_eq "trailing impl" "$OUT" "initialized" "false"
 assert_contains "no review follows" "$OUT" "no review"
 
@@ -823,7 +823,7 @@ cat > .h-li5/plan.md << 'PLAN'
 - F1.2: review — review
 - F1.3: fix — fix findings
 PLAN
-OUT=$($HARNESS init-loop --plan .h-li5/plan.md --dir .h-li5 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-li5/plan.md --dir .h-li5 2>/dev/null)
 assert_field_eq "fix init ok" "$OUT" "initialized" "true"
 assert_contains "fix verify warn" "$OUT" "verify"
 
@@ -839,7 +839,7 @@ cat > .h-lt1/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt1/plan.md --dir .h-lt1 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt1/plan.md --dir .h-lt1 >/dev/null 2>/dev/null
 OUT=$($HARNESS complete-tick --unit F1.1 --status invalid --artifacts dummy.txt --dir .h-lt1 2>/dev/null)
 assert_field_eq "invalid status" "$OUT" "completed" "false"
 assert_contains "invalid status msg" "$OUT" "invalid status"
@@ -853,7 +853,7 @@ cat > .h-lt2/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt2/plan.md --dir .h-lt2 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt2/plan.md --dir .h-lt2 >/dev/null 2>/dev/null
 OUT=$($HARNESS complete-tick --unit F1.1 --status failed --artifacts dummy.txt --description "it broke" --dir .h-lt2 2>/dev/null)
 assert_field_eq "failed completed" "$OUT" "completed" "true"
 assert_field_eq "failed same unit" "$OUT" "next_unit" "F1.1"
@@ -866,7 +866,7 @@ cat > .h-lt3/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt3/plan.md --dir .h-lt3 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt3/plan.md --dir .h-lt3 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-lt3/loop-state.json'))
@@ -886,7 +886,7 @@ cat > .h-lt4/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt4/plan.md --dir .h-lt4 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt4/plan.md --dir .h-lt4 >/dev/null 2>/dev/null
 OUT=$($HARNESS complete-tick --unit F1.1 --artifacts /nonexistent/file.json --dir .h-lt4 2>/dev/null)
 assert_field_eq "artifact not found" "$OUT" "completed" "false"
 assert_contains "not found msg" "$OUT" "artifact not found"
@@ -931,7 +931,7 @@ cat > .h-lt5/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt5/plan.md --dir .h-lt5 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt5/plan.md --dir .h-lt5 >/dev/null 2>/dev/null
 echo "content" > ui-artifact.json
 OUT=$($HARNESS complete-tick --unit F1.1 --artifacts ui-artifact.json --dir .h-lt5 2>/dev/null)
 assert_contains "no screenshot" "$OUT" "screenshot"
@@ -945,7 +945,7 @@ cat > .h-lt6/plan.md << 'PLAN'
 - F1.2: review — review
 - F1.3: fix — fix findings
 PLAN
-$HARNESS init-loop --plan .h-lt6/plan.md --dir .h-lt6 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt6/plan.md --dir .h-lt6 >/dev/null 2>/dev/null
 
 # Simulate: implement done, review done (with eval hash stored), now fix
 echo "original eval content" > eval-engineer.md
@@ -998,7 +998,7 @@ rm -rf .h-lt7 && mkdir -p .h-lt7
 cat > .h-lt7/plan.md << 'PLAN'
 - F1.1: e2e — end to end test
 PLAN
-$HARNESS init-loop --plan .h-lt7/plan.md --dir .h-lt7 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt7/plan.md --dir .h-lt7 >/dev/null 2>/dev/null
 OUT=$($HARNESS complete-tick --unit F1.1 --dir .h-lt7 2>/dev/null)
 assert_field_eq "e2e no artifacts" "$OUT" "completed" "false"
 assert_contains "e2e needs evidence" "$OUT" "verification evidence"
@@ -1011,7 +1011,7 @@ cat > .h-lt8/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt8/plan.md --dir .h-lt8 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt8/plan.md --dir .h-lt8 >/dev/null 2>/dev/null
 # Skip to F1.2
 python3 -c "
 import json
@@ -1036,7 +1036,7 @@ cat > .h-lt9/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-lt9/plan.md --dir .h-lt9 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-lt9/plan.md --dir .h-lt9 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-lt9/loop-state.json'))
@@ -1074,7 +1074,7 @@ cat > .h-la2/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la2/plan.md --dir .h-la2 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la2/plan.md --dir .h-la2 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la2/loop-state.json'))
@@ -1094,7 +1094,7 @@ cat > .h-la3/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la3/plan.md --dir .h-la3 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la3/plan.md --dir .h-la3 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la3/loop-state.json'))
@@ -1120,7 +1120,7 @@ cat > .h-la4/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la4/plan.md --dir .h-la4 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la4/plan.md --dir .h-la4 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la4/loop-state.json'))
@@ -1148,7 +1148,7 @@ cat > .h-la5/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la5/plan.md --dir .h-la5 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la5/plan.md --dir .h-la5 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la5/loop-state.json'))
@@ -1182,7 +1182,7 @@ cat > .h-la6/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la6/plan.md --dir .h-la6 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la6/plan.md --dir .h-la6 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la6/loop-state.json'))
@@ -1204,7 +1204,7 @@ cat > .h-la7/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-la7/plan.md --dir .h-la7 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-la7/plan.md --dir .h-la7 >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-la7/loop-state.json'))
@@ -1280,7 +1280,7 @@ cat > .h-pkg/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-OUT=$($HARNESS init-loop --plan .h-pkg/plan.md --dir .h-pkg 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-pkg/plan.md --dir .h-pkg 2>/dev/null)
 assert_contains "test script detected" "$OUT" "test script"
 assert_contains "lint script detected" "$OUT" "lint script"
 
@@ -1309,7 +1309,7 @@ cat > .h-hd/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .h-hd/plan.md --dir .h-hd >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-hd/plan.md --dir .h-hd >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-hd/loop-state.json'))

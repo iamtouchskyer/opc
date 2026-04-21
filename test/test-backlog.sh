@@ -56,7 +56,7 @@ setup_at_review() {
 - F1.2: review-a — Review feature
   - eval: Check quality
 PLAN
-  $HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+  $HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
   $HARNESS next-tick --dir .harness >/dev/null 2>/dev/null
   # Complete implement tick — use unique content per call to ensure git diff
   echo "code-$(date +%s%N)" > feature.js

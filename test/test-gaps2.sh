@@ -573,7 +573,7 @@ cat > "$D22/plan.md" << 'PLAN'
 - F1.2: review — review the thing
 PLAN
 cd "$D22"
-OUT=$($HARNESS init-loop --plan "$D22/plan.md" --dir . 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan "$D22/plan.md" --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['total_units']" "2" "parsePlan handles non-matching continuation"
 rm -rf "$D22"
 cd /tmp
@@ -589,9 +589,9 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-OUT=$($HARNESS init-loop --plan plan.md --dir . 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan plan.md --dir . 2>/dev/null)
 # Should succeed (git hash null is fine)
-assert_field_eq "$OUT" "['initialized']" "True" "init-loop works in non-git dir"
+assert_field_eq "$OUT" "['initialized']" "True" "init-loop --skip-scope works in non-git dir"
 rm -rf "$D23"
 cd /tmp
 
@@ -606,7 +606,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 # Complete tick 1 to move to F1.1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Create artifact with old timestamp
@@ -638,7 +638,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Artifact with test fields but NO _command
 cat > result.json << 'EOF'
@@ -675,7 +675,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Create artifact and backdate mtime
 cat > result.json << 'EOF'
@@ -705,7 +705,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — code review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # First complete F1.1
 cat > result.json << 'EOF'
@@ -761,7 +761,7 @@ cd "$D28"
 cat > plan.md << 'PLAN'
 - F1.1: review — review things
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Tamper: set _tick_history to a string
 python3 -c "
@@ -801,7 +801,7 @@ cd "$D29"
 cat > plan.md << 'PLAN'
 - F1.1: review — review things
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Make progress.md a directory (can't write to it)
 mkdir -p progress.md 2>/dev/null || true
@@ -836,7 +836,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 echo '{"tests_run":1,"passed":1,"_command":"test"}' > result.json
 git init -q . 2>/dev/null || true
@@ -903,7 +903,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 # Tamper _started_at to 25 hours ago
 python3 -c "
 import json, datetime
@@ -929,7 +929,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 python3 -c "
 import json
 s=json.load(open('loop-state.json'))
@@ -954,7 +954,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 # Set status to in_progress (simulating concurrent tick)
 python3 -c "
 import json
@@ -978,7 +978,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 # Set next_unit to something not in plan
 python3 -c "
 import json

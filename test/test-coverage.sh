@@ -294,7 +294,7 @@ cat > .h-stall/plan.md << 'PLAN'
 - F1.2: review — review it
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-stall/plan.md --dir .h-stall >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-stall/plan.md --dir .h-stall >/dev/null 2>/dev/null
 # Simulate 3 completed ticks for F1.1
 python3 -c "
 import json
@@ -324,7 +324,7 @@ cat > .h-osc/plan.md << 'PLAN'
 - F1.2: review — review it
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-osc/plan.md --dir .h-osc >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-osc/plan.md --dir .h-osc >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-osc/loop-state.json'))
@@ -360,7 +360,7 @@ cat > .h-wall/plan.md << 'PLAN'
 - F1.2: review — review it
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-wall/plan.md --dir .h-wall >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-wall/plan.md --dir .h-wall >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-wall/loop-state.json'))
@@ -390,7 +390,7 @@ cat > .h-fix/plan.md << 'PLAN'
 - F1.3: fix — fix findings
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-fix/plan.md --dir .h-fix >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-fix/plan.md --dir .h-fix >/dev/null 2>/dev/null
 # Complete F1.1 and F1.2, arrive at F1.3
 python3 -c "
 import json, subprocess
@@ -760,7 +760,7 @@ cat > .h-drift/plan.md << 'PLAN'
 - F1.2: review — review it
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-drift/plan.md --dir .h-drift >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-drift/plan.md --dir .h-drift >/dev/null 2>/dev/null
 # Complete F1.1
 $HARNESS complete-tick --unit F1.1 --artifacts dummy.txt --description "built" --dir .h-drift >/dev/null 2>/dev/null
 # Modify plan after init
@@ -784,7 +784,7 @@ cat > .h-unknown/plan.md << 'PLAN'
 - F1.2: review — review it
   - verify: echo ok
 PLAN
-$HARNESS init-loop --plan .h-unknown/plan.md --dir .h-unknown >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .h-unknown/plan.md --dir .h-unknown >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.h-unknown/loop-state.json'))
@@ -810,7 +810,7 @@ cat > .h-dup/plan.md << 'PLAN'
 - F1.1: review — review it
   - verify: echo ok
 PLAN
-OUT=$($HARNESS init-loop --plan .h-dup/plan.md --dir .h-dup 2>&1)
+OUT=$($HARNESS init-loop --skip-scope --plan .h-dup/plan.md --dir .h-dup 2>&1)
 assert_contains "dup warning" "$OUT" "duplicate\|Duplicate"
 
 # Cleanup test flows

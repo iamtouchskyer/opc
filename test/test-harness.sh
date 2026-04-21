@@ -57,12 +57,12 @@ setup_loop() {
 - F1.2: review-a — Review
   - eval: Check quality
 PLAN
-  $HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+  $HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
   $HARNESS next-tick --dir .harness >/dev/null 2>/dev/null
 }
 
 # ═══════════════════════════════════════════════════════════════
-echo "=== TEST GROUP 1: init-loop ==="
+echo "=== TEST GROUP 1: init-loop --skip-scope ==="
 # ═══════════════════════════════════════════════════════════════
 
 echo "--- 1.1: Basic init with verify/eval ---"
@@ -77,7 +77,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.3: fix-backend — Fix findings
   - verify: npm test still passes
 PLAN
-OUT=$($HARNESS init-loop --dir .harness --plan .harness/plan.md 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_field_eq "3 units" "$OUT" "total_units" "3"
 assert_output_contains "external_validators in output" "$OUT" "external_validators"
@@ -90,7 +90,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.2: review-backend — Review stuff
 - F1.3: fix-backend — Fix stuff
 PLAN
-OUT=$($HARNESS init-loop --dir .harness --plan .harness/plan.md 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md 2>/dev/null)
 assert_output_contains "warns missing verify" "$OUT" "have no verify"
 assert_output_contains "warns missing eval" "$OUT" "have no eval"
 
@@ -101,7 +101,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.1: implement-a — Build A
 - F1.2: implement-b — Build B
 PLAN
-OUT=$($HARNESS init-loop --dir .harness --plan .harness/plan.md 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md 2>/dev/null)
 assert_field_eq "rejects bad structure" "$OUT" "initialized" "false"
 assert_output_contains "explains missing review" "$OUT" "without a review unit"
 
@@ -112,8 +112,8 @@ cat > .harness/plan.md << 'PLAN'
 - F1.1: implement-a — Build
 - F1.2: review-a — Review
 PLAN
-$HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
-OUT=$($HARNESS init-loop --dir .harness --plan .harness/plan.md 2>/dev/null)
+$HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+OUT=$($HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md 2>/dev/null)
 assert_field_eq "rejects double init" "$OUT" "initialized" "false"
 assert_output_contains "explains active loop" "$OUT" "already exists"
 
@@ -124,7 +124,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.1: implement-a — Build
 - F1.2: review-a — Review
 PLAN
-$HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
 NONCE=$(python3 -c "import json; d=json.load(open('.harness/loop-state.json')); print(d.get('_write_nonce','MISSING'))")
 if [ "$NONCE" != "MISSING" ] && [ ${#NONCE} -eq 16 ]; then
   echo "  ✅ write nonce present (16 hex chars)"
@@ -227,7 +227,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.2: review-a — Review
   - eval: check
 PLAN
-$HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
 # Set tick at limit (properly preserving nonce/sig)
 python3 -c "
 import json
@@ -249,7 +249,7 @@ cat > .harness/plan.md << 'PLAN'
 - F1.2: review-a — Review
   - eval: check
 PLAN
-$HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
 python3 -c "
 import json
 d = json.load(open('.harness/loop-state.json'))
@@ -338,7 +338,7 @@ cat > .harness/plan.md << 'PLAN'
   - eval: Check for SQL injection
 - F1.3: fix-backend — Address findings
 PLAN
-OUT=$($HARNESS init-loop --dir .harness --plan .harness/plan.md 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 # F1.3 (fix) has no verify line → should warn about F1.3
 assert_output_contains "warns F1.3 missing verify" "$OUT" "F1.3"

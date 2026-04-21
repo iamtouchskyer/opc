@@ -278,7 +278,8 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
   }
   console.error("");
 
-  console.log(JSON.stringify({ allowed: true, reason: "ok", next: to, runId, state }));
+  const autoReminder = state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined;
+  console.log(JSON.stringify({ allowed: true, reason: "ok", next: to, runId, state, ...(autoReminder ? { reminder: autoReminder } : {}) }));
 }
 
 // ─── validate-chain ─────────────────────────────────────────────

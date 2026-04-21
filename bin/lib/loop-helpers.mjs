@@ -74,6 +74,66 @@ export function validatePlanStructure(units) {
   return { errors, warnings };
 }
 
+// ── Task Scope parsing ──────────────────────────────────────────
+
+export function parseTaskScope(planText) {
+  const scopeItems = [];
+  const sections = planText.split(/^## /m);
+  let scopeBody = null;
+  for (const sec of sections) {
+    if (sec.trimStart().startsWith("Task Scope")) {
+      const nlIdx = sec.indexOf("\n");
+      scopeBody = nlIdx >= 0 ? sec.slice(nlIdx + 1) : "";
+      break;
+    }
+  }
+  if (scopeBody === null) return scopeItems;
+
+  const re = /^-\s+SCOPE-(\d+):\s*(.+)$/gm;
+  let m;
+  while ((m = re.exec(scopeBody)) !== null) {
+    scopeItems.push({ id: `SCOPE-${m[1]}`, text: m[2].trim() });
+  }
+  return scopeItems;
+}
+
+// ── Scope coverage check ────────────────────────────────────────
+
+export function checkScopeCoverage(scopeItems, tickHistory, planUnits) {
+  // Build set of completed unit descriptions (from tick history + plan + tick descriptions)
+  const completedDescriptions = [];
+  for (const tick of tickHistory) {
+    if (tick.status === "completed" || tick.verdict === "PASS") {
+      const unit = planUnits.find(u => u.id === tick.unit);
+      if (unit) completedDescriptions.push(unit.description.toLowerCase());
+      // Also include unit id itself for explicit SCOPE-N references
+      completedDescriptions.push(tick.unit.toLowerCase());
+      // Include tick description if available (set by --description flag)
+      if (tick.description) completedDescriptions.push(tick.description.toLowerCase());
+    }
+  }
+  const allCompletedText = completedDescriptions.join(" ");
+
+  const uncovered = [];
+  for (const scope of scopeItems) {
+    // Check 1: explicit SCOPE-N reference in any completed unit description
+    if (allCompletedText.includes(scope.id.toLowerCase())) continue;
+
+    // Check 2: keyword overlap (Jaccard > 0.3)
+    const scopeWords = new Set(scope.text.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    let matched = false;
+    for (const desc of completedDescriptions) {
+      const descWords = new Set(desc.split(/\s+/).filter(w => w.length > 2));
+      const intersection = new Set([...scopeWords].filter(w => descWords.has(w)));
+      const union = new Set([...scopeWords, ...descWords]);
+      const similarity = union.size === 0 ? 0 : intersection.size / scopeWords.size;
+      if (similarity >= 0.3) { matched = true; break; }
+    }
+    if (!matched) uncovered.push(scope);
+  }
+  return uncovered;
+}
+
 // ── Content hashing ─────────────────────────────────────────────
 
 export function hashContent(text) {

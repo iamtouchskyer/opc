@@ -236,17 +236,17 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-OUT=$($HARNESS init-loop --plan plan.md --dir . 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan plan.md --dir . 2>/dev/null)
 assert_contains "$OUT" "typecheck" "type-check key detected as typecheck"
 # Now test "tsc" key
 echo '{"scripts": {"tsc": "tsc"}}' > package.json
 rm -f loop-state.json
-OUT=$($HARNESS init-loop --plan plan.md --dir . 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan plan.md --dir . 2>/dev/null)
 assert_contains "$OUT" "typecheck" "tsc key detected as typecheck"
 # Also test "lint" via "eslint" key
 echo '{"scripts": {"eslint": "eslint ."}}' > package.json
 rm -f loop-state.json
-OUT=$($HARNESS init-loop --plan plan.md --dir . 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan plan.md --dir . 2>/dev/null)
 assert_contains "$OUT" "lint" "eslint key detected as lint"
 rm -rf "$D"
 cd /tmp
@@ -262,7 +262,7 @@ cd "$D"
 cat > plan.md << 'PLAN'
 - F1.1: review — review things
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Delete plan so unitType becomes "unknown"
 rm plan.md
@@ -295,7 +295,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 cat > result.json << EOF
@@ -321,7 +321,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement-frontend — build UI
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 TS=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 cat > result.json << EOF
@@ -337,7 +337,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement-fe — build UI
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 git add -A && git commit -q -m "update" 2>/dev/null || true
 OUT=$($HARNESS complete-tick --unit F1.1 --artifacts result.json --dir . 2>/dev/null)
@@ -448,7 +448,7 @@ cd "$D"
 cat > plan.md << 'PLAN'
 - F1.1: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Delete plan — _plan_hash exists but file doesn't
 rm plan.md
@@ -481,7 +481,7 @@ cat > plan.md << 'PLAN'
 - F1.2: implement — build
 - F1.3: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 # Now rewrite plan WITHOUT F1.1 and update the plan hash so tamper check passes
 cat > plan.md << 'PLAN'
@@ -524,7 +524,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 $HARNESS next-tick --dir . > /dev/null 2>&1
 echo '{"tests_run":1,"passed":1,"_command":"t"}' > result.json
 git init -q . 2>/dev/null || true
@@ -558,7 +558,7 @@ cat > plan.md << 'PLAN'
 - F1.1: implement — build
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan plan.md --dir . > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --plan plan.md --dir . > /dev/null 2>&1
 # State has tick=0, _tick_history=[] → should proceed without stall/oscillation
 OUT=$($HARNESS next-tick --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['ready']" "True" "empty history → no stall/oscillation"

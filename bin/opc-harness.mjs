@@ -18,6 +18,7 @@ import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
 import { cmdRunbook } from "./lib/runbook-commands.mjs";
+import { cmdClean } from "./lib/clean.mjs";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -55,6 +56,7 @@ switch (command) {
   case "extension-artifact":    await cmdExtensionArtifact(args); break;
   case "config":                await cmdConfigResolve(args);    break;
   case "runbook":               cmdRunbook(args);                break;
+  case "clean":                 cmdClean(args);                  break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -118,6 +120,9 @@ switch (command) {
     console.log("  complete-tick --unit <id> --artifacts <a,b> --description <text> [--dir <p>]");
     console.log("                                                     Complete tick with evidence");
     console.log("  next-tick [--dir <p>]                              Get next unit or terminate");
+    console.log();
+    console.log("Housekeeping:");
+    console.log("  clean [<target-dir>] [--dry-run]                   Remove .harness* dirs from target (default: cwd)");
     console.log();
     console.log("All output is JSON to stdout. Errors go to stderr.");
     break;

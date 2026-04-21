@@ -224,7 +224,7 @@ mkdir -p .harness
 cat > .harness/plan.md << 'EOF'
 - u1.1: foobar — do something unknown type
 EOF
-$HARNESS init-loop --dir .harness > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --dir .harness > /dev/null 2>&1
 $HARNESS next-tick --dir .harness > /dev/null 2>&1
 echo '{"pass": true}' > artifact.json
 OUT=$($HARNESS complete-tick --dir .harness --unit u1.1 --status completed --artifacts "$(pwd)/artifact.json" 2>/dev/null)
@@ -357,8 +357,8 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — build something
 - u1.2: review — review it
 EOF
-OUT=$($HARNESS init-loop --dir .harness 2>/dev/null)
-assert_field_eq "$OUT" "['initialized']" "True" "10.1a: init-loop works without package.json"
+OUT=$($HARNESS init-loop --skip-scope --dir .harness 2>/dev/null)
+assert_field_eq "$OUT" "['initialized']" "True" "10.1a: init-loop --skip-scope works without package.json"
 
 echo ""
 echo "── 10.2: detectTestScript with corrupt package.json"
@@ -370,8 +370,8 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — build something
 - u1.2: review — review it
 EOF
-OUT=$($HARNESS init-loop --dir .harness 2>/dev/null)
-assert_field_eq "$OUT" "['initialized']" "True" "10.2a: init-loop works with corrupt package.json"
+OUT=$($HARNESS init-loop --skip-scope --dir .harness 2>/dev/null)
+assert_field_eq "$OUT" "['initialized']" "True" "10.2a: init-loop --skip-scope works with corrupt package.json"
 
 echo ""
 echo "── 10.3: detectPreCommitHooks returns true when .husky/pre-commit exists"
@@ -385,8 +385,8 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — test hook detection
 - u1.2: review — verify
 EOF
-OUT=$($HARNESS init-loop --dir .harness 2>/dev/null)
-assert_field_eq "$OUT" "['initialized']" "True" "10.3a: init-loop succeeds with pre-commit hook"
+OUT=$($HARNESS init-loop --skip-scope --dir .harness 2>/dev/null)
+assert_field_eq "$OUT" "['initialized']" "True" "10.3a: init-loop --skip-scope succeeds with pre-commit hook"
 STATE=$(cat .harness/loop-state.json)
 HOOKS=$(echo "$STATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('_external_validators',{}).get('pre_commit_hooks', False))" 2>/dev/null || echo "__ERROR__")
 if [ "$HOOKS" = "True" ]; then
@@ -487,7 +487,7 @@ echo "=== PART 14: 🔵 LOW — loop-init getGitHeadHash null ==="
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "── 14.1: init-loop in non-git dir → _git_head is null"
+echo "── 14.1: init-loop --skip-scope in non-git dir → _git_head is null"
 D=$(mktemp -d)
 cd "$D"
 rm -rf .git
@@ -496,8 +496,8 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — build
 - u1.2: review — check
 EOF
-OUT=$($HARNESS init-loop --dir .harness 2>/dev/null)
-assert_field_eq "$OUT" "['initialized']" "True" "14.1a: init-loop works in non-git dir"
+OUT=$($HARNESS init-loop --skip-scope --dir .harness 2>/dev/null)
+assert_field_eq "$OUT" "['initialized']" "True" "14.1a: init-loop --skip-scope works in non-git dir"
 STATE=$(cat .harness/loop-state.json)
 GIT_HEAD=$(echo "$STATE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('_git_head'))" 2>/dev/null || echo "__ERROR__")
 if [ "$GIT_HEAD" = "None" ]; then

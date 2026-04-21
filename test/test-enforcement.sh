@@ -79,7 +79,7 @@ setup_last_unit() {
   - verify: echo ok
 - F1.2: review — review
 PLAN
-  $HARNESS init-loop --plan "$dir/plan.md" --dir "$dir" >/dev/null 2>/dev/null
+  $HARNESS init-loop --skip-scope --plan "$dir/plan.md" --dir "$dir" >/dev/null 2>/dev/null
   patch_state "$dir" "tick=1" "next_unit='F1.2'" "status='in_progress'" "_written_by='opc-harness'"
   # Create eval artifacts for review unit
   mkdir -p "$dir/evals"
@@ -98,7 +98,7 @@ cat > .e1/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — code review
 PLAN
-OUT=$($HARNESS init-loop --plan .e1/plan.md --dir .e1 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e1/plan.md --dir .e1 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_contains "test coverage warning" "$OUT" "0 test/e2e/accept units"
 
@@ -113,7 +113,7 @@ cat > .e2/plan.md << 'PLAN'
   - verify: echo e2e ok
 - F1.4: review — final review
 PLAN
-OUT=$($HARNESS init-loop --plan .e2/plan.md --dir .e2 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e2/plan.md --dir .e2 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_not_contains "no test warning" "$OUT" "0 test/e2e/accept units"
 
@@ -128,7 +128,7 @@ cat > .e3/plan.md << 'PLAN'
   - eval: check it works
 - F1.4: review — final review
 PLAN
-OUT=$($HARNESS init-loop --plan .e3/plan.md --dir .e3 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e3/plan.md --dir .e3 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_not_contains "no test warning with accept" "$OUT" "0 test/e2e/accept units"
 
@@ -144,7 +144,7 @@ cat > .e4/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .e4/plan.md --dir .e4 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .e4/plan.md --dir .e4 >/dev/null 2>/dev/null
 patch_state .e4 "tick=2" "next_unit=None" "status='idle'" "_written_by='opc-harness'"
 cat > .e4/backlog.md << 'BL'
 # Backlog
@@ -184,7 +184,7 @@ cat > .e5/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .e5/plan.md --dir .e5 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .e5/plan.md --dir .e5 >/dev/null 2>/dev/null
 patch_state .e5 "tick=2" "next_unit=None" "status='idle'" "_written_by='opc-harness'" "_drain_completed=True"
 cat > .e5/backlog.md << 'BL'
 # Backlog
@@ -201,7 +201,7 @@ cat > .e6/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .e6/plan.md --dir .e6 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .e6/plan.md --dir .e6 >/dev/null 2>/dev/null
 patch_state .e6 "tick=2" "next_unit=None" "status='idle'" "_written_by='opc-harness'"
 OUT=$($HARNESS next-tick --dir .e6 2>/dev/null)
 assert_field_eq "no backlog = terminate" "$OUT" "terminate" "true"
@@ -214,7 +214,7 @@ cat > .e7/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — review
 PLAN
-$HARNESS init-loop --plan .e7/plan.md --dir .e7 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .e7/plan.md --dir .e7 >/dev/null 2>/dev/null
 patch_state .e7 "tick=2" "next_unit=None" "status='idle'" "_written_by='opc-harness'"
 cat > .e7/backlog.md << 'BL'
 # Backlog
@@ -274,7 +274,7 @@ cat > .e13/plan.md << 'PLAN'
   - verify: echo ok
 - F1.4: review — final review
 PLAN
-$HARNESS init-loop --plan .e13/plan.md --dir .e13 >/dev/null 2>/dev/null
+$HARNESS init-loop --skip-scope --plan .e13/plan.md --dir .e13 >/dev/null 2>/dev/null
 patch_state .e13 "tick=1" "next_unit='F1.2'" "status='in_progress'" "_written_by='opc-harness'"
 mkdir -p .e13/evals
 printf '%s\n' '🔵 All good' > .e13/evals/eval-fe.md
@@ -322,7 +322,7 @@ cat > .e16/plan.md << 'PLAN'
 - F1.1: implement — build feature with no verify line
 - F1.2: review — code review
 PLAN
-OUT=$($HARNESS init-loop --plan .e16/plan.md --dir .e16 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e16/plan.md --dir .e16 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_contains "verify warning" "$OUT" "no verify"
 
@@ -334,7 +334,7 @@ cat > .e17/plan.md << 'PLAN'
   - verify: echo ok
 - F1.2: review — code review with no eval line
 PLAN
-OUT=$($HARNESS init-loop --plan .e17/plan.md --dir .e17 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e17/plan.md --dir .e17 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_contains "eval warning" "$OUT" "no eval"
 
@@ -355,7 +355,7 @@ cat > .e20/plan.md << 'PLAN'
   - verify: echo e2e
 - F1.8: review — final review
 PLAN
-OUT=$($HARNESS init-loop --plan .e20/plan.md --dir .e20 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e20/plan.md --dir .e20 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_contains "ratio warning" "$OUT" "ratio"
 
@@ -376,7 +376,7 @@ cat > .e21/plan.md << 'PLAN'
   - verify: echo e2e
 - F1.8: review — final review
 PLAN
-OUT=$($HARNESS init-loop --plan .e21/plan.md --dir .e21 2>/dev/null)
+OUT=$($HARNESS init-loop --skip-scope --plan .e21/plan.md --dir .e21 2>/dev/null)
 assert_field_eq "init succeeds" "$OUT" "initialized" "true"
 assert_not_contains "no ratio warning" "$OUT" "ratio"
 

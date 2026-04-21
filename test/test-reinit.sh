@@ -47,7 +47,7 @@ setup_stalled_loop() {
 - F1.3: fix-backend — Fix findings
   - verify: npm test
 PLAN
-  $HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+  $HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
   # Manually set state to stalled (simulating 3 consecutive failures on F1.1)
   python3 -c "
 import json
@@ -66,12 +66,12 @@ json.dump(d, open('.harness/loop-state.json', 'w'), indent=2)
 }
 
 # ═══════════════════════════════════════════════════════════════
-echo "=== TEST GROUP 1: Basic reinit-loop ==="
+echo "=== TEST GROUP 1: Basic reinit-loop --skip-scope ==="
 # ═══════════════════════════════════════════════════════════════
 
 echo "--- 1.1: Successful decomposition ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement-api — Build API layer, F1.1b: implement-ui — Build UI layer, F1.1c: review-fullstack — Review both layers" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement-api — Build API layer, F1.1b: implement-ui — Build UI layer, F1.1c: review-fullstack — Review both layers" 2>/dev/null)
 assert_field_eq "reinit succeeds" "$OUT" "reinitialized" "true"
 assert_field_eq "decomposes correct unit" "$OUT" "decomposed_unit" '"F1.1"'
 assert_output_contains "has 3 sub-units" "$OUT" "F1.1a"
@@ -142,36 +142,36 @@ cat > .harness/plan.md << 'PLAN'
 - F1.1: implement-a — Build
 - F1.2: review-a — Review
 PLAN
-$HARNESS init-loop --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" 2>/dev/null)
+$HARNESS init-loop --skip-scope --dir .harness --plan .harness/plan.md >/dev/null 2>/dev/null
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" 2>/dev/null)
 assert_field_eq "rejects non-stalled" "$OUT" "reinitialized" "false"
 assert_output_contains "explains stall requirement" "$OUT" "stalled"
 
 echo ""
 echo "--- 2.2: Reject reinit with unknown unit ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit NONEXISTENT --sub-units "X.1: implement — A, X.2: review — B" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit NONEXISTENT --sub-units "X.1: implement — A, X.2: review — B" 2>/dev/null)
 assert_field_eq "rejects unknown unit" "$OUT" "reinitialized" "false"
 assert_output_contains "explains unit not found" "$OUT" "not found"
 
 echo ""
 echo "--- 2.3: Reject with <2 sub-units ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Only one" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Only one" 2>/dev/null)
 assert_field_eq "rejects single sub-unit" "$OUT" "reinitialized" "false"
 assert_output_contains "explains minimum" "$OUT" "at least 2"
 
 echo ""
 echo "--- 2.4: Reject duplicate sub-unit IDs ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — First, F1.1a: review — Duplicate" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — First, F1.1a: review — Duplicate" 2>/dev/null)
 assert_field_eq "rejects duplicate IDs" "$OUT" "reinitialized" "false"
 assert_output_contains "explains duplicate" "$OUT" "duplicate"
 
 echo ""
 echo "--- 2.5: Reject ID conflict with existing units ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.2: implement — Conflicts with existing, F1.1a: review — OK" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.2: implement — Conflicts with existing, F1.1a: review — OK" 2>/dev/null)
 assert_field_eq "rejects conflicting ID" "$OUT" "reinitialized" "false"
 assert_output_contains "explains conflict" "$OUT" "conflicts"
 
@@ -182,7 +182,7 @@ echo "=== TEST GROUP 3: Tick history preservation ==="
 
 echo "--- 3.1: History preserved after reinit ---"
 setup_stalled_loop
-$HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Part A, F1.1b: review — Part B" >/dev/null 2>/dev/null
+$HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Part A, F1.1b: review — Part B" >/dev/null 2>/dev/null
 HISTORY_LEN=$(python3 -c "import json; d=json.load(open('.harness/loop-state.json')); print(len(d.get('_tick_history',[])))")
 # Original 3 failed ticks + 1 reinit marker = 4
 if [ "$HISTORY_LEN" = "4" ]; then
@@ -206,7 +206,7 @@ assert_field_eq "tick completes after reinit" "$OUT" "completed" "true"
 echo ""
 echo "--- 3.3: Reinit marker has correct structure ---"
 setup_stalled_loop
-$HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Part A, F1.1b: review — Part B" >/dev/null 2>/dev/null
+$HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Part A, F1.1b: review — Part B" >/dev/null 2>/dev/null
 MARKER=$(python3 -c "
 import json
 d = json.load(open('.harness/loop-state.json'))
@@ -233,7 +233,7 @@ echo "=== TEST GROUP 4: Max tick budget recalculation ==="
 
 echo "--- 4.1: Budget accounts for consumed ticks ---"
 setup_stalled_loop
-$HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" >/dev/null 2>/dev/null
+$HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" >/dev/null 2>/dev/null
 # After reinit: tick=3 (consumed), new plan has 4 units (F1.1a, F1.1b, F1.2, F1.3)
 # Budget = 3 + 4*3 = 15
 MAX_TICKS=$(python3 -c "import json; d=json.load(open('.harness/loop-state.json')); print(d.get('_max_total_ticks','MISSING'))")
@@ -250,7 +250,7 @@ echo "--- 4.2: Plan hash updated ---"
 OLD_HASH=$(python3 -c "import json; print('none')")
 setup_stalled_loop
 OLD_HASH=$(python3 -c "import json; d=json.load(open('.harness/loop-state.json')); print(d.get('_plan_hash',''))")
-$HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" >/dev/null 2>/dev/null
+$HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — A, F1.1b: review — B" >/dev/null 2>/dev/null
 NEW_HASH=$(python3 -c "import json; d=json.load(open('.harness/loop-state.json')); print(d.get('_plan_hash',''))")
 if [ "$OLD_HASH" != "$NEW_HASH" ] && [ -n "$NEW_HASH" ]; then
   echo "  ✅ plan hash updated after reinit"
@@ -267,26 +267,26 @@ echo "=== TEST GROUP 5: Sub-unit format parsing ==="
 
 echo "--- 5.1: Reject malformed sub-unit format ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "this is not a valid format, also bad" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "this is not a valid format, also bad" 2>/dev/null)
 assert_field_eq "rejects malformed" "$OUT" "reinitialized" "false"
 assert_output_contains "explains parse error" "$OUT" "cannot parse"
 
 echo ""
 echo "--- 5.2: Accept em-dash separator ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Build API, F1.1b: review — Check API" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement — Build API, F1.1b: review — Check API" 2>/dev/null)
 assert_field_eq "accepts em-dash" "$OUT" "reinitialized" "true"
 
 echo ""
 echo "--- 5.3: Accept en-dash separator ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement – Build API, F1.1b: review – Check API" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement – Build API, F1.1b: review – Check API" 2>/dev/null)
 assert_field_eq "accepts en-dash" "$OUT" "reinitialized" "true"
 
 echo ""
 echo "--- 5.4: Accept hyphen separator ---"
 setup_stalled_loop
-OUT=$($HARNESS reinit-loop --dir .harness --unit F1.1 --sub-units "F1.1a: implement - Build API, F1.1b: review - Check API" 2>/dev/null)
+OUT=$($HARNESS reinit-loop --skip-scope --dir .harness --unit F1.1 --sub-units "F1.1a: implement - Build API, F1.1b: review - Check API" 2>/dev/null)
 assert_field_eq "accepts hyphen" "$OUT" "reinitialized" "true"
 
 # ═══════════════════════════════════════════════════════════════

@@ -233,7 +233,7 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — build something
 - u1.2: review — review it
 EOF
-$HARNESS init-loop --dir .harness > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --dir .harness > /dev/null 2>&1
 $HARNESS next-tick --dir .harness > /dev/null 2>&1
 # Tamper: set _tick_history to a string instead of array
 python3 -c "
@@ -284,7 +284,7 @@ cat > .harness/plan.md << 'EOF'
 - u1.1: implement — build
 - u1.2: review — check
 EOF
-$HARNESS init-loop --dir .harness > /dev/null 2>&1
+$HARNESS init-loop --skip-scope --dir .harness > /dev/null 2>&1
 $HARNESS next-tick --dir .harness > /dev/null 2>&1
 # Create tiny eval with only very short lines (< 10 chars each)
 echo "ok
