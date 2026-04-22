@@ -45,6 +45,17 @@ Each node passing individually ≠ the chain works. Trigger the top, observe the
 
 **Test**: For pipeline/integration tasks, the only valid evidence is: trigger the first event, observe the last artifact changing within N seconds.
 
+**E2E Verification Checklist** (execute this, don't just describe it):
+1. **Identify trigger**: what command / webhook / cron / UI action starts the chain?
+2. **Identify terminal artifact**: what file / API response / log line / DB row proves the chain completed?
+3. **Capture before-state**: `stat`, `hash`, `curl`, or `query` the terminal artifact before triggering
+4. **Execute trigger**: run the actual command or fire the actual event
+5. **Poll terminal artifact**: within a defined timeout (e.g., 30s), check that the artifact changed
+6. **Capture evidence**: save before/after diff, command output, or screenshot as `e2e-evidence-{N}.txt`
+7. **If no E2E path exists**: state explicitly "No E2E path — unit/integration evidence only" with justification
+
+Proxy evidence (unit tests passing, individual node PASS) is **insufficient** — it must be supplemented with at least one trigger-to-artifact trace, or an explicit annotation why E2E is not applicable.
+
 ### D6: Consumer Mismatch
 The system was designed for user A but the actual consumer is user B (LLM that takes shortcuts, CI that runs headless, junior dev who copies the first example).
 

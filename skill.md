@@ -299,7 +299,7 @@ The orchestrator searches for role definitions in this order (later sources over
 |-----------|-----------|
 | review | review |
 | build | build |
-| execute | execute, post-release |
+| execute | execute, post-release, verification |
 | discussion | brainstorm, plan, discussion |
 | gate | (no roles dispatched) |
 
