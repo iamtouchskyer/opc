@@ -13,8 +13,18 @@ export function getFlag(args, name, fallback = null) {
 }
 
 // ── Safe directory resolution with path traversal guard ─────────
+// When no --dir is given, prefer the latest session dir (if one exists).
+// Falls back to ".harness" for backward compatibility.
 export function resolveDir(args) {
-  const raw = getFlag(args, "dir", ".harness");
+  const hasExplicit = args.includes("--dir");
+  let raw;
+  if (hasExplicit) {
+    raw = getFlag(args, "dir", ".harness");
+  } else {
+    // Auto-resolve: latest session dir > .harness
+    const latest = getLatestSessionDir();
+    raw = latest || ".harness";
+  }
   const resolved = resolve(raw);
   const cwd = process.cwd();
   const opcBase = join(homedir(), ".opc", "sessions");

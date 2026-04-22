@@ -5,7 +5,7 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
-import { getFlag } from "./util.mjs";
+import { getFlag, resolveDir } from "./util.mjs";
 import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
 
 export function cmdVerify(args) {
@@ -121,13 +121,19 @@ export function cmdVerify(args) {
 // Note: synthesize assumes findings are bugs/issues (review use case).
 export function cmdSynthesize(args) {
   let _diffFilesCache = null; // cached diff files for changeScopeCoverage
-  const dir = args[0];
+  // First positional arg is dir, but if it starts with -- it's a flag, not a dir.
+  // When no dir given, auto-resolve to latest session dir.
+  let dir = args[0] && !args[0].startsWith("--") ? args[0] : null;
+  if (!dir) {
+    dir = resolveDir(args);  // auto-resolves to latest session dir
+  }
   const waveIdx = args.indexOf("--wave");
   const nodeIdx = args.indexOf("--node");
 
   if (!dir || (waveIdx === -1 && nodeIdx === -1)) {
-    console.error("Usage: opc-harness synthesize <dir> --wave <N>           (legacy: dir = project root)");
-    console.error("       opc-harness synthesize <dir> --node <nodeId> [--run <N>]  (dir = .harness/ path)");
+    console.error("Usage: opc-harness synthesize [<dir>] --node <nodeId> [--run <N>]");
+    console.error("       opc-harness synthesize <dir> --wave <N>           (legacy)");
+    console.error("       When <dir> is omitted, auto-resolves to latest session dir.");
     process.exit(1);
   }
 
