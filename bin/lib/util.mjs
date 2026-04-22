@@ -26,6 +26,7 @@ export function resolveDir(args, opts = {}) {
     if (latest) {
       raw = latest;
     } else if (existsSync(resolve(".harness", "flow-state.json"))) {
+      console.error("WARN: falling back to legacy .harness dir — consider running `opc-harness init` for session-based flow");
       raw = ".harness";  // backward compat: legacy .harness dir with active flow
     } else if (opts.optional) {
       return null;  // caller handles missing dir gracefully
@@ -116,7 +117,12 @@ export function getLatestSessionDir(cwd = process.cwd()) {
     const resolved = resolve(base, target);
     // Guard: symlink target must resolve within sessions base dir
     if (!resolved.startsWith(base + "/")) return null;
-    return existsSync(join(resolved, "flow-state.json")) ? resolved : null;
+    if (existsSync(join(resolved, "flow-state.json"))) return resolved;
+    // Symlink valid, dir exists, but no flow-state.json — warn
+    if (existsSync(resolved)) {
+      console.error(`WARN: latest session dir '${resolved}' exists but has no flow-state.json — ignoring`);
+    }
+    return null;
   } catch {
     return null;
   }
@@ -145,7 +151,15 @@ export function gcSessions(cwd = process.cwd(), { maxAgeDays = 7 } = {}) {
           deleted.push(e.name);
         }
       } catch {
-        // No flow-state.json or unreadable — skip (don't delete unknown dirs)
+        // No flow-state.json — check if this is an orphaned partial init (has nodes/ subdir)
+        // Only GC orphans older than maxAgeDays based on dir mtime
+        try {
+          const dirStat = statSync(dir);
+          if (dirStat.mtimeMs < cutoff && existsSync(join(dir, "nodes"))) {
+            rmSync(dir, { recursive: true, force: true });
+            deleted.push(e.name + " (orphan)");
+          }
+        } catch { /* unreadable — skip */ }
       }
     }
   } catch (err) {

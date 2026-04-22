@@ -8,7 +8,7 @@ import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-te
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync,
+  getFlag, resolveDir, atomicWriteSync, gcSessions,
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
@@ -551,6 +551,9 @@ export function cmdFinalize(args) {
     freshState._written_by = WRITER_SIG;
 
     atomicWriteSync(statePath, JSON.stringify(freshState, null, 2) + "\n");
+
+    // Post-finalize: GC old sessions (best-effort)
+    try { gcSessions(); } catch { /* ignore */ }
 
     console.log(JSON.stringify({ finalized: true, flow, terminalNode: currentNode, totalSteps: freshState.totalSteps }));
   } finally {

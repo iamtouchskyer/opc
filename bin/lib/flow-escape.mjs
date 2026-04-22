@@ -63,6 +63,35 @@ export function cmdSkip(args) {
       return;
     }
 
+    // ── Cycle limit checks (mirror cmdTransition) ──
+    const limits = {
+      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
+      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
+      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
+    };
+    if (state.totalSteps >= limits.maxTotalSteps) {
+      console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot skip` }));
+      return;
+    }
+    const edgeKey = `${current}\u2192${next}`;
+    const edgeCount = state.edgeCounts[edgeKey] || 0;
+    if (edgeCount >= limits.maxLoopsPerEdge) {
+      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot skip` }));
+      return;
+    }
+    const nodeEntries = state.history.filter(h => h.nodeId === next).length;
+    if (nodeEntries >= limits.maxNodeReentry) {
+      console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${next}' — cannot skip` }));
+      return;
+    }
+    // ── maxSkips: prevent skipping through entire flow ──
+    const maxSkips = template.limits.maxSkips ?? 2;
+    const skipCount = state.history.filter(h => h.skipped).length;
+    if (skipCount >= maxSkips) {
+      console.log(JSON.stringify({ error: `maxSkips (${maxSkips}) reached — cannot skip more nodes` }));
+      return;
+    }
+
     // Write a skip handshake so pre-transition won't block
     const nodeDir = join(dir, "nodes", current);
     mkdirSync(nodeDir, { recursive: true });
@@ -80,8 +109,7 @@ export function cmdSkip(args) {
     atomicWriteSync(join(nodeDir, "handshake.json"), JSON.stringify(skipHandshake, null, 2) + "\n");
 
     const runId = `run_${state.history.filter(h => h.nodeId === next).length + 1}`;
-    const edgeKey = `${current}\u2192${next}`;
-    state.history.push({ nodeId: next, runId, timestamp: new Date().toISOString() });
+    state.history.push({ nodeId: next, runId, timestamp: new Date().toISOString(), skipped: true });
     state.currentNode = next;
     state.totalSteps++;
     state.edgeCounts[edgeKey] = (state.edgeCounts[edgeKey] || 0) + 1;
@@ -129,6 +157,7 @@ export function cmdPass(args) {
   }
   // Delegate to cmdTransition (which has its own locking)
   const transArgs = ["--from", current, "--to", next, "--verdict", "PASS", "--flow", templateName, "--dir", dir];
+  if (state._flow_file) transArgs.push("--flow-file", state._flow_file);
   cmdTransition(transArgs);
 }
 
@@ -208,7 +237,14 @@ export function cmdGoto(args) {
     }
 
     // Check node reentry limit
-    const limits = { maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry };
+    const limits = {
+      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
+      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
+    };
+    if (state.totalSteps >= limits.maxTotalSteps) {
+      console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot goto` }));
+      return;
+    }
     const nodeEntries = state.history.filter(h => h.nodeId === targetNode).length;
     if (nodeEntries >= limits.maxNodeReentry) {
       console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${targetNode}'` }));
