@@ -20,8 +20,8 @@ You are independently evaluating whether an implementation solves the task and m
 
 {paste the implementer's report, or point to the handoff file}
 
-- Handoff: {absolute path to .harness/nodes/{NODE_ID}/handshake.json}
-- Progress log: {absolute path to .harness/progress.md} (include if the file exists; skip only if this is the first node's first evaluation AND no progress.md has been written yet)
+- Handoff: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/handshake.json}
+- Progress log: {absolute path to $SESSION_DIR/progress.md} (include if the file exists; skip only if this is the first node's first evaluation AND no progress.md has been written yet)
 
 Working directory: {absolute path to working directory}
 
@@ -29,7 +29,7 @@ Working directory: {absolute path to working directory}
 
 This is Round {R} of evaluation for Node {NODE_ID}.
 
-- Previous evaluation: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
+- Previous evaluation: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/eval.md}
 - Previous verdict: {FAIL or ITERATE}
 - What the implementer was asked to fix/polish: {brief summary of issues from previous evaluation}
 
@@ -103,7 +103,7 @@ When you add a rubric:
 
 ## Write Evaluation
 
-Write your evaluation to: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval.md}
+Write your evaluation to: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/eval.md}
 
 Structure your evaluation however makes sense for what you found. Include at minimum:
 - Overall verdict (PASS, ITERATE, or FAIL)

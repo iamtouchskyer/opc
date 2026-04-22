@@ -25,7 +25,7 @@ All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a she
 /opc loop <task>         # autonomous loop — decompose, schedule cron, run 24h unattended
 /opc skip                # skip current node, advance via PASS edge
 /opc pass                # force-pass current gate
-/opc stop                # terminate flow, preserve .harness/ state
+/opc stop                # terminate flow, preserve session state
 /opc goto <nodeId>       # manual jump to a node (cycle limits still enforced)
 ```
 
@@ -147,17 +147,22 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 ## Getting Started
 
 **Before task inference**, check for existing state:
-1. If `.harness/flow-state.json` exists → resume from recorded state. Run `opc-harness validate-chain --dir .harness` first. Show user what was saved and confirm before continuing.
+1. Run `opc-harness ls` to discover active flows. If any exist for the current project, show them and ask whether to resume or start fresh.
 2. If `.harness/` has `wave-*` files but no `flow-state.json` → **legacy v0.4.x format detected**. Print: "Detected v0.4.x .harness/ format. Please delete .harness/ and re-run, or manually migrate." Do not proceed.
 3. Otherwise → fresh start.
 
 After flow selection, initialize:
 
 ```bash
-opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} --dir .harness
+INIT_OUT=$(opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE})
+SESSION_DIR=$(echo "$INIT_OUT" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).dir)")
 ```
 
-**Show flow graph** — immediately after init, run `opc-harness viz --flow {TEMPLATE} --dir .harness` and display the ASCII output to the user. This gives them a visual map of the entire flow before execution begins.
+**CRITICAL: Capture `SESSION_DIR` from init output.** Without `--dir`, init auto-creates `~/.opc/sessions/{project-hash}/{session-id}/`. All subsequent commands MUST use `--dir $SESSION_DIR`. This ensures multiple OPC windows on the same project don't clobber each other's state.
+
+**Backward compat:** If you need a project-local harness dir, pass `--dir .harness` explicitly to init. The returned `dir` field will reflect that path.
+
+**Show flow graph** — immediately after init, run `opc-harness viz --flow {TEMPLATE} --dir $SESSION_DIR` and display the ASCII output to the user. This gives them a visual map of the entire flow before execution begins.
 
 Before starting, extract **acceptance criteria** — 3-7 concrete, testable bullet points. Evaluators grade against these.
 
@@ -184,7 +189,7 @@ Show tier selection:
    Baseline: {N items from tier checklist}
 ```
 
-The tier's baseline checklist items are **automatically appended** to acceptance criteria under a "## Quality Baseline ({tier})" section in `.harness/acceptance-criteria.md`. The implementer and evaluator both receive the tier as context.
+The tier's baseline checklist items are **automatically appended** to acceptance criteria under a "## Quality Baseline ({tier})" section in `$SESSION_DIR/acceptance-criteria.md`. The implementer and evaluator both receive the tier as context.
 
 ### Definition of Done — Mandatory Pre-Flight (all modes)
 
@@ -212,9 +217,9 @@ Before dispatching ANY work, the orchestrator MUST establish a clear definition 
 
 **In loop mode (`/opc loop`)**: these answers go into `plan.md` per unit, so every tick knows how to verify itself even after context compaction.
 
-Write the finalized acceptance criteria to `.harness/acceptance-criteria.md` and include them in every subagent prompt.
+Write the finalized acceptance criteria to `$SESSION_DIR/acceptance-criteria.md` and include them in every subagent prompt.
 
-**Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint .harness/acceptance-criteria.md`. If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
+**Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint $SESSION_DIR/acceptance-criteria.md`. If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
 
 ### Task Scope — Mandatory for Loop Mode
 
@@ -300,7 +305,7 @@ The orchestrator searches for role definitions in this order (later sources over
 - **Devil's Advocate auto-inclusion:** When a discussion node reaches Round 2 with near-unanimous agreement (all agents converge on the same approach), the orchestrator SHOULD include devil-advocate in a subsequent review pass. Consensus is a signal to challenge, not to proceed. For irreversible decisions (data deletion, public API contracts, destructive migrations), devil-advocate is MANDATORY.
 - If user specified roles explicitly, use those — skip tag filtering entirely.
 
-**Dynamic Role Creation:** If the task requires expertise not covered by any candidate, create a role on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Write to `.harness/nodes/{nodeId}/dynamic-role-{name}.md`. Max 5 dynamic roles per flow run.
+**Dynamic Role Creation:** If the task requires expertise not covered by any candidate, create a role on-the-fly following the same format (Identity + Expertise + When to Include + Anti-Patterns). Write to `$SESSION_DIR/nodes/{nodeId}/dynamic-role-{name}.md`. Max 5 dynamic roles per flow run.
 
 Show role selection:
 ```
@@ -335,8 +340,8 @@ The orchestrator uses **cursor-based execution** — `flow-state.json.currentNod
    - opc-harness validate → check handshake.json
    - Update progress.md with narrative line
    - opc-harness route --node {current} --verdict PASS --flow {template} → get next
-   - opc-harness transition --from {current} --to {next} --verdict PASS --flow {template} --dir .harness
-   - **Show flow viz**: run `opc-harness viz --flow {template} --dir .harness` and display to user
+   - opc-harness transition --from {current} --to {next} --verdict PASS --flow {template} --dir $SESSION_DIR
+   - **Show flow viz**: run `opc-harness viz --flow {template} --dir $SESSION_DIR` and display to user
    - Loop back to step 1
 5. When route returns next=null → flow complete → Deliver → **Prompt replay** (see below)
 ```
@@ -364,7 +369,7 @@ Follow `./pipeline/role-evaluator-prompt.md`.
 
 1. Select roles per Role Selection rules.
 2. Dispatch evaluators — parallel if no dependencies, serial with context injection if dependencies exist.
-3. Each agent writes `eval-{role}.md` to `.harness/nodes/{NODE_ID}/run_{RUN}/`.
+3. Each agent writes `eval-{role}.md` to `$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/`.
 4. **Orchestrator writes handshake.json** after all agents return, merging all eval files into artifacts[].
 5. Before dispatching, build context brief using `./pipeline/context-brief.md` (for review/analysis tasks).
 
@@ -391,10 +396,10 @@ Follow `./pipeline/gate-protocol.md`.
 
 **Gate nodes are executed by the orchestrator directly — no subagent dispatch.**
 
-1. `opc-harness synthesize .harness --node {upstream}` → get verdict.
+1. `opc-harness synthesize $SESSION_DIR --node {upstream}` → get verdict.
 2. Mechanical validation (severity emojis, file refs, fix suggestions).
 3. `opc-harness route --node {gate} --verdict {V} --flow {template}` → get next node.
-4. `opc-harness transition --from {gate} --to {next} --verdict {V} --flow {template} --dir .harness` → validates edge, writes gate handshake, updates state.
+4. `opc-harness transition --from {gate} --to {next} --verdict {V} --flow {template} --dir $SESSION_DIR` → validates edge, writes gate handshake, updates state.
 5. Notify user: pass/loopback/done/blocked.
 
 ---
@@ -427,7 +432,7 @@ When transition returns `allowed: false` → show the user why (which limit hit)
 ## File-Based State
 
 ```
-.harness/
+$SESSION_DIR/                    # ~/.opc/sessions/{hash}/{id}/ or .harness/ if --dir used
 ├── flow-state.json              # Current node, execution history, edge counts, limits
 ├── progress.md                  # Human-readable narrative log
 └── nodes/
@@ -549,7 +554,7 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 | `pass` | `[--dir <p>]` | Force-pass current gate node. Only works on gate-type nodes. |
 | `stop` | `[--dir <p>]` | Terminate flow, preserve state. Sets status to "stopped". |
 | `goto` | `<nodeId> [--dir <p>]` | Manual jump to any node. Cycle limits still enforced. |
-| `ls` | `[--base <p>]` | List all active flows in project (scans `.harness*` directories). |
+| `ls` | `[--base <p>]` | List all active flows (scans `~/.opc/sessions/` and project-local `.harness*` directories). |
 
 ### Eval Commands
 
@@ -584,11 +589,11 @@ The `transition` command enforces:
 
 **Agent spawn failures:** Retry once. If it fails again, surface to user.
 
-**Context running low:** Write current state to `.harness/flow-state.json` (already maintained by transition commands). The flow-state.json + handshake files carry all state needed to resume. Tell user to re-invoke — orchestrator will detect flow-state.json and resume.
+**Context running low:** Write current state to `$SESSION_DIR/flow-state.json` (already maintained by transition commands). The flow-state.json + handshake files carry all state needed to resume. Tell user to re-invoke — orchestrator will detect flow-state.json and resume.
 
-**State recovery:** On resume, run `opc-harness validate-chain --dir .harness`. If inconsistent → surface to user, do not auto-repair.
+**State recovery:** On resume, run `opc-harness validate-chain --dir $SESSION_DIR`. If inconsistent → surface to user, do not auto-repair.
 
-**Legacy detection:** If `.harness/` has `wave-*` files but no `flow-state.json` → refuse to run. Print migration instructions.
+**Legacy detection:** If `.harness/` in project root has `wave-*` files but no `flow-state.json` → refuse to run. Print migration instructions.
 
 **Fresh context per agent.** Always spawn new subagents. Files carry state; agents bring fresh capacity.
 
@@ -598,15 +603,15 @@ The `transition` command enforces:
 
 When the flow completes (route returns `next=null`):
 
-1. Show final viz: `opc-harness viz --flow {template} --dir .harness`
+1. Show final viz: `opc-harness viz --flow {template} --dir $SESSION_DIR`
 2. Show summary: total steps, nodes visited, any loopbacks
 3. **Generate HTML report:**
    ```bash
-   node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
+   node "$OPC_HARNESS/../opc-report.mjs" --dir $SESSION_DIR --output $SESSION_DIR/report.html --title "{task summary}"
    ```
    This produces a self-contained dark-theme HTML report with mechanically parsed stats, pipeline visualization, findings tables, and R2 fix tracking. Open it for the user.
 4. **Prompt the user:**
    ```
-   ✅ Flow complete! Report: .harness/report.html
+   ✅ Flow complete! Report: $SESSION_DIR/report.html
    Want to see the replay? Run: /opc replay
    ```

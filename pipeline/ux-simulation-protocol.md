@@ -28,7 +28,7 @@ Red flags are a fixed list (~10 stable patterns). Observers MUST pick from the e
 
 ### 3. Code-Enforced Severity
 
-The pattern-to-severity mapping is defined in `tier-baselines.mjs` and `.harness/red-flag-overrides.md`. Observers cannot override severity labels. They report what they see; the harness computes severity.
+The pattern-to-severity mapping is defined in `tier-baselines.mjs` and `$SESSION_DIR/red-flag-overrides.md`. Observers cannot override severity labels. They report what they see; the harness computes severity.
 
 ### 4. Delta as Primary Signal
 
@@ -89,7 +89,7 @@ RED_FLAGS = [
 | `data-loss-on-error` | critical | critical | critical |
 | `auth-before-value` | suggestion | warning | critical |
 
-**Override mechanism:** `.harness/red-flag-overrides.md` can adjust severity for project-specific context:
+**Override mechanism:** `$SESSION_DIR/red-flag-overrides.md` can adjust severity for project-specific context:
 ```markdown
 ## Red Flag Overrides
 - default-favicon: suggestion  # This is a CLI tool, favicon is irrelevant
@@ -119,7 +119,7 @@ If any prerequisite fails -> handshake `status: "blocked"` with reason, do not d
 
 Check for previous run data:
 ```
-.harness/nodes/ux-simulation/run_{PREV}/ux-verdict.json
+$SESSION_DIR/nodes/ux-simulation/run_{PREV}/ux-verdict.json
 ```
 
 If exists, load it as `baseline`. Inject `baseline.red_flags` and `baseline.trust_signals` into each observer's prompt so they can report delta.
@@ -136,7 +136,7 @@ Dispatch **3 parallel subagents** using the Agent tool, each receiving:
 - **Product entry point:** absolute URL, CLI command, or module import path
 - **Red flag enum:** the full list from this protocol (so observers know what to look for)
 - **Baseline snapshot** (if exists): previous run's red flags and trust signals for delta reporting
-- **Acceptance criteria:** `.harness/acceptance-criteria.md`
+- **Acceptance criteria:** `$SESSION_DIR/acceptance-criteria.md`
 
 The three observers run **in parallel**. They MUST NOT see each other's outputs. Parallel dispatch is non-negotiable.
 
@@ -144,7 +144,7 @@ The three observers run **in parallel**. They MUST NOT see each other's outputs.
 
 Each observer writes to:
 ```
-.harness/nodes/ux-simulation/run_{RUN}/observer-{role}.md
+$SESSION_DIR/nodes/ux-simulation/run_{RUN}/observer-{role}.md
 ```
 
 Report format is enforced by `ux-observer-protocol.md` — single fenced JSON block.
@@ -153,7 +153,7 @@ Report format is enforced by `ux-observer-protocol.md` — single fenced JSON bl
 
 Run:
 ```bash
-opc-harness ux-verdict --dir .harness --run {RUN}
+opc-harness ux-verdict --dir $SESSION_DIR --run {RUN}
 ```
 
 This command:
@@ -228,7 +228,7 @@ elif same AND warning_count <= THRESHOLD[tier]:
 If verdict is FAIL or ITERATE:
 
 ```bash
-opc-harness ux-friction-aggregate --dir .harness --run {RUN} --output .harness/nodes/ux-simulation/run_{RUN}/friction-report.md
+opc-harness ux-friction-aggregate --dir $SESSION_DIR --run {RUN} --output $SESSION_DIR/nodes/ux-simulation/run_{RUN}/friction-report.md
 ```
 
 Groups friction points by stage, severity, and frequency across observers. Friction report is injected into the next `build` node's prompt.

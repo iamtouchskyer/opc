@@ -9,7 +9,7 @@ Gates aggregate upstream verdicts and route the flow. Gates do not dispatch suba
 Run the harness to compute the aggregate verdict:
 
 ```bash
-opc-harness synthesize .harness --node {UPSTREAM_NODE_ID}
+opc-harness synthesize $SESSION_DIR --node {UPSTREAM_NODE_ID}
 ```
 
 Output: `{ verdict, totals: { critical, warning, suggestion }, roles[], evalQualityGate?, evaluatorGuidance? }`
@@ -54,7 +54,7 @@ Output: `{ next: "<nodeId>" | null, valid: true }`
 Execute the transition (also writes this gate's handshake.json automatically):
 
 ```bash
-opc-harness transition --from {GATE_ID} --to {NEXT_NODE} --verdict {VERDICT} --flow {FLOW_TEMPLATE} --dir .harness
+opc-harness transition --from {GATE_ID} --to {NEXT_NODE} --verdict {VERDICT} --flow {FLOW_TEMPLATE} --dir $SESSION_DIR
 ```
 
 Output: `{ allowed: true/false, reason, next, state }`
@@ -68,8 +68,8 @@ Output: `{ allowed: true/false, reason, next, state }`
 The `transition` command automatically:
 1. Validates the edge exists in the flow template
 2. Checks cycle limits (maxLoopsPerEdge, maxTotalSteps, maxNodeReentry)
-3. Writes this gate's `.harness/nodes/{GATE_ID}/handshake.json`
-4. Updates `.harness/flow-state.json`
+3. Writes this gate's `$SESSION_DIR/nodes/{GATE_ID}/handshake.json`
+4. Updates `$SESSION_DIR/flow-state.json`
 
 ### Step 5 — Findings Disposition
 
@@ -78,8 +78,8 @@ After routing, handle unresolved findings. **Findings that are not fixed in the 
 | Verdict | 🔴 Critical | 🟡 Warning | 🔵 Suggestion |
 |---------|-------------|------------|---------------|
 | FAIL | Must fix before re-gate | — | — |
-| ITERATE | Must fix before re-gate | Append to `.harness/backlog.md` if not fixing now | Optional |
-| PASS | N/A (no 🔴 if PASS) | Append to `.harness/backlog.md` | Drop or append |
+| ITERATE | Must fix before re-gate | Append to `$SESSION_DIR/backlog.md` if not fixing now | Optional |
+| PASS | N/A (no 🔴 if PASS) | Append to `$SESSION_DIR/backlog.md` | Drop or append |
 
 **Backlog append format:**
 ```markdown
@@ -91,7 +91,7 @@ After routing, handle unresolved findings. **Findings that are not fixed in the 
 - These are explicitly NOT dismissible with "acknowledged but not code-blocking"
 - If the orchestrator disagrees with a devil's advocate finding, it must write a **counter-argument** in the backlog entry, not simply omit it
 
-Create `.harness/backlog.md` if it doesn't exist. Append, never overwrite.
+Create `$SESSION_DIR/backlog.md` if it doesn't exist. Append, never overwrite.
 
 ### Step 6 — User Notification
 

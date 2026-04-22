@@ -93,7 +93,7 @@ opc-harness runbook match "<task phrase>" [--dir <runbook-dir>]
 
 - Exit `0` + `matched: true` → **skip Step 1**. Adopt the returned
   runbook's `units`, `flow`, `tier`, `protocolRefs` as the plan. Write
-  them into `.harness/plan.md` with a header noting which runbook fired
+  them into `$SESSION_DIR/plan.md` with a header noting which runbook fired
   and the score.
 - Exit `3` (match-miss) → proceed to Step 1.
 - To force a miss without scanning disk, prepend `OPC_DISABLE_RUNBOOKS=1`
@@ -136,7 +136,7 @@ Adjust based on feature complexity:
 - Complex feature (new subsystem): add design unit between spec and implement
 - Pure backend: skip implement-b/review-b/fix-b
 
-Write the plan to `.harness/plan.md` with unit numbers, descriptions, and acceptance criteria per unit.
+Write the plan to `$SESSION_DIR/plan.md` with unit numbers, descriptions, and acceptance criteria per unit.
 
 **Each unit in plan.md MUST include a verification method.** This is not optional — it's how each tick knows how to verify itself after context compaction.
 
@@ -151,13 +151,13 @@ The `verify:` line tells the implement tick what to run. The `eval:` line tells 
 
 ### Step 1.5 — Definition of Done (Pre-Flight)
 
-Before writing plan.md, establish a global definition of done. Follow the "Definition of Done — Mandatory Pre-Flight" section in skill.md. The three questions (what does done look like, how to verify, how to evaluate) must be answered and written to `.harness/acceptance-criteria.md`.
+Before writing plan.md, establish a global definition of done. Follow the "Definition of Done — Mandatory Pre-Flight" section in skill.md. The three questions (what does done look like, how to verify, how to evaluate) must be answered and written to `$SESSION_DIR/acceptance-criteria.md`.
 
 Per-unit verify/eval lines in plan.md are derived from these global criteria.
 
 ### Step 2 — Initialize Loop State
 
-Write `.harness/loop-state.json`:
+Write `$SESSION_DIR/loop-state.json`:
 
 ```json
 {
@@ -169,7 +169,7 @@ Write `.harness/loop-state.json`:
   "next_unit": "{first unit id}",
   "blockers": [],
   "review_of_previous": "",
-  "plan_file": ".harness/plan.md"
+  "plan_file": "$SESSION_DIR/plan.md"
 }
 ```
 
@@ -257,7 +257,7 @@ When `opc-harness next-tick` returns `terminate: true`:
 
 If `next-tick` returns `backlog.open_items > 0`, the orchestrator MUST attempt a **backlog drain** before declaring the pipeline complete:
 
-1. Read `.harness/backlog.md` — parse all `- [ ]` items
+1. Read `$SESSION_DIR/backlog.md` — parse all `- [ ]` items
 2. Filter to actionable items (🔴 and 🟡 findings that map to code changes)
 3. Group by theme → generate fix/implement + review unit pairs
 4. Call `opc-harness reinit-loop` (if loop is stalled) or create a **new mini-plan** and call `opc-harness init-loop` with it in a fresh `.harness-drain/` directory
@@ -272,16 +272,16 @@ If `next-tick` returns `backlog.open_items > 0`, the orchestrator MUST attempt a
 
 1. Set `next_unit: null` and `status: "pipeline_complete"`
 2. Cancel the cron job (CronDelete)
-3. Write a summary to `.harness/progress.md`:
+3. Write a summary to `$SESSION_DIR/progress.md`:
    - Total ticks
    - Units completed
    - Any skipped/blocked units
-   - Outstanding items from `.harness/backlog.md` (should be 0 or only 🔵 suggestions after drain)
+   - Outstanding items from `$SESSION_DIR/backlog.md` (should be 0 or only 🔵 suggestions after drain)
 4. Generate HTML report:
    ```bash
-   node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
+   node "$OPC_HARNESS/../opc-report.mjs" --dir $SESSION_DIR --output $SESSION_DIR/report.html --title "{task summary}"
    ```
-5. Notify user: `✅ Pipeline complete. {N} units delivered in {M} ticks. Report: .harness/report.html`
+5. Notify user: `✅ Pipeline complete. {N} units delivered in {M} ticks. Report: $SESSION_DIR/report.html`
 
 **7c. Final summary must NOT contain "defer to next loop."**
 
@@ -329,8 +329,8 @@ Each tick prompt MUST be self-contained. After context compaction, the orchestra
 The cron job should schedule this prompt (adapt paths to project):
 
 ```
-Read .harness/loop-state.json and .harness/plan.md.
-Read .harness/acceptance-criteria.md for the definition of done.
+Read $SESSION_DIR/loop-state.json and $SESSION_DIR/plan.md.
+Read $SESSION_DIR/acceptance-criteria.md for the definition of done.
 Re-read the full loop-protocol.md and skill.md protocols — do NOT rely on memory from previous ticks.
 Find the current unit's verify: and eval: lines in plan.md — these tell you HOW to verify this specific unit.
 Key rules to re-verify each tick:
@@ -437,15 +437,15 @@ Placeholders: `{task}` = unit description from plan.md, `{id}` = unit ID.
 ```bash
 # dreamworks initializes a loop with its own unit type handlers
 node "$OPC_HARNESS" init-loop \
-  --plan .harness/plan.md \
+  --plan $SESSION_DIR/plan.md \
   --flow-template pitch-ready \
-  --dir .harness
+  --dir $SESSION_DIR
 
 # Or with inline handlers (no flow template needed):
 node "$OPC_HARNESS" init-loop \
-  --plan .harness/plan.md \
+  --plan $SESSION_DIR/plan.md \
   --handlers '{"discover":{"skill":"/dw-discover"},"pitch":{"skill":"/dw-pitch"}}' \
-  --dir .harness
+  --dir $SESSION_DIR
 ```
 
 When `next-tick` encounters a `discover` unit, it returns the handler. The orchestrator (dreamworks) invokes `/dw-discover` instead of OPC's default `build-verify` flow.
@@ -454,7 +454,7 @@ Unit types without a matching handler fall through to OPC's built-in dispatch ta
 
 ## Backlog Management
 
-During execution, unaddressed findings accumulate. The loop maintains `.harness/backlog.md`:
+During execution, unaddressed findings accumulate. The loop maintains `$SESSION_DIR/backlog.md`:
 
 - Gate 🔴/🟡 findings not fixed in the current cycle → auto-accumulated by harness
 - Devil's advocate product concerns → append to backlog
@@ -478,7 +478,7 @@ Format:
 ## File Layout
 
 ```
-.harness/
+$SESSION_DIR/
 ├── plan.md              # Unit decomposition + acceptance criteria
 ├── loop-state.json      # Current tick state (the cursor)
 ├── backlog.md           # Accumulated unaddressed items

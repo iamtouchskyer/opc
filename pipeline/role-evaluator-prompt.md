@@ -67,7 +67,7 @@ Your output will be mechanically verified. These shortcuts will be caught:
 
 ## Write Evaluation
 
-Write your evaluation to: {absolute path to .harness/nodes/{NODE_ID}/run_{RUN}/eval-{role_name}.md}
+Write your evaluation to: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/eval-{role_name}.md}
 
 Do not write handshake.json — the orchestrator merges multi-role outputs and writes it.
 
@@ -91,8 +91,8 @@ Your findings must emerge from this understanding, not from a checklist.
 {specific files/features — or handoff file path for build tasks}
 
 ## What Was Built (build tasks only)
-- Handoff: {absolute path to .harness/nodes/{NODE_ID}/handshake.json}
-- Progress log: {absolute path to .harness/progress.md}
+- Handoff: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/handshake.json}
+- Progress log: {absolute path to $SESSION_DIR/progress.md}
 Working directory: {absolute path}
 
 ## Acceptance Criteria (build tasks only)

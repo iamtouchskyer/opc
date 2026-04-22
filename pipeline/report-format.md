@@ -129,7 +129,7 @@ mkdir -p ~/.opc/reports
 opc-harness report . --mode {mode} --task "{task}" --challenged N --dismissed M --downgraded K > ~/.opc/reports/{filename}.json
 ```
 
-The tool reads `.harness/nodes/*/run_*/eval*.md` files and outputs a complete JSON report to stdout. The orchestrator only needs to provide mode, task description, and coordinator action counts.
+The tool reads `$SESSION_DIR/nodes/*/run_*/eval*.md` files and outputs a complete JSON report to stdout. The orchestrator only needs to provide mode, task description, and coordinator action counts.
 
 **Directory:** `~/.opc/reports/`
 **Filename:** `{YYYY-MM-DD}T{HH-mm-ss}_{mode}_{sanitized-task-summary}.json`
@@ -226,10 +226,10 @@ Map pipeline task types to `mode` for backward compatibility with OPC Viewer:
 After any flow completes (single flow or loop pipeline), generate a self-contained HTML report:
 
 ```bash
-node "$OPC_HARNESS/../opc-report.mjs" --dir .harness --output .harness/report.html --title "{task summary}"
+node "$OPC_HARNESS/../opc-report.mjs" --dir $SESSION_DIR --output $SESSION_DIR/report.html --title "{task summary}"
 ```
 
-The tool (`bin/opc-report.mjs`) mechanically parses `.harness/` eval files and produces a dark-theme HTML page with:
+The tool (`bin/opc-report.mjs`) mechanically parses `$SESSION_DIR/` eval files and produces a dark-theme HTML page with:
 - Header: title, subtitle, date, git hash, overall verdict badge
 - Pipeline: visual node progression (from `loop-state.json` or `flow-state.json`)
 - Stat cards: R1 severity counts (🔴🟡🔵) + R2 fix status (✅⚠️❌)

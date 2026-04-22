@@ -13,8 +13,8 @@ The lint runs after the orchestrator drafts `acceptance-criteria.md` and BEFORE 
 ```
 1. User invokes /opc <task>
 2. Orchestrator analyzes task, selects tier
-3. Orchestrator drafts .harness/acceptance-criteria.md
-4. opc-harness criteria-lint .harness/acceptance-criteria.md  <-- THIS
+3. Orchestrator drafts $SESSION_DIR/acceptance-criteria.md
+4. opc-harness criteria-lint $SESSION_DIR/acceptance-criteria.md  <-- THIS
 5. If PASS: opc-harness init --flow X --tier Y
 6. If FAIL: orchestrator revises DoD automatically, re-runs lint (max 3 attempts)
 7. If still FAIL after 3 attempts: surface to user with specific failures
@@ -54,7 +54,7 @@ The lint runs after the orchestrator drafts `acceptance-criteria.md` and BEFORE 
 ## Output Format
 
 ```bash
-$ opc-harness criteria-lint .harness/acceptance-criteria.md
+$ opc-harness criteria-lint $SESSION_DIR/acceptance-criteria.md
 
 # On success:
 ✅ criteria-lint: 7 checks passed, 1 warning
@@ -95,7 +95,7 @@ Your acceptance criteria have issues:
   ❌ OUT-2 uses 'fast' without a measurement threshold
   ❌ OUT-4 verification is manual-only
 
-Fix these before proceeding. Edit .harness/acceptance-criteria.md, then run:
+Fix these before proceeding. Edit $SESSION_DIR/acceptance-criteria.md, then run:
   /opc lint-criteria
 ```
 

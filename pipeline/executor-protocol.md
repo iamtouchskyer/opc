@@ -37,7 +37,7 @@ python3 -c "from playwright.sync_api import sync_playwright; print('ok')"
 
 ### Step 2 — Read Acceptance Criteria
 
-Read from upstream handshake summary and `.harness/progress.md`. Each acceptance criterion becomes a test scenario.
+Read from upstream handshake summary and `$SESSION_DIR/progress.md`. Each acceptance criterion becomes a test scenario.
 
 ### Step 3 — Execute Scenarios
 
@@ -54,12 +54,12 @@ For each acceptance criterion:
          page = browser.new_page()
          page.goto("http://localhost:PORT")
          page.wait_for_load_state("networkidle")
-         page.screenshot(path=".harness/nodes/{NODE_ID}/run_{RUN}/screenshot-{N}.png", full_page=True)
+         page.screenshot(path="$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/screenshot-{N}.png", full_page=True)
          # ... interact and verify
          browser.close()
      ```
    - API: `curl -s http://localhost:PORT/endpoint | jq .`
-3. **Capture evidence** — save to `.harness/nodes/{NODE_ID}/run_{RUN}/`:
+3. **Capture evidence** — save to `$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/`:
    - CLI: `command-output-{N}.txt`
    - GUI: `screenshot-{N}.png`
    - API: `api-response-{N}.json`
@@ -77,8 +77,8 @@ For each acceptance criterion:
   "summary": "<what was tested, results, N/M scenarios passed>",
   "timestamp": "<ISO8601>",
   "artifacts": [
-    { "type": "cli-output", "path": ".harness/nodes/{NODE_ID}/run_{RUN}/command-output-1.txt" },
-    { "type": "screenshot", "path": ".harness/nodes/{NODE_ID}/run_{RUN}/screenshot-1.png" }
+    { "type": "cli-output", "path": "$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/command-output-1.txt" },
+    { "type": "screenshot", "path": "$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/screenshot-1.png" }
   ],
   "findings": { "critical": 0, "warning": 1, "suggestion": 0 }
 }

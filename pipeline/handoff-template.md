@@ -1,6 +1,6 @@
 # Handshake Specification
 
-Every node writes a `handshake.json` file to `.harness/nodes/{NODE_ID}/handshake.json`. This is the contract between nodes.
+Every node writes a `handshake.json` file to `$SESSION_DIR/nodes/{NODE_ID}/handshake.json`. This is the contract between nodes.
 
 ## Schema
 

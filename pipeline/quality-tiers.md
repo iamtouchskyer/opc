@@ -68,7 +68,7 @@ Show tier selection:
 ## How Tiers Affect the Pipeline
 
 ### Acceptance Criteria
-The tier's baseline checklist items are **automatically appended** to the user's acceptance criteria. They appear in `.harness/acceptance-criteria.md` under a "## Quality Baseline ({tier})" section.
+The tier's baseline checklist items are **automatically appended** to the user's acceptance criteria. They appear in `$SESSION_DIR/acceptance-criteria.md` under a "## Quality Baseline ({tier})" section.
 
 ### Implementer (Build Mode)
 The implementer prompt includes the tier checklist. In Build mode, the implementer is expected to address baseline items alongside functional requirements — not as an afterthought, but as part of the first pass.
