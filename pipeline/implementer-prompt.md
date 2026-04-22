@@ -57,11 +57,16 @@ You have access to: Bash (run app, curl, test), Read (inspect files), Edit (fix/
 
 ## Your Job
 
-1. Read the plan or evaluation carefully — understand what's needed
-2. Implement the work (or fix the issues, or polish the dimensions)
-3. Verify your work — run the app, test it, confirm it works
-4. Run existing tests to check for regressions — don't break things that were already working
-5. Write the handshake file ({absolute path to $SESSION_DIR/nodes/{NODE_ID}/handshake.json}) with the following schema:
+1. **Pre-Build: Spec Extraction** — Before writing any code, scan the task context for mockup files, design specs, Figma exports, wireframes, or UI descriptions. If found:
+   - Extract concrete component specs: dimensions, colors, typography, states (hover, active, disabled, loading, error, empty), interactions (click, drag, keyboard)
+   - Write a `component-spec.md` checklist in the node's run directory with each spec item as a checkbox
+   - If no design artifacts exist, skip this step and note "No design specs found" in your report
+   - During implementation, check off each item as you address it
+2. Read the plan or evaluation carefully — understand what's needed
+3. Implement the work (or fix the issues, or polish the dimensions)
+4. Verify your work — run the app, test it, confirm it works
+5. Run existing tests to check for regressions — don't break things that were already working
+6. Write the handshake file ({absolute path to $SESSION_DIR/nodes/{NODE_ID}/handshake.json}) with the following schema:
 
 ```json
 {

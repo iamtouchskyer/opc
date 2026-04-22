@@ -334,6 +334,9 @@ export function cmdNextTick(args) {
     const unitType = unitDetails ? unitDetails.type : "unknown";
     const contextHints = getContextHints(unitType);
 
+    // Build resume prompt for new session cold-start
+    const resumePrompt = _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, planFile);
+
     console.log(JSON.stringify({
       ready: true,
       terminate: false,
@@ -346,6 +349,7 @@ export function cmdNextTick(args) {
       handler: handler || undefined,
       context_hints: contextHints,
       recommended_flow: contextHints.recommended_flow,
+      resumePrompt,
       reminder: state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
@@ -415,5 +419,63 @@ function checkOscillation(state, history, statePath) {
     }
   }
   return false;
+}
+
+// ── Resume prompt builder ──────────────────────────────────────
+// Produces a self-contained prompt string that a new session can use
+// to continue the loop without conversation history.
+
+function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, planFile) {
+  let checkpointContent = "";
+  const lastTick = state.tick || 0;
+  if (lastTick > 0) {
+    const cpPath = join(dir, `tick-${lastTick}-summary.md`);
+    if (existsSync(cpPath)) {
+      try {
+        checkpointContent = readFileSync(cpPath, "utf8");
+      } catch { /* ignore */ }
+    }
+  }
+
+  const parts = [
+    `You are resuming an OPC loop pipeline. This is tick ${lastTick + 1}.`,
+    "",
+    `## Project`,
+    `- Working directory: ${process.cwd()}`,
+    `- Loop directory: ${dir}`,
+    "",
+    `## Current Unit`,
+    `- ID: ${state.next_unit}`,
+    `- Type: ${unitType}`,
+    unitDetails ? `- Description: ${unitDetails.description}` : "",
+    `- Recommended flow: ${contextHints.recommended_flow}`,
+    "",
+    `## Key Files`,
+    `- Loop state: ${join(dir, "loop-state.json")}`,
+    `- Plan: ${planFile}`,
+    `- Progress: ${join(dir, "progress.md")}`,
+    "",
+  ];
+
+  if (checkpointContent) {
+    parts.push(
+      `## Last Checkpoint`,
+      "```markdown",
+      checkpointContent.trim(),
+      "```",
+      "",
+    );
+  }
+
+  parts.push(
+    `## Instructions`,
+    `1. Read the plan file to understand the full scope`,
+    `2. Read the checkpoint above to understand where we left off`,
+    `3. Execute unit ${state.next_unit} using /opc with the ${contextHints.recommended_flow} flow`,
+    `4. After completion, run: opc-harness complete-tick --unit ${state.next_unit} --artifacts <paths> --description "<summary>"`,
+    `5. Then run: opc-harness next-tick to get the next unit`,
+  );
+
+  return parts.filter(l => l != null).join("\n");
 }
 
