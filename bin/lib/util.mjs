@@ -1,7 +1,7 @@
 // Shared utilities used across all harness modules.
 // Single source of truth for getFlag, resolveDir, atomicWriteSync, constants.
 
-import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, existsSync, mkdirSync } from "fs";
+import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
 import { resolve, join } from "path";
 import { createHash, randomBytes } from "crypto";
 import { homedir } from "os";
@@ -79,6 +79,9 @@ export function createSessionDir(cwd = process.cwd()) {
   symlinkSync(sessionId, tmpLink);  // relative target
   renameSync(tmpLink, latestLink);
 
+  // Auto-GC: clean sessions older than 7 days (best-effort, never crash init)
+  try { gcSessions(cwd); } catch { /* ignore */ }
+
   return sessionDir;
 }
 
@@ -98,4 +101,46 @@ export function getLatestSessionDir(cwd = process.cwd()) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Delete session dirs older than maxAgeDays in the given project's sessions base.
+ * Returns { deleted: string[], errors: string[] }.
+ */
+export function gcSessions(cwd = process.cwd(), { maxAgeDays = 7 } = {}) {
+  const base = getSessionsBaseDir(cwd);
+  const deleted = [];
+  const errors = [];
+  if (!existsSync(base)) return { deleted, errors };
+
+  const cutoff = Date.now() - maxAgeDays * 86400_000;
+  try {
+    const entries = readdirSync(base, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name === "latest") continue;
+      const dir = join(base, e.name);
+      try {
+        const st = statSync(join(dir, "flow-state.json"));
+        if (st.mtimeMs < cutoff) {
+          rmSync(dir, { recursive: true, force: true });
+          deleted.push(e.name);
+        }
+      } catch {
+        // No flow-state.json or unreadable — skip (don't delete unknown dirs)
+      }
+    }
+  } catch (err) {
+    errors.push(err.message);
+  }
+  return { deleted, errors };
+}
+
+/**
+ * CLI: opc-harness gc [--max-age <days>] [--base <cwd>]
+ */
+export function cmdGc(args) {
+  const maxAge = parseInt(getFlag(args, "max-age", "7"), 10);
+  const base = getFlag(args, "base", process.cwd());
+  const result = gcSessions(base, { maxAgeDays: maxAge });
+  console.log(JSON.stringify(result));
 }

@@ -10,6 +10,7 @@ import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transit
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
+import { cmdGc } from "./lib/util.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
 import { cmdNextTick } from "./lib/loop-advance.mjs";
@@ -57,6 +58,7 @@ switch (command) {
   case "config":                await cmdConfigResolve(args);    break;
   case "runbook":               cmdRunbook(args);                break;
   case "clean":                 cmdClean(args);                  break;
+  case "gc":                    cmdGc(args);                     break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
