@@ -10,6 +10,9 @@ export const SEVERITY_MAP = {
 export const SEVERITY_RE = /(?:\[?)(🔴|🟡|🔵)(?:\]?)/;
 export const FILE_REF_RE = /[\w./-]+\.\w+:\d+/;
 export const HEDGING_RE = /\bmight\b|\bcould potentially\b|\bconsider\b/i;
+// Aspirational / non-actionable claims — phrases that sound good but commit to nothing
+// Excludes "long-term" and "future improvement" which are legitimate in tech-debt findings
+export const ASPIRATIONAL_RE = /\bshould\s+consider\b|\bworth\s+(?:considering|exploring|investigating)\b|\bit\s+would\s+be\s+(?:nice|good|beneficial|advisable)\b|\bmay\s+want\s+to\b|\bcould\s+(?:be\s+improved|benefit\s+from)\b|\bideally\b|\bin\s+(?:an?\s+)?ideal\s+world\b|\bdown\s+the\s+(?:road|line)\b/i;
 export const VERDICT_RE = /VERDICT:\s*(.+)/i;
 export const FINDINGS_N_RE = /FINDINGS\s*\[(\d+)\]/i;
 
@@ -245,6 +248,17 @@ export function parseEvaluation(text) {
   const findingsWithoutFix = findings.filter(f => !f.fix).length;
   const missingFixRatio = findingsCount > 0 ? findingsWithoutFix / findingsCount : 0;
 
+  // Layer: aspirational claims — findings that say "should consider" instead of "must fix"
+  // Only scan finding-context lines (emoji lines, fix lines, reasoning lines) — not prose/summary
+  const findingContextLines = lines.filter(l => {
+    const t = l.trim();
+    return (SEVERITY_RE.test(t) || /^\*{0,2}fix\*{0,2}:/i.test(t) || t.startsWith("→") || /^\*{0,2}reasoning\*{0,2}:/i.test(t)) && !t.startsWith("#");
+  });
+  const aspirationalLines = findingContextLines.filter(l => ASPIRATIONAL_RE.test(l));
+  const aspirationalRatio = findingContextLines.length > 0
+    ? aspirationalLines.length / findingContextLines.length : 0;
+  const aspirationalClaims = aspirationalLines.length >= 3 || (aspirationalRatio > 0.15 && aspirationalLines.length >= 2);
+
   // Layer: line length variance — real prose has varied line lengths
   // Template fill-in tends to produce uniform lengths
   const contentLineLengths = trimmedLines.filter(l => l.length > 5).map(l => l.length);
@@ -283,5 +297,8 @@ export function parseEvaluation(text) {
     findingsWithoutFix,
     missingFixRatio: Math.round(missingFixRatio * 100),
     lineLengthVarianceLow,
+    // Aspirational claims layer
+    aspirationalClaims,
+    aspirationalLineCount: aspirationalLines.length,
   };
 }

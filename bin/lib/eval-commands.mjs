@@ -3,6 +3,7 @@
 
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag } from "./util.mjs";
 import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
@@ -119,6 +120,7 @@ export function cmdVerify(args) {
 
 // Note: synthesize assumes findings are bugs/issues (review use case).
 export function cmdSynthesize(args) {
+  let _diffFilesCache = null; // cached diff files for changeScopeCoverage
   const dir = args[0];
   const waveIdx = args.indexOf("--wave");
   const nodeIdx = args.indexOf("--node");
@@ -293,6 +295,11 @@ export function cmdSynthesize(args) {
       totals.warning += 1;
       thinEvalWarnings.push(`${roleName}: suspiciously uniform line lengths — possible template fill`);
     }
+    // Layer: aspirational claims — "should consider", "worth exploring" etc.
+    if (parsed.aspirationalClaims) {
+      totals.warning += 1;
+      thinEvalWarnings.push(`${roleName}: ${parsed.aspirationalLineCount} aspirational/non-actionable claims — findings must be concrete, not "should consider"`);
+    }
 
     // Layer: file:line reality check (requires --base) — detect fabricated references
     // This is the highest-value layer because it requires findings to reference REAL code.
@@ -338,6 +345,50 @@ export function cmdSynthesize(args) {
       }
     }
 
+    // Layer: change scope coverage — eval must mention files from the diff
+    // Requires --base AND git to be available. We cache diffFiles across roles.
+    let changeScopeUncovered = false;
+    if (baseDir && parsed.findings_count > 0) {
+      if (_diffFilesCache === null) {
+        try {
+          // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
+          let diffOut = "";
+          try {
+            diffOut = execSync("git diff --name-only HEAD~1", { cwd: baseDir, encoding: "utf8", timeout: 15000 });
+          } catch {
+            try {
+              diffOut = execSync("git show --name-only --format='' HEAD", { cwd: baseDir, encoding: "utf8", timeout: 15000 });
+            } catch { /* git not available or no commits */ }
+          }
+          _diffFilesCache = diffOut.trim().split("\n").filter(f => f.length > 0);
+        } catch {
+          console.error("⚠️  git diff timed out or failed — changeScopeCoverage skipped");
+          _diffFilesCache = [];
+        }
+      }
+      if (_diffFilesCache.length > 0) {
+        const evalLower = text.toLowerCase();
+        const mentionedDiffFiles = _diffFilesCache.filter(df => {
+          const dfLower = df.toLowerCase();
+          // Prefer full path match; fall back to parent/file match; last resort basename
+          if (evalLower.includes(dfLower)) return true;
+          const parts = dfLower.split("/");
+          if (parts.length >= 2) {
+            const parentFile = parts.slice(-2).join("/");
+            if (evalLower.includes(parentFile)) return true;
+          }
+          return evalLower.includes(parts[parts.length - 1]);
+        });
+        const coverageRatio = mentionedDiffFiles.length / _diffFilesCache.length;
+        // If eval covers <30% of diff files and there are ≥2 diff files, flag it
+        if (coverageRatio < 0.3 && _diffFilesCache.length >= 2) {
+          changeScopeUncovered = true;
+          totals.warning += 1;
+          thinEvalWarnings.push(`${roleName}: eval covers ${mentionedDiffFiles.length}/${_diffFilesCache.length} changed files — review must cover change scope`);
+        }
+      }
+    }
+
     roles.push({
       role: roleName,
       critical: parsed.critical,
@@ -355,6 +406,8 @@ export function cmdSynthesize(args) {
       missingReasoningTripped: parsed.findings_count > 0 && parsed.missingReasoningRatio > 50,
       missingFixTripped: parsed.findings_count > 0 && parsed.missingFixRatio > 50,
       lineLengthVarianceLow: parsed.lineLengthVarianceLow || false,
+      aspirationalClaims: parsed.aspirationalClaims || false,
+      changeScopeUncovered: changeScopeUncovered || false,
       invalidRefCount,
     });
 
@@ -374,6 +427,8 @@ export function cmdSynthesize(args) {
     if (role.missingReasoningTripped) compoundFails++;
     if (role.missingFixTripped) compoundFails++;
     if (role.lineLengthVarianceLow) compoundFails++;
+    if (role.aspirationalClaims) compoundFails++;
+    if (role.changeScopeUncovered) compoundFails++;
     if (role.invalidRefCount > 0) compoundFails += 2; // weighted: fabricated refs
     role._compoundFails = compoundFails;
   }
@@ -410,6 +465,52 @@ export function cmdSynthesize(args) {
   if (iterationN && parseInt(iterationN) >= 2 && thinEvalWarnings.length > 0) {
     verdict = "FAIL";
     reason = `eval quality warnings persist after ${iterationN} iterations — escalating to FAIL`;
+  }
+
+  // ── Evaluator guidance (feedback loop) ───────────────────────────
+  // When D2 triggers, generate per-role guidance so the orchestrator can
+  // inject actionable hints into the R2 evaluator prompt.
+  const ALL_LAYER_KEYS = [
+    "thinEval", "noCodeRefs", "lowUniqueContent", "singleHeading",
+    "findingDensityLow", "missingReasoningTripped", "missingFixTripped",
+    "lineLengthVarianceLow", "aspirationalClaims", "changeScopeUncovered", "invalidRefCount",
+  ];
+  const LAYER_HINTS = {
+    thinEval: "Eval is under 50 lines — add detailed per-finding reasoning, fix suggestions, and file:line references",
+    noCodeRefs: "No file:line references found — cite specific code locations for every finding",
+    lowUniqueContent: "Low unique content ratio — avoid repeating phrases; each finding must add distinct value",
+    singleHeading: "Only 1 heading in 30+ lines — structure the eval with sections (Summary, Findings, Verdict)",
+    findingDensityLow: "Finding density too low — remove filler prose, keep findings dense and specific",
+    missingReasoningTripped: "Over half of findings lack reasoning — every finding must explain WHY it matters",
+    missingFixTripped: "Over half of findings lack fix suggestions — every finding must say HOW to fix",
+    lineLengthVarianceLow: "Suspiciously uniform line lengths — write naturally, not from a template",
+    aspirationalClaims: "Too many aspirational claims ('should consider', 'worth exploring') — findings must be concrete and actionable",
+    changeScopeUncovered: "Eval covers <30% of changed files — review must address the full change scope",
+    invalidRefCount: "Fabricated file:line references detected — only cite files and lines that actually exist",
+  };
+  // Exhaustive check: every layer must have a hint (catches stale hint map on new layer addition)
+  for (const k of ALL_LAYER_KEYS) {
+    if (!LAYER_HINTS[k]) throw new Error(`LAYER_HINTS missing key: ${k} — add a hint for the new layer`);
+  }
+  let evaluatorGuidance = undefined;
+  if (qualityFailRoles.length > 0) {
+    evaluatorGuidance = {};
+    for (const role of qualityFailRoles) {
+      const triggered = [];
+      const hints = [];
+      if (role.thinEval) { triggered.push("thinEval"); hints.push(LAYER_HINTS.thinEval); }
+      if (role.noCodeRefs && role.findingsCount > 0) { triggered.push("noCodeRefs"); hints.push(LAYER_HINTS.noCodeRefs); }
+      if (role.lowUniqueContent) { triggered.push("lowUniqueContent"); hints.push(LAYER_HINTS.lowUniqueContent); }
+      if (role.singleHeading) { triggered.push("singleHeading"); hints.push(LAYER_HINTS.singleHeading); }
+      if (role.findingDensityLow) { triggered.push("findingDensityLow"); hints.push(LAYER_HINTS.findingDensityLow); }
+      if (role.missingReasoningTripped) { triggered.push("missingReasoningTripped"); hints.push(LAYER_HINTS.missingReasoningTripped); }
+      if (role.missingFixTripped) { triggered.push("missingFixTripped"); hints.push(LAYER_HINTS.missingFixTripped); }
+      if (role.lineLengthVarianceLow) { triggered.push("lineLengthVarianceLow"); hints.push(LAYER_HINTS.lineLengthVarianceLow); }
+      if (role.aspirationalClaims) { triggered.push("aspirationalClaims"); hints.push(LAYER_HINTS.aspirationalClaims); }
+      if (role.changeScopeUncovered) { triggered.push("changeScopeUncovered"); hints.push(LAYER_HINTS.changeScopeUncovered); }
+      if (role.invalidRefCount > 0) { triggered.push("invalidRefCount"); hints.push(LAYER_HINTS.invalidRefCount); }
+      evaluatorGuidance[role.role] = { triggeredLayers: triggered, hints };
+    }
   }
 
   // ── Tier baseline coverage check ──────────────────────────────
@@ -546,6 +647,7 @@ export function cmdSynthesize(args) {
     evalQualityGate: qualityFailRoles.length > 0
       ? { triggered: true, mode: strict ? "enforce" : "shadow", roles: qfDetail }
       : undefined,
+    evaluatorGuidance,
     testPlanCoverage: testPlanCoverage || undefined,
   }, null, 2));
 }

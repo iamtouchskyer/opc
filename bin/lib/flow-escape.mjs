@@ -6,7 +6,7 @@ import { join } from "path";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 import { cmdTransition } from "./flow-transition.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync,
+  getFlag, resolveDir, atomicWriteSync, getSessionsBaseDir,
   WRITER_SIG,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
@@ -290,6 +290,19 @@ export function cmdLs(args) {
 
   // Scan the base dir
   scanBaseDir(baseDir);
+
+  // Scan ~/.opc/sessions/{project-hash}/ for session-based flows
+  try {
+    const sessionsBase = getSessionsBaseDir(baseDir === "." ? process.cwd() : baseDir);
+    if (existsSync(sessionsBase)) {
+      const sessions = readdirSync(sessionsBase, { withFileTypes: true });
+      for (const s of sessions) {
+        if (s.isDirectory() && s.name !== "latest") {
+          addCandidate(join(sessionsBase, s.name));
+        }
+      }
+    }
+  } catch { /* ~/.opc not available */ }
 
   // --recursive: also scan one level deep (*/.harness/) for monorepo support
   if (recursive) {

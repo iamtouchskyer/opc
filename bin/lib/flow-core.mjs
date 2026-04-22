@@ -7,7 +7,7 @@ import { createHash } from "crypto";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync,
+  getFlag, resolveDir, atomicWriteSync, createSessionDir,
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
@@ -63,7 +63,8 @@ export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
   const autoMode = args.includes("--auto");
-  const dir = resolveDir(args);
+  const hasExplicitDir = args.includes("--dir");
+  const dir = hasExplicitDir ? resolveDir(args) : createSessionDir();
 
   if (tier && !VALID_TIERS.has(tier)) {
     console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
@@ -182,7 +183,7 @@ export async function cmdInit(args) {
   vizLines.push("");
   console.error(vizLines.join("\n"));
 
-  console.log(JSON.stringify({ created: true, flow, entry: entryNode, tier: tier || null }));
+  console.log(JSON.stringify({ created: true, flow, entry: entryNode, tier: tier || null, dir }));
 }
 
 // ─── validate ───────────────────────────────────────────────────

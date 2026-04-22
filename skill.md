@@ -556,7 +556,7 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 | Command | Usage | Description |
 |---------|-------|-------------|
 | `verify` | `<file>` | Parse evaluation markdown → JSON (severity counts, verdict, findings). |
-| `synthesize` | `<dir> --node <id> [--run N]` | Merge all evaluations for a node → aggregate verdict (PASS/ITERATE/FAIL/BLOCKED). |
+| `synthesize` | `<dir> --node <id> [--run N] [--base <dir>] [--no-strict] [--iteration N]` | Merge all evaluations for a node → aggregate verdict. D2 compound gate enforced by default (≥3 layers → FAIL); `--no-strict` for shadow mode. `--base` validates file:line refs. |
 | `report` | `<dir> --mode <m> --task <t>` | Generate full report JSON with presentation data. |
 | `diff` | `<file1> <file2>` | Compare two evaluation rounds. Detects oscillation. |
 
