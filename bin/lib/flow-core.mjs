@@ -46,13 +46,15 @@ export function cmdRoute(args) {
   }
 
   // Read autoMode from state if available
-  const stateDir = resolveDir(args);
-  const statePath = join(stateDir, "flow-state.json");
+  const stateDir = resolveDir(args, { optional: true });
   let autoReminder;
-  try {
-    const st = JSON.parse(readFileSync(statePath, "utf8"));
-    if (st.autoMode) autoReminder = "auto mode — do not pause, do not ask user, keep executing";
-  } catch { /* no state file, skip */ }
+  if (stateDir) {
+    const statePath = join(stateDir, "flow-state.json");
+    try {
+      const st = JSON.parse(readFileSync(statePath, "utf8"));
+      if (st.autoMode) autoReminder = "auto mode — do not pause, do not ask user, keep executing";
+    } catch { /* no state file, skip */ }
+  }
 
   console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
 }

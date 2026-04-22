@@ -15,15 +15,24 @@ export function getFlag(args, name, fallback = null) {
 // ── Safe directory resolution with path traversal guard ─────────
 // When no --dir is given, prefer the latest session dir (if one exists).
 // Falls back to ".harness" for backward compatibility.
-export function resolveDir(args) {
+export function resolveDir(args, opts = {}) {
   const hasExplicit = args.includes("--dir");
   let raw;
   if (hasExplicit) {
     raw = getFlag(args, "dir", ".harness");
   } else {
-    // Auto-resolve: latest session dir > .harness
+    // Auto-resolve: latest session dir > .harness (if exists) > error
     const latest = getLatestSessionDir();
-    raw = latest || ".harness";
+    if (latest) {
+      raw = latest;
+    } else if (existsSync(resolve(".harness", "flow-state.json"))) {
+      raw = ".harness";  // backward compat: legacy .harness dir with active flow
+    } else if (opts.optional) {
+      return null;  // caller handles missing dir gracefully
+    } else {
+      console.error("ERROR: No active session found. Run `opc-harness init` first.");
+      process.exit(1);
+    }
   }
   const resolved = resolve(raw);
   const cwd = process.cwd();
