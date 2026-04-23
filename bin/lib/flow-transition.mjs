@@ -19,13 +19,32 @@ import { parseBypassArgs } from "./bypass-args.mjs";
 
 export function cmdTransition(args) {
   const from = getFlag(args, "from");
-  const to = getFlag(args, "to");
+  const toRaw = getFlag(args, "to");
   const verdict = getFlag(args, "verdict");
   const dir = resolveDir(args);
 
-  if (!from || !to || !verdict) {
-    console.error("Usage: opc-harness transition --from <node> --to <node> --verdict <V> --flow <template> [--flow-file <path>] --dir <path>");
+  // Normalize: CLI "--to null" arrives as string "null" — treat as JS null (terminal transition)
+  const to = toRaw === "null" ? null : toRaw;
+
+  if (!from || !verdict) {
+    console.error("Usage: opc-harness transition --from <node> --to <node|null> --verdict <V> --flow <template> [--flow-file <path>] --dir <path>");
     process.exit(1);
+  }
+
+  // Terminal transition (to === null): delegate to finalize
+  if (to === null) {
+    // Verify the edge actually goes to null in the template
+    const resolvedTpl = resolveFlowTemplate(args);
+    if (!resolvedTpl.error) {
+      const edges = resolvedTpl.template.edges[from];
+      if (edges && edges[verdict] === null) {
+        // Valid terminal edge — run finalize instead
+        cmdFinalize(args);
+        return;
+      }
+    }
+    console.log(JSON.stringify({ allowed: false, reason: `no terminal edge '${from}' --${verdict}--> null` }));
+    return;
   }
 
   // Try to load _flow_file from existing state before resolving template
