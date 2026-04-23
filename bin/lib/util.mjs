@@ -41,8 +41,10 @@ export function resolveDir(args, opts = {}) {
       process.exit(1);
     }
   }
-  const resolved = resolve(raw);
-  const cwd = process.cwd();
+  let resolved;
+  try { resolved = realpathSync(resolve(raw)); } catch { resolved = resolve(raw); }
+  let cwd;
+  try { cwd = realpathSync(process.cwd()); } catch { cwd = process.cwd(); }
   const opcBase = join(homedir(), ".opc", "sessions");
   // Allow: under cwd OR under ~/.opc/sessions/ (session dirs)
   if (!resolved.startsWith(cwd + "/") && resolved !== cwd && !resolved.startsWith(opcBase + "/")) {
@@ -50,6 +52,14 @@ export function resolveDir(args, opts = {}) {
     process.exit(1);
   }
   return resolved;
+}
+
+// ── Read-only dir resolution (no path traversal guard) ─────────
+// For read-only commands (viz, replay, ext-commands) that need session
+// auto-resolve but don't need write-path guards.
+export function resolveDirReadOnly(args, fallback = ".harness") {
+  if (args.includes("--dir")) return getFlag(args, "dir", fallback);
+  return resolveDir(args, { optional: true }) || fallback;
 }
 
 // ── Atomic file write (rename-based) ────────────────────────────

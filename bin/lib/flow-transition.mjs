@@ -4,6 +4,7 @@
 import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import os from "os";
+import { execSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -413,6 +414,148 @@ export function cmdValidateChain(args) {
     bypassSource,
     waivedRequiredExtensions,
   }));
+}
+
+// ─── advance ──────────────────────────────────────────────────
+// One-click gate advancement: synthesize upstream → route → transition/finalize.
+
+export function cmdAdvance(args) {
+  const dir = resolveDir(args);
+  const statePath = join(dir, "flow-state.json");
+
+  if (!existsSync(statePath)) {
+    console.log(JSON.stringify({ advanced: false, error: "flow-state.json not found" }));
+    return;
+  }
+
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.log(JSON.stringify({ advanced: false, error: `corrupt flow-state.json: ${err.message}` }));
+    return;
+  }
+
+  // Resolve template
+  if (state._flow_file) loadFlowFromFile(state._flow_file);
+  const template = FLOW_TEMPLATES[state.flowTemplate];
+  if (!template) {
+    console.log(JSON.stringify({ advanced: false, error: `unknown flow template: ${state.flowTemplate}` }));
+    return;
+  }
+
+  const currentNode = state.currentNode;
+  const nodeType = template.nodeTypes?.[currentNode] ||
+    (currentNode === "gate" || currentNode.startsWith("gate-") ? "gate" : null);
+
+  if (nodeType !== "gate") {
+    console.log(JSON.stringify({
+      advanced: false,
+      error: `advance only works on gate nodes, current is '${currentNode}' (type: ${nodeType || "unknown"})`,
+    }));
+    return;
+  }
+
+  // Find upstream node: last non-gate entry in history
+  const upstreamEntry = [...state.history].reverse().find(h => {
+    const nt = template.nodeTypes?.[h.nodeId];
+    return nt && nt !== "gate";
+  });
+
+  if (!upstreamEntry) {
+    console.log(JSON.stringify({ advanced: false, error: "cannot find upstream non-gate node in history" }));
+    return;
+  }
+
+  const upstreamNode = upstreamEntry.nodeId;
+
+  // Find the harness binary path (same dir as this module)
+  const harnessPath = join(dirname(import.meta.url.replace("file://", "")), "..", "opc-harness.mjs");
+
+  // Step 1: synthesize
+  console.error(`[advance] synthesizing ${upstreamNode}...`);
+  let synthOutput;
+  try {
+    synthOutput = execSync(
+      `node "${harnessPath}" synthesize --node ${upstreamNode} --dir "${dir}"`,
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+    );
+  } catch (err) {
+    console.log(JSON.stringify({
+      advanced: false,
+      error: `synthesize failed: ${err.stderr || err.message}`,
+      step: "synthesize",
+    }));
+    return;
+  }
+
+  let synthResult;
+  try {
+    synthResult = JSON.parse(synthOutput.trim().split("\n").pop());
+  } catch {
+    synthResult = {};
+  }
+  const verdict = synthResult.verdict || "PASS";
+  console.error(`[advance] verdict: ${verdict}`);
+
+  // Step 2: route
+  console.error(`[advance] routing ${currentNode} --${verdict}-->...`);
+  let routeOutput;
+  try {
+    routeOutput = execSync(
+      `node "${harnessPath}" route --node ${currentNode} --verdict ${verdict} --flow ${state.flowTemplate}${state._flow_file ? ` --flow-file "${state._flow_file}"` : ""} --dir "${dir}"`,
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+    );
+  } catch (err) {
+    console.log(JSON.stringify({
+      advanced: false,
+      error: `route failed: ${err.stderr || err.message}`,
+      step: "route",
+    }));
+    return;
+  }
+
+  let routeResult;
+  try {
+    routeResult = JSON.parse(routeOutput.trim());
+  } catch {
+    console.log(JSON.stringify({ advanced: false, error: `route output not JSON: ${routeOutput}`, step: "route" }));
+    return;
+  }
+
+  if (!routeResult.valid) {
+    console.log(JSON.stringify({ advanced: false, error: `route invalid: ${routeResult.error}`, step: "route" }));
+    return;
+  }
+
+  const next = routeResult.next;
+  console.error(`[advance] next: ${next === null ? "null (terminal)" : next}`);
+
+  // Step 3: transition (or finalize if terminal)
+  const toArg = next === null ? "null" : next;
+  console.error(`[advance] transitioning ${currentNode} → ${toArg}...`);
+  try {
+    const transOutput = execSync(
+      `node "${harnessPath}" transition --from ${currentNode} --to ${toArg} --verdict ${verdict} --flow ${state.flowTemplate}${state._flow_file ? ` --flow-file "${state._flow_file}"` : ""} --dir "${dir}"`,
+      { encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }
+    );
+    let transResult;
+    try { transResult = JSON.parse(transOutput.trim().split("\n").pop()); } catch { transResult = {}; }
+
+    console.log(JSON.stringify({
+      advanced: true,
+      verdict,
+      upstream: upstreamNode,
+      next,
+      transition: transResult,
+    }));
+  } catch (err) {
+    console.log(JSON.stringify({
+      advanced: false,
+      error: `transition failed: ${err.stderr || err.message}`,
+      step: "transition",
+    }));
+  }
 }
 
 // ─── finalize ──────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 // Flow core commands: route, init, validate, validateHandshakeData, validate-context
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker), util.mjs
 
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
@@ -405,6 +405,172 @@ export function cmdValidate(args) {
   }
 
   console.log(JSON.stringify({ valid: errors.length === 0, errors }));
+}
+
+// ─── seal ──────────────────────────────────────────────────────
+// Auto-scan a node's run directory and generate handshake.json from found artifacts.
+
+export function cmdSeal(args) {
+  const nodeId = getFlag(args, "node");
+  const runOverride = getFlag(args, "run");
+  const dir = resolveDir(args);
+
+  if (!nodeId) {
+    console.error("Usage: opc-harness seal --node <nodeId> [--run <N>] [--dir <path>]");
+    process.exit(1);
+  }
+
+  // Read flow state for template info
+  const statePath = join(dir, "flow-state.json");
+  if (!existsSync(statePath)) {
+    console.log(JSON.stringify({ sealed: false, error: "flow-state.json not found" }));
+    return;
+  }
+
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.log(JSON.stringify({ sealed: false, error: `corrupt flow-state.json: ${err.message}` }));
+    return;
+  }
+
+  // Resolve template for nodeType lookup
+  if (state._flow_file) loadFlowFromFile(state._flow_file);
+  const template = FLOW_TEMPLATES[state.flowTemplate];
+  if (!template) {
+    console.log(JSON.stringify({ sealed: false, error: `unknown flow template: ${state.flowTemplate}` }));
+    return;
+  }
+
+  const nodeType = template.nodeTypes?.[nodeId] || (nodeId.startsWith("gate") ? "gate" : "build");
+
+  // Find the latest run dir
+  const nodeDir = join(dir, "nodes", nodeId);
+  if (!existsSync(nodeDir)) {
+    console.log(JSON.stringify({ sealed: false, error: `node dir not found: nodes/${nodeId}` }));
+    return;
+  }
+
+  let runDir;
+  if (runOverride) {
+    runDir = join(nodeDir, `run_${runOverride}`);
+  } else {
+    // Find latest run_N
+    const runs = readdirSync(nodeDir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+      .sort((a, b) => {
+        const na = parseInt(a.name.split("_")[1]);
+        const nb = parseInt(b.name.split("_")[1]);
+        return nb - na;
+      });
+    if (runs.length === 0) {
+      console.log(JSON.stringify({ sealed: false, error: `no run_N directories found in nodes/${nodeId}` }));
+      return;
+    }
+    runDir = join(nodeDir, runs[0].name);
+  }
+
+  if (!existsSync(runDir)) {
+    console.log(JSON.stringify({ sealed: false, error: `run dir not found: ${runDir}` }));
+    return;
+  }
+
+  const runId = runDir.split("/").pop();
+
+  // Scan files and classify artifacts
+  const files = readdirSync(runDir);
+  const artifacts = [];
+  const warnings = [];
+
+  for (const f of files) {
+    const lower = f.toLowerCase();
+    let type = null;
+    if (/^eval-.*\.md$/i.test(f)) type = "eval";
+    else if (/^screenshot.*\.(png|jpg|jpeg|gif|webp)$/i.test(f)) type = "screenshot";
+    else if (/^(command-output|cli-output).*\.(txt|log)$/i.test(f) || /\.log$/i.test(f)) type = "cli-output";
+    else if (/^test-.*\.json$/i.test(f)) type = "test-result";
+    else if (lower.endsWith(".md")) type = "source";
+    else if (lower.endsWith(".txt")) type = "source";
+    else continue; // skip unknown files
+
+    artifacts.push({ type, path: `${runId}/${f}` });
+  }
+
+  // Infer verdict from eval files
+  let verdict = null;
+  const evalFiles = artifacts.filter(a => a.type === "eval");
+  if (evalFiles.length > 0) {
+    // Read last eval file, look for VERDICT line
+    const lastEval = evalFiles[evalFiles.length - 1];
+    try {
+      const content = readFileSync(join(nodeDir, lastEval.path), "utf8");
+      const verdictMatch = content.match(/\*\*(?:ITERATE|PASS|FAIL|BLOCKED)\*\*/);
+      if (verdictMatch) {
+        verdict = verdictMatch[0].replace(/\*\*/g, "");
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Review node: warn if < 2 eval files
+  if (nodeType === "review" && evalFiles.length < 2) {
+    warnings.push(`review node has ${evalFiles.length} eval file(s), expected ≥2 for independent review`);
+  }
+
+  // Build handshake
+  const handshake = {
+    nodeId,
+    nodeType,
+    runId,
+    status: "completed",
+    verdict,
+    summary: `Sealed ${artifacts.length} artifacts (${evalFiles.length} evals)`,
+    timestamp: new Date().toISOString(),
+    artifacts,
+    findings: null,
+  };
+
+  // Count findings from eval content
+  let critical = 0, warning = 0, suggestion = 0;
+  for (const a of evalFiles) {
+    try {
+      const content = readFileSync(join(nodeDir, a.path), "utf8");
+      critical += (content.match(/🔴/g) || []).length;
+      warning += (content.match(/🟡/g) || []).length;
+      suggestion += (content.match(/🔵/g) || []).length;
+    } catch { /* skip */ }
+  }
+  if (critical + warning + suggestion > 0) {
+    handshake.findings = { critical, warning, suggestion };
+    // Auto-set verdict if not found from text
+    if (!verdict) {
+      if (critical > 0) verdict = "FAIL";
+      else if (warning > 0) verdict = "ITERATE";
+      else verdict = "PASS";
+      handshake.verdict = verdict;
+    }
+  }
+
+  // Write handshake
+  const handshakePath = join(nodeDir, "handshake.json");
+  atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2) + "\n");
+
+  // Validate
+  const { errors } = validateHandshakeData(handshake, {
+    checkEvidence: nodeType === "execute",
+    baseDir: nodeDir,
+  });
+
+  for (const w of warnings) console.error(`⚠️  ${w}`);
+
+  console.log(JSON.stringify({
+    sealed: true,
+    handshakePath,
+    artifacts: artifacts.length,
+    verdict,
+    validationErrors: errors,
+    warnings,
+  }));
 }
 
 // ─── validate-context ──────────────────────────────────────────

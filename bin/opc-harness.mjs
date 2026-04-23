@@ -5,8 +5,8 @@
 
 import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.mjs";
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
-import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext } from "./lib/flow-core.mjs";
-import { cmdTransition, cmdValidateChain, cmdFinalize } from "./lib/flow-transition.mjs";
+import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal } from "./lib/flow-core.mjs";
+import { cmdTransition, cmdValidateChain, cmdFinalize, cmdAdvance } from "./lib/flow-transition.mjs";
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
@@ -35,6 +35,8 @@ switch (command) {
   case "transition":   cmdTransition(args);    break;
   case "validate-chain": cmdValidateChain(args); break;
   case "finalize":     cmdFinalize(args);      break;
+  case "seal":         cmdSeal(args);          break;
+  case "advance":      cmdAdvance(args);       break;
   case "validate-context": cmdValidateContext(args); break;
   case "viz":          cmdViz(args);           break;
   case "replay":       cmdReplayData(args);    break;
@@ -74,6 +76,8 @@ switch (command) {
     console.log("  validate-context --flow <tpl> [--flow-file <p>] --node <id> [--dir <p>]");
     console.log("                                                     Validate flow-context.json");
     console.log("  finalize [--dir <p>] [--strict]                    Finalize terminal node");
+    console.log("  seal --node <id> [--run <N>] [--dir <p>]           Auto-generate handshake from artifacts");
+    console.log("  advance [--dir <p>]                                One-click gate: synthesize→route→transition");
     console.log("  viz --flow <tpl> [--flow-file <p>] [--dir <p>] [--json]");
     console.log("                                                     Visualize flow graph");
     console.log("  replay [--dir <p>]                                 Export replay data as JSON");

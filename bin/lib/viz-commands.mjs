@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
-import { getFlag, resolveDir } from "./util.mjs";
+import { getFlag, resolveDirReadOnly } from "./util.mjs";
 
 export function getMarker(nodeId, state) {
   if (!state) return "○";
@@ -16,7 +16,7 @@ export function getMarker(nodeId, state) {
 
 export function cmdViz(args) {
   // Read-only but needs session auto-resolve so viz works without explicit --dir
-  const dir = args.includes("--dir") ? getFlag(args, "dir") : (resolveDir(args, { optional: true }) || getFlag(args, "dir"));
+  const dir = resolveDirReadOnly(args, null);
   const jsonOut = args.includes("--json");
 
   // Try to load state first for _flow_file auto-restore
@@ -75,7 +75,7 @@ export function cmdViz(args) {
 
 export function cmdReplayData(args) {
   // Read-only but needs session auto-resolve
-  const dir = args.includes("--dir") ? getFlag(args, "dir", ".harness") : (resolveDir(args, { optional: true }) || ".harness");
+  const dir = resolveDirReadOnly(args);
 
   const statePath = join(dir, "flow-state.json");
   if (!existsSync(statePath)) {
