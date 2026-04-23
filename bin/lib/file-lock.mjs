@@ -3,6 +3,7 @@
 // Depends on: (none — self-contained)
 
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import { randomBytes } from "crypto";
 
 // Synchronous sleep without spawning a shell process.
 // Uses SharedArrayBuffer + Atomics.wait for zero-dependency sync delay.
@@ -71,8 +72,10 @@ export function lockFile(filePath, opts = {}) {
 
     // Attempt to create the lock atomically using O_EXCL (O_CREAT|O_EXCL).
     // If the file already exists, writeFileSync with flag "wx" throws EEXIST.
+    const nonce = randomBytes(8).toString("hex");
     const lockData = {
       pid: process.pid,
+      nonce,
       timestamp: new Date().toISOString(),
       command,
     };
@@ -105,10 +108,10 @@ export function lockFile(filePath, opts = {}) {
     // Lock acquired — return release function
     const release = () => {
       try {
-        // Only remove if we still own it
+        // Only remove if we still own it (check pid + nonce to prevent PID-reuse race)
         if (existsSync(lockPath)) {
           const current = JSON.parse(readFileSync(lockPath, "utf8"));
-          if (current.pid === process.pid) {
+          if (current.pid === process.pid && current.nonce === nonce) {
             unlinkSync(lockPath);
           }
         }

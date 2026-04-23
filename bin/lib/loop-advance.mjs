@@ -153,8 +153,21 @@ export function cmdNextTick(args) {
   // Concurrent tick guard
   if (state.status === "in_progress") {
     // Crash recovery: if in_progress for longer than timeout, auto-stall
-    const timeoutHours = Number(process.env.OPC_TICK_TIMEOUT_HOURS) || 1;
-    const since = state._in_progress_since || state._last_modified;
+    const rawTimeout = Number(process.env.OPC_TICK_TIMEOUT_HOURS) || 1;
+    const timeoutHours = Math.max(rawTimeout, 0.1); // 6-minute floor
+    const sinceRaw = state._in_progress_since || state._last_modified;
+    // Validate timestamp: must be parseable, in the past, not older than 30 days
+    let since = null;
+    if (sinceRaw) {
+      const sinceMs = new Date(sinceRaw).getTime();
+      const now = Date.now();
+      if (!Number.isNaN(sinceMs) && sinceMs <= now && sinceMs > now - 30 * 24 * 3600000) {
+        since = sinceRaw;
+      } else {
+        // Invalid/future/ancient timestamp — treat as missing, warn
+        since = state._last_modified; // fallback
+      }
+    }
     if (since) {
       const age = Date.now() - new Date(since).getTime();
       const timeoutMs = timeoutHours * 3600000;

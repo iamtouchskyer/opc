@@ -91,17 +91,22 @@ echo "=== TEST GROUP 3: Custom timeout via env var ==="
 FIVE_MIN_AGO=$(node -e "console.log(new Date(Date.now() - 5*60000).toISOString())")
 setup_loop "crash3" "A.2" 1 "in_progress" "$FIVE_MIN_AGO"
 
-# Set timeout to 0.001 hours (~3.6 seconds) — 5min old should trigger
+# Set timeout to 0.05 hours (3 minutes) — 5min old should trigger (floor is 0.1h but 0.05 clamps to 0.1h=6min → too high)
+# Use 10 min old instead so it exceeds the 0.1h (6min) floor
+TEN_MIN_AGO_3=$(node -e "console.log(new Date(Date.now() - 10*60000).toISOString())")
+setup_loop "crash3" "A.2" 1 "in_progress" "$TEN_MIN_AGO_3"
+
+# Timeout clamped to 0.1h (6 min floor); 10 min > 6 min → triggers recovery
 RESULT3=$(OPC_TICK_TIMEOUT_HOURS=0.001 H next-tick --dir crash3)
 check "custom timeout triggers recovery" 'echo "$RESULT3" | grep -q "in_progress_timeout"'
 
 echo ""
 echo "=== TEST GROUP 4: VALID_LOOP_STATUSES export ==="
 
-VSIZE=$(node -e "import { VALID_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(VALID_LOOP_STATUSES.size)" 2>&1)
+VSIZE=$(node --input-type=module -e "import { VALID_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(VALID_LOOP_STATUSES.size)" 2>&1)
 check "VALID_LOOP_STATUSES has 5 entries" '[ "$VSIZE" = "5" ]'
 
-TSIZE=$(node -e "import { TERMINAL_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(TERMINAL_LOOP_STATUSES.size)" 2>&1)
+TSIZE=$(node --input-type=module -e "import { TERMINAL_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(TERMINAL_LOOP_STATUSES.size)" 2>&1)
 check "TERMINAL_LOOP_STATUSES has 3 entries" '[ "$TSIZE" = "3" ]'
 
 echo ""
@@ -111,6 +116,45 @@ setup_loop "term1" "A.1" 0 "stalled"
 echo '{"tests_run": 1}' > "$TMPD/term1/test.json"
 RESULT5=$(H complete-tick --unit A.1 --artifacts "$TMPD/term1/test.json" --description "test" --dir term1)
 check "stalled loop rejects complete-tick" 'echo "$RESULT5" | grep -q "terminated pipeline"'
+
+echo ""
+echo "=== TEST GROUP 6: Tamper detection warning ==="
+
+setup_loop "tamper1" "A.1" 0 "initialized"
+# Tamper: set wrong writer
+node --input-type=module -e "
+import { readFileSync, writeFileSync } from 'fs';
+const s = JSON.parse(readFileSync('$TMPD/tamper1/loop-state.json','utf8'));
+s._written_by = 'manual-edit';
+delete s._write_nonce;
+writeFileSync('$TMPD/tamper1/loop-state.json', JSON.stringify(s, null, 2));
+"
+RESULT6=$(H next-tick --dir tamper1)
+check "tamper warning emitted" 'echo "$RESULT6" | grep -q "not written by opc-harness"'
+
+echo ""
+echo "=== TEST GROUP 7: Timeout floor clamps tiny values ==="
+
+setup_loop "floor1" "A.1" 0 "in_progress"
+# Set _in_progress_since to 10 minutes ago — should NOT trigger with floor of 0.1h (6 min)
+TEN_MIN_AGO=$(node -e "console.log(new Date(Date.now() - 10*60000).toISOString())")
+node --input-type=module -e "
+import { readFileSync, writeFileSync } from 'fs';
+const s = JSON.parse(readFileSync('$TMPD/floor1/loop-state.json','utf8'));
+s._in_progress_since = '$TEN_MIN_AGO';
+writeFileSync('$TMPD/floor1/loop-state.json', JSON.stringify(s, null, 2));
+"
+# With 0.00001h env var, should be clamped to 0.1h — so 10 min < 6 min = no recovery
+# Wait, 10 min > 6 min, so it WOULD recover. Use 3 min instead.
+THREE_MIN_AGO=$(node -e "console.log(new Date(Date.now() - 3*60000).toISOString())")
+node --input-type=module -e "
+import { readFileSync, writeFileSync } from 'fs';
+const s = JSON.parse(readFileSync('$TMPD/floor1/loop-state.json','utf8'));
+s._in_progress_since = '$THREE_MIN_AGO';
+writeFileSync('$TMPD/floor1/loop-state.json', JSON.stringify(s, null, 2));
+"
+RESULT7=$(OPC_TICK_TIMEOUT_HOURS=0.00001 H next-tick --dir floor1)
+check "tiny timeout clamped — no false stall" 'echo "$RESULT7" | grep -q "another tick is in progress"'
 
 echo ""
 echo "==========================================="

@@ -107,7 +107,7 @@ cat > "$TMPD/lock3/loop-state.json.lock" << LOCKEOF
 LOCKEOF
 
 RESULT3=$(H next-tick --dir lock3)
-check "stale lock recovered — next-tick proceeds" 'echo "$RESULT3" | grep -qE "\"ready\":|\"terminate\":|\"reason\":"'
+check "stale lock recovered — next-tick proceeds" 'echo "$RESULT3" | grep -q "\"ready\":true\|\"ready\": true"'
 check "stale lock file removed" '[ ! -f "$TMPD/lock3/loop-state.json.lock" ]'
 
 echo ""
