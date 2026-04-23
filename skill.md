@@ -226,6 +226,28 @@ Before dispatching ANY work, the orchestrator MUST establish a clear definition 
 
 Write the finalized acceptance criteria to `acceptance-criteria.md` (in the session dir) and include them in every subagent prompt.
 
+**Design Reproduction Pre-Flight:** When the task involves reproducing/replicating a visual design from a reference image (keywords: 复刻, replicate, reproduce, reference image, 参考图, design reproduction), the orchestrator MUST run these additional init steps:
+
+1. **Detect reference image** — user provides a path (e.g., `/Users/.../ref.jpg`). Confirm the file exists.
+2. **Extract design spec** — run `analyze_reference.py` to generate a structured spec:
+   ```bash
+   python3 ~/.claude/skills/image-x/scripts/analyze_reference.py <ref_image> --output <session_dir>/spec.json
+   ```
+3. **Write `## Reference` section** in `acceptance-criteria.md`:
+   ```markdown
+   ## Reference
+   - reference_image: /absolute/path/to/ref.jpg
+   - design_spec: /absolute/path/to/session/spec.json
+   ```
+4. **Set quality baseline** for design reproduction:
+   ```markdown
+   ## Quality Baseline (polished)
+   - design-diff overall ≥ 4.0
+   - zero major diffs
+   ```
+
+This enables the full automated loop: build reads spec.json → implementer produces HTML → test-execute screenshots + VLM design-diff → gate reads diffs → ITERATE feeds diffs back to build. See `./pipeline/executor-protocol.md` § "Design Reproduction Mode" for test-execute details.
+
 **Criteria Lint — Mandatory Gate:** After writing `acceptance-criteria.md`, run `opc-harness criteria-lint acceptance-criteria.md` (use the session dir path). If it fails, revise and re-run (max 3 auto-fix attempts in auto mode, user-driven in interactive mode). See `./pipeline/criteria-lint.md` for the mechanical checks. Init is gated — `opc-harness init` refuses to start if criteria-lint hasn't passed.
 
 ### Task Scope — Mandatory for Loop Mode

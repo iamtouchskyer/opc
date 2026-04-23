@@ -147,6 +147,56 @@ When `flow-state.json` has a `tier`, the execute node handshake MUST include:
 
 **Why this is zero trust:** The executor cannot silently pretend a baseline item was tested. Every item must be explicitly enumerated — either with evidence (covered) or with a justified skip (skipped). No hand-waving allowed.
 
+## Design Reproduction Mode
+
+When `acceptance-criteria.md` contains a `## Reference` section with `reference_image:`, the executor MUST run design-diff verification instead of (or in addition to) standard scenario execution.
+
+### Detection
+
+```
+reference_image: /path/to/ref.png
+design_spec: /path/to/spec.json    # optional
+```
+
+If both fields are present, this is a **design reproduction task**.
+
+### Execution Steps
+
+1. **Find generated artifact** — locate the HTML output in `artifacts/` (e.g., `output.html`)
+2. **Screenshot** — convert HTML to PNG using `image-x` html2png:
+   ```bash
+   python3 ~/.claude/skills/image-x/scripts/html2png.py artifacts/output.html --output artifacts/gen.png
+   ```
+3. **VLM design-diff** — the `design-intelligence` extension hook automatically detects `reference_image` in acceptance-criteria.md and runs design-diff mode (ref vs gen). No manual invocation needed.
+4. **Read evidence** — check `ext-design-intelligence/design-diff-evidence.json` for structured diffs:
+   ```json
+   {
+     "verdict": "ITERATE",
+     "overall": 2.7,
+     "diffs": [{"region": "header", "property": "bg", "expected": "#4ac0aa", "actual": "#fff", "severity": "major", "fix": "bg: #4ac0aa"}]
+   }
+   ```
+5. **Write handshake** — include the evidence in the handshake:
+   ```json
+   {
+     "verdict": "ITERATE",
+     "evidence": {
+       "mode": "design-diff",
+       "overall": 2.7,
+       "diffs": [...],
+       "gen_image": "artifacts/gen.png",
+       "ref_image": "/path/to/ref.png"
+     }
+   }
+   ```
+
+### Gate Consumption
+
+The gate reads `evidence.diffs` from the handshake:
+- **PASS**: `overall ≥ 4.0` AND zero major diffs
+- **ITERATE**: below threshold — gate injects `evidence.diffs` into the next build prompt so the implementer knows exactly what to fix
+- **FAIL**: `overall < 2.0` or 3+ consecutive ITERATE rounds — human intervention needed
+
 ## Anti-Patterns
 
 - ❌ Reviewing code instead of running the product
