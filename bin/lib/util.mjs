@@ -59,6 +59,9 @@ export const VALID_STATUSES = new Set(["completed", "failed", "blocked"]);
 export const VALID_VERDICTS = new Set(["PASS", "ITERATE", "FAIL", "BLOCKED"]);
 export const EVIDENCE_TYPES = new Set(["test-result", "screenshot", "cli-output"]);
 
+export const VALID_LOOP_STATUSES = new Set(["initialized", "in_progress", "pipeline_complete", "terminated", "stalled"]);
+export const TERMINAL_LOOP_STATUSES = new Set(["pipeline_complete", "terminated", "stalled"]);
+
 export const WRITER_SIG = "opc-harness";
 export const IDEMPOTENCY_WINDOW_MS = 5000;
 

@@ -168,11 +168,11 @@ assert_contains "node not found" "$OUT" "not a node"
 echo ""
 echo "--- 7.10: goto reentry limit ---"
 rm -rf .h-reentry && $HARNESS init --flow build-verify --dir .h-reentry >/dev/null 2>/dev/null
-for i in 1 2 3 4 5; do
+for i in 1 2 3; do
   $HARNESS goto build --dir .h-reentry >/dev/null
 done
 OUT=$($HARNESS goto build --dir .h-reentry)
-assert_contains "reentry limit" "$OUT" "maxNodeReentry"
+assert_contains "edge limit" "$OUT" "maxLoopsPerEdge"
 
 echo ""
 echo "--- 7.11: ls ---"

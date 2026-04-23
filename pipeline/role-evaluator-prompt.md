@@ -148,8 +148,14 @@ For each criterion:
 ### Domain Findings
 For each finding:
 [SEVERITY] file:line — Issue description
-  → Suggested fix
   reasoning: Why this matters from a {role_name} perspective
+  fix: Concrete suggested fix (code snippet, config change, or specific action)
+
+**IMPORTANT — Finding format requirements:**
+- Every finding MUST have a `reasoning:` line explaining WHY this matters (not just what's wrong)
+- Every finding MUST have a `fix:` line OR a `→` line with a concrete suggested fix
+- The eval parser mechanically validates these markers — findings without `reasoning:` or `fix:` are flagged as thin evals
+- Use exactly `reasoning:` and `fix:` (or `→`) as line prefixes — not `**Why**:`, `**Fix**:`, or other variants
 
 If no issues found: "LGTM — no findings in scope."
 Prioritize: 🔴 first, then 🟡, then 🔵.

@@ -240,9 +240,16 @@ export function cmdGoto(args) {
     const limits = {
       maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
       maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
+      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
     };
     if (state.totalSteps >= limits.maxTotalSteps) {
       console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot goto` }));
+      return;
+    }
+    const edgeKey = `${state.currentNode}→${targetNode}`;
+    const edgeCount = state.edgeCounts?.[edgeKey] || 0;
+    if (edgeCount >= limits.maxLoopsPerEdge) {
+      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot goto` }));
       return;
     }
     const nodeEntries = state.history.filter(h => h.nodeId === targetNode).length;
@@ -255,6 +262,8 @@ export function cmdGoto(args) {
     state.history.push({ nodeId: targetNode, runId, timestamp: new Date().toISOString(), goto: true });
     state.currentNode = targetNode;
     state.totalSteps++;
+    if (!state.edgeCounts) state.edgeCounts = {};
+    state.edgeCounts[edgeKey] = (state.edgeCounts[edgeKey] || 0) + 1;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 

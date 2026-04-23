@@ -1,6 +1,9 @@
 // extensions.mjs — OPC Extension System
 // Loads user extensions from ~/.opc/extensions/, fires hooks at call sites.
 // No module-level singletons — loadExtensions returns a registry object.
+// Deliberate exceptions: _breakerSchemaWarned (one warning per process for schema
+// version mismatch) and _bareCapabilityWarnings (deduplicate bare-string warnings
+// across fire calls within a single process). Both are intentionally process-scoped.
 //
 // ── Activation model (capability contract) ──
 // Extensions declare what they provide:

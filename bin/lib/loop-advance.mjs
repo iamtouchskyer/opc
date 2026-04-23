@@ -6,6 +6,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { parsePlan, hashContent, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
+import { lockFile } from "./file-lock.mjs";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -110,6 +111,13 @@ export function cmdNextTick(args) {
     return;
   }
 
+  const lock = lockFile(statePath, { command: "next-tick" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ ready: false, terminate: false, reason: "could not acquire lock on loop-state.json", holder: lock.holder }));
+    return;
+  }
+  try {
+
   let state;
   try {
     state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -144,6 +152,29 @@ export function cmdNextTick(args) {
 
   // Concurrent tick guard
   if (state.status === "in_progress") {
+    // Crash recovery: if in_progress for longer than timeout, auto-stall
+    const timeoutHours = Number(process.env.OPC_TICK_TIMEOUT_HOURS) || 1;
+    const since = state._in_progress_since || state._last_modified;
+    if (since) {
+      const age = Date.now() - new Date(since).getTime();
+      const timeoutMs = timeoutHours * 3600000;
+      if (age > timeoutMs) {
+        state.status = "stalled";
+        state._stall_reason = `in_progress for ${(age / 3600000).toFixed(1)}h (timeout: ${timeoutHours}h) — auto-recovered from suspected crash`;
+        state._written_by = WRITER_SIG;
+        state._last_modified = new Date().toISOString();
+        atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+        console.log(JSON.stringify({
+          ready: false,
+          terminate: true,
+          reason: `in_progress stale for ${(age / 3600000).toFixed(1)}h — auto-recovered to stalled. Pipeline terminated due to suspected agent crash.`,
+          recovered_from: "in_progress_timeout",
+          stall_reason: state._stall_reason,
+        }));
+        return;
+      }
+    }
+    // Normal case: still within timeout, skip this cron fire
     console.log(JSON.stringify({
       ready: false,
       terminate: false,
@@ -313,6 +344,7 @@ export function cmdNextTick(args) {
 
     // Set in_progress as mutex
     state.status = "in_progress";
+    state._in_progress_since = new Date().toISOString();
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
     atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
@@ -362,6 +394,10 @@ export function cmdNextTick(args) {
     terminate: false,
     error: `plan file '${planFile}' not found — cannot validate next unit`,
   }));
+
+  } finally {
+    lock.release();
+  }
 }
 
 // ── Stall detection helpers ─────────────────────────────────────

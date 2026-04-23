@@ -5,7 +5,8 @@ import { readFileSync, appendFileSync, existsSync, statSync, writeFileSync } fro
 import { join } from "path";
 import { execFileSync } from "child_process";
 import { parsePlan, hashContent, getGitHeadHash, checkScopeCoverage } from "./loop-helpers.mjs";
-import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
+import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG, TERMINAL_LOOP_STATUSES } from "./util.mjs";
+import { lockFile } from "./file-lock.mjs";
 import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 
 // ─── complete-tick ──────────────────────────────────────────────
@@ -40,6 +41,13 @@ export function cmdCompleteTick(args) {
     return;
   }
 
+  const lock = lockFile(statePath, { command: "complete-tick" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ completed: false, errors: ["could not acquire lock on loop-state.json", lock.holder ? `held by: ${lock.holder.command || lock.holder.pid}` : ""].filter(Boolean) }));
+    return;
+  }
+  try {
+
   let state;
   try {
     state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -51,7 +59,7 @@ export function cmdCompleteTick(args) {
   const warnings = [];
 
   // Rule 7: terminated pipeline
-  if (state.status === "pipeline_complete" || state.status === "terminated" || state.status === "stalled") {
+  if (TERMINAL_LOOP_STATUSES.has(state.status)) {
     console.log(JSON.stringify({ completed: false, errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`] }));
     return;
   }
@@ -207,6 +215,10 @@ export function cmdCompleteTick(args) {
     verdict: reviewVerdict,
     warnings: warnings.length > 0 ? warnings : undefined,
   }));
+
+  } finally {
+    lock.release();
+  }
 }
 
 // ── Validation helpers ──────────────────────────────────────────
