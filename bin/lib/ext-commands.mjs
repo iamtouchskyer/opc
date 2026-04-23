@@ -6,7 +6,7 @@ import { readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode, survivingExtensions } from "./extensions.mjs";
-import { getFlag, atomicWriteSync } from "./util.mjs";
+import { getFlag, atomicWriteSync, resolveDir } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadLayeredOpcConfig, stripProvenance } from "./config-layering.mjs";
@@ -74,7 +74,7 @@ export async function cmdPromptContext(args) {
 
   const node = getFlag(args, "node");
   const role = getFlag(args, "role");
-  const dir = getFlag(args, "dir", ".harness");
+  const dir = args.includes("--dir") ? getFlag(args, "dir", ".harness") : (resolveDir(args, { optional: true }) || ".harness");
 
   if (!node || !role) {
     console.error("Usage: opc-harness prompt-context --node <id> --role <role> --dir <harness-dir>");
@@ -401,7 +401,7 @@ export async function cmdExtensionVerdict(args) {
   }
 
   const node = getFlag(args, "node");
-  const dir = getFlag(args, "dir", ".harness");
+  const dir = args.includes("--dir") ? getFlag(args, "dir", ".harness") : (resolveDir(args, { optional: true }) || ".harness");
 
   if (!node) {
     console.error("Usage: opc-harness extension-verdict --node <id> --dir <harness-dir>");
@@ -475,7 +475,7 @@ export async function cmdExtensionArtifact(args) {
   }
 
   const node = getFlag(args, "node");
-  const dir = getFlag(args, "dir", ".harness");
+  const dir = args.includes("--dir") ? getFlag(args, "dir", ".harness") : (resolveDir(args, { optional: true }) || ".harness");
 
   if (!node) {
     console.error("Usage: opc-harness extension-artifact --node <id> --dir <harness-dir>");

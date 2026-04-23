@@ -1,10 +1,11 @@
 // Shared utilities used across all harness modules.
 // Single source of truth for getFlag, resolveDir, atomicWriteSync, constants.
 
-import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
-import { resolve, join } from "path";
+import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, realpathSync } from "fs";
+import { resolve, join, dirname } from "path";
 import { createHash, randomBytes } from "crypto";
 import { homedir } from "os";
+import { execSync } from "child_process";
 
 // ── CLI flag parsing ────────────────────────────────────────────
 export function getFlag(args, name, fallback = null) {
@@ -31,7 +32,12 @@ export function resolveDir(args, opts = {}) {
     } else if (opts.optional) {
       return null;  // caller handles missing dir gracefully
     } else {
-      console.error("ERROR: No active session found. Run `opc-harness init` first.");
+      const cwd = process.cwd();
+      const hash = getProjectHash(cwd);
+      const base = getSessionsBaseDir(cwd);
+      console.error(`ERROR: No active session found for cwd '${cwd}' (hash: ${hash}).`);
+      console.error(`  Looked in: ${base}/`);
+      console.error(`  Tip: use --dir <path> to target an existing session, or run 'opc-harness ls' to list all.`);
       process.exit(1);
     }
   }
@@ -69,7 +75,32 @@ export const IDEMPOTENCY_WINDOW_MS = 5000;
 // ~/.opc/sessions/{project-hash}/{session-id}/
 // Solves multi-window bug: each init gets its own dir, no clobbering.
 
+/**
+ * Resolve the canonical project root for hashing.
+ * 1. Try git root (covers 99% of real usage — subdirs all hash the same)
+ * 2. Fallback to realpath(cwd) with trailing slash stripped
+ */
+function getProjectRoot(cwd = process.cwd()) {
+  try {
+    const gitRoot = execSync("git rev-parse --show-toplevel", {
+      cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return realpathSync(gitRoot);
+  } catch {
+    // Not a git repo — use normalized cwd
+    try { return realpathSync(cwd).replace(/\/+$/, ""); } catch { return cwd; }
+  }
+}
+
 export function getProjectHash(cwd = process.cwd()) {
+  const root = getProjectRoot(cwd);
+  return createHash("sha256").update(root).digest("hex").slice(0, 12);
+}
+
+/**
+ * Legacy hash: sha256(raw cwd) — used for migration fallback.
+ */
+function getLegacyProjectHash(cwd = process.cwd()) {
   return createHash("sha256").update(cwd).digest("hex").slice(0, 12);
 }
 
@@ -113,22 +144,25 @@ export function createSessionDir(cwd = process.cwd()) {
  * Returns null if no session exists.
  */
 export function getLatestSessionDir(cwd = process.cwd()) {
-  const base = getSessionsBaseDir(cwd);
-  const latestLink = join(base, "latest");
-  try {
-    const target = readlinkSync(latestLink);
-    const resolved = resolve(base, target);
-    // Guard: symlink target must resolve within sessions base dir
-    if (!resolved.startsWith(base + "/")) return null;
-    if (existsSync(join(resolved, "flow-state.json"))) return resolved;
-    // Symlink valid, dir exists, but no flow-state.json — warn
-    if (existsSync(resolved)) {
-      console.error(`WARN: latest session dir '${resolved}' exists but has no flow-state.json — ignoring`);
+  // Try new hash (git-root-based) first, then legacy hash (raw cwd) for migration
+  for (const hash of [getProjectHash(cwd), getLegacyProjectHash(cwd)]) {
+    const base = join(homedir(), ".opc", "sessions", hash);
+    const latestLink = join(base, "latest");
+    try {
+      const target = readlinkSync(latestLink);
+      const resolved = resolve(base, target);
+      // Guard: symlink target must resolve within sessions base dir
+      if (!resolved.startsWith(base + "/")) continue;
+      if (existsSync(join(resolved, "flow-state.json"))) return resolved;
+      // Symlink valid, dir exists, but no flow-state.json — warn
+      if (existsSync(resolved)) {
+        console.error(`WARN: session dir '${resolved}' exists but has no flow-state.json — skipping`);
+      }
+    } catch {
+      // No symlink or unreadable — try next hash
     }
-    return null;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 /**
