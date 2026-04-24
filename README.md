@@ -192,6 +192,8 @@ validate-context --flow <tpl> [--flow-file <p>] --node <id> [--dir <p>]
 finalize [--dir <p>] [--strict]
 viz --flow <tpl> [--flow-file <p>] [--dir <p>] [--json]
 replay [--dir <p>]
+seal --node <id> [--run <N>] [--dir <p>]             # Auto-generate handshake from artifacts
+advance [--dir <p>]                                  # One-click gate: synthesize → route → transition
 ```
 
 ### Escape hatches
@@ -262,7 +264,7 @@ next-tick [--dir <p>]
 bash test/run-all.sh
 ```
 
-84 test files covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, pipeline E2E lint, D2 calibration, and orchestrator-level E2E flow tests.
+92 test files covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, pipeline E2E lint, D2 calibration, seal/advance, session resolution, and orchestrator-level E2E flow tests.
 
 ## Reproducing benchmarks
 
