@@ -35,6 +35,26 @@ python3 -c "from playwright.sync_api import sync_playwright; print('ok')"
 - If a tool is unavailable → set `handshake.status = "blocked"` with reason `BLOCKED: {tool} unavailable`
 - Do not skip silently. Do not fabricate results.
 
+### Step 1b — Dev Server Lifecycle
+
+When executing browser-based evidence capture, ensure a dev server is running:
+
+1. **Check if already running**: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000` (or project-configured port from `package.json`, `.env`, `vite.config.*`, `next.config.*`)
+2. **If not running**: Start it in background and wait for ready:
+   ```bash
+   npm run dev &
+   DEV_PID=$!
+   # Wait for ready (max 30s)
+   for i in $(seq 1 30); do
+     curl -s http://localhost:3000 > /dev/null 2>&1 && break
+     sleep 1
+   done
+   ```
+3. **After evidence capture**: Do NOT kill the server — leave it running for subsequent executor/review ticks in the same flow
+4. **Port detection priority**: `PORT` in `.env` → `vite.config.*` server.port → `next.config.*` → default 3000
+
+The implement tick that builds the app SHOULD leave the dev server running in background. The orchestrator SHOULD NOT kill background processes between ticks.
+
 ### Step 2 — Read Acceptance Criteria
 
 Read from upstream handshake summary and `$SESSION_DIR/progress.md`. Each acceptance criterion becomes a test scenario.

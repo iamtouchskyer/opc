@@ -17,6 +17,7 @@ export function cmdCompleteTick(args) {
   const artifactsRaw = getFlag(args, "artifacts", "");
   const description = getFlag(args, "description", "");
   const status = getFlag(args, "status", "completed");
+  const delta = getFlag(args, "delta", "");
 
   const VALID_TICK_STATUSES = new Set(["completed", "blocked", "failed"]);
 
@@ -177,7 +178,7 @@ export function cmdCompleteTick(args) {
   state._git_head = getGitHeadHash();
 
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
-  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict, description: description || undefined });
+  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict, description: description || undefined, delta: delta || undefined });
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
@@ -203,6 +204,7 @@ export function cmdCompleteTick(args) {
     planFile,
     allUnits,
     state,
+    delta,
   }, warnings);
 
   console.log(JSON.stringify({
@@ -527,7 +529,7 @@ function _accumulateBacklog(dir, unit, artifacts, warnings) {
 function _writeCheckpoint(dir, ctx, warnings) {
   const {
     tick, unit, unitType, status, description,
-    verdict, artifacts, nextUnit, planFile, allUnits, state,
+    verdict, artifacts, nextUnit, planFile, allUnits, state, delta,
   } = ctx;
 
   const fileName = `tick-${tick}-summary.md`;
@@ -565,6 +567,8 @@ function _writeCheckpoint(dir, ctx, warnings) {
     artifacts.length > 0
       ? artifacts.map(a => `- ${a}`).join("\n")
       : "- (none)",
+    "",
+    delta ? `## Technical Delta\n${delta}` : "",
     "",
     `## Recent History`,
     prevTicks || "  (first tick)",

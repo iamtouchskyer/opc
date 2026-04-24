@@ -516,12 +516,26 @@ function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, pla
     );
   }
 
+  // Inject recent technical deltas for cross-tick context
+  const recentDeltas = (state._tick_history || [])
+    .filter(t => t.delta)
+    .slice(-3)
+    .map(t => `- **${t.unit}**: ${t.delta}`)
+    .join("\n");
+  if (recentDeltas) {
+    parts.push(
+      `## Recent Technical Decisions`,
+      recentDeltas,
+      "",
+    );
+  }
+
   parts.push(
     `## Instructions`,
     `1. Read the plan file to understand the full scope`,
     `2. Read the checkpoint above to understand where we left off`,
     `3. Execute unit ${state.next_unit} using /opc with the ${contextHints.recommended_flow} flow`,
-    `4. After completion, run: opc-harness complete-tick --unit ${state.next_unit} --artifacts <paths> --description "<summary>"`,
+    `4. After completion, run: opc-harness complete-tick --unit ${state.next_unit} --artifacts <paths> --description "<summary>" --delta "<technical decisions made>"`,
     `5. Then run: opc-harness next-tick to get the next unit`,
   );
 
