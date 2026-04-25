@@ -81,8 +81,13 @@ cat > nodes/code-review/run_1/eval-backend.md << 'EVAL'
 Traced the new endpoint end-to-end from handler to database layer.
 No functional issues. Observability could be improved as a follow-up.
 EVAL
+cat > nodes/code-review/run_1/eval-skeptic-owner.md << 'EVAL'
+# Skeptic Owner Review
+Verified the mechanism is exercised by real consumers.
+No trust violations found.
+EVAL
 cat > nodes/code-review/handshake.json << 'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-frontend.md"},{"type":"eval","path":"run_1/eval-backend.md"}],"verdict":null}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-frontend.md"},{"type":"eval","path":"run_1/eval-backend.md"},{"type":"eval","path":"run_1/eval-skeptic-owner.md"}],"verdict":null}
 EOF
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 # Now viz should show entryNode code-review as ✅ (not ▶)

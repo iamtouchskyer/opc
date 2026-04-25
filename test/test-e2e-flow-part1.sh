@@ -154,6 +154,7 @@ STATE=$(cat .harness/flow-state.json)
 assert_field_eq "1.2: currentNode = review" "$STATE" "currentNode" '"review"'
 write_good_eval .harness review senior
 write_good_eval .harness review security
+write_good_eval .harness review skeptic-owner
 write_handshake .harness review "Code review complete" "PASS"
 ROUTE=$($HARNESS route --node review --verdict PASS --flow review)
 assert_field_eq "1.3: route next = gate" "$ROUTE" "next" '"gate"'

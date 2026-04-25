@@ -60,6 +60,17 @@ Your output will be mechanically verified. These shortcuts will be caught:
 | "Reviewed all files" | The harness checks every finding has a file:line reference | List only files you actually opened and read |
 | "Should work now" / "Looks fixed" | You didn't re-test after the fix | Run the actual verification and paste output |
 
+## Visual & Image Artifact Requirements
+
+When the artifact under review is visual (images, UI screenshots, covers, diagrams, design output):
+
+1. **Quantify every finding** — Don't say "looks smaller." Say "title is 48px vs reference 72px (33% reduction)." Don't say "style differs." Say "background gradient missing: reference has radial-gradient with #2a1845 at top, output is flat #0d1525."
+2. **Before/after comparison mandatory** — Load the original (or a sibling from the same series) and diff. Report specific differences with measurements.
+3. **Reference overlay** — For each visual finding, cite the reference file path and the specific region/element.
+4. **No rationalization** — "Known tradeoff of the approach" is not an acceptable finding disposition. If the output differs from what was asked, report it as a finding regardless of why.
+
+Findings without quantified evidence for visual artifacts are automatically classified as ungrounded and may be rejected by the synthesize gate.
+
 ## Design Context Brief (if provided)
 {Design Context Brief — if provided, respect these decisions, do not flag them}
 

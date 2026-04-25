@@ -110,3 +110,31 @@ Always inform the user of the gate outcome:
 - ❌ Continuing after `allowed: false` without user consent
 - ❌ "Acknowledging" a 🟡 finding without writing it to backlog.md — this is how findings get lost
 - ❌ Dismissing devil's advocate product concerns as "not code-blocking" without tracking them
+
+## Conflict of Interest — Builder as Orchestrator
+
+When the orchestrator also performed the build (same session, same agent):
+
+1. **The orchestrator MUST NOT override gate verdicts.** Specifically:
+   - ITERATE verdict → orchestrator cannot rationalize warnings as "pre-existing" or "acceptable"
+   - FAIL verdict → orchestrator cannot downgrade to ITERATE
+   - Only the USER can override verdicts when conflict-of-interest applies
+
+2. **Detection**: If the current session's build node was executed by the orchestrator (not a subagent in a worktree), conflict-of-interest is assumed.
+
+3. **Escalation**: When conflict-of-interest is detected and verdict is not PASS:
+   - Show the user: verdict, all findings summary, and the specific warnings
+   - Ask: "Gate verdict is {VERDICT}. As builder, I have a conflict of interest. Accept findings and iterate, or override? [iterate/override]"
+   - Do NOT pre-fill the answer or suggest overriding
+
+4. **Audit trail**: Any user override must be logged in progress.md: "⚠️ User override: {verdict} → PASS (conflict-of-interest acknowledged)"
+
+## Skeptic-Owner Authority
+
+When multiple reviewers disagree on verdict, **skeptic-owner's verdict takes precedence**. Skeptic-owner is the user's representative in the pipeline — its job is to verify the output matches what was actually asked for.
+
+Concretely:
+- If skeptic-owner says FAIL and others say PASS → treat as FAIL
+- If skeptic-owner says ITERATE and others say PASS → treat as ITERATE
+- If skeptic-owner says PASS and others say ITERATE → the orchestrator MAY escalate to user, but skeptic-owner's PASS carries more weight than other roles' ITERATE
+- The orchestrator MUST NOT dismiss or downgrade skeptic-owner findings under any rationale

@@ -127,6 +127,7 @@ write_handshake .harness build "Implementation done" "PASS" build
 $HARNESS transition --from build --to code-review --verdict PASS --flow full-stack --dir .harness 2>/dev/null
 write_good_eval .harness code-review frontend
 write_good_eval .harness code-review backend
+write_good_eval .harness code-review skeptic-owner
 write_handshake .harness code-review "Review done" "PASS"
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow full-stack --dir .harness 2>/dev/null
 assert_contains "16.1: reached test-design" "$(cat .harness/flow-state.json)" '"test-design"'

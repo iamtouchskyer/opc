@@ -3,8 +3,9 @@
 
 import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import os from "os";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -181,6 +182,69 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
         handshakeErrors: hsErrors,
       }));
       return;
+    }
+  }
+
+  // ── OUT-2: Mandatory role enforcement when transitioning from review nodes ──
+  if (!isGate && fromNodeType === "review") {
+    const rolesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "roles");
+    // roles directory is part of the package — if missing, something is very wrong
+    let roleFiles;
+    try {
+      roleFiles = readdirSync(rolesDir).filter(f => f.endsWith(".md"));
+    } catch (err) {
+      console.log(JSON.stringify({
+        allowed: false,
+        reason: `cannot read roles directory '${rolesDir}': ${err.message} — package may be corrupted`,
+      }));
+      return;
+    }
+    const mandatoryRoles = [];
+    for (const rf of roleFiles) {
+      const rawContent = readFileSync(join(rolesDir, rf), "utf8");
+      const content = rawContent.replace(/\r\n/g, "\n");
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (fmMatch) {
+        const fm = fmMatch[1];
+        if (/mandatory:\s*true/i.test(fm)) {
+          mandatoryRoles.push(rf.replace(/\.md$/, ""));
+        }
+      }
+    }
+    if (mandatoryRoles.length > 0) {
+      const fromHandshakePath = join(dir, "nodes", from, "handshake.json");
+      if (existsSync(fromHandshakePath)) {
+        const hsData = JSON.parse(readFileSync(fromHandshakePath, "utf8"));
+        const evalArtifacts = (hsData.artifacts || []).filter(a => a.type === "eval" || a.type === "evaluation");
+        // Review nodes MUST have eval artifacts
+        if (evalArtifacts.length === 0) {
+          console.log(JSON.stringify({
+            allowed: false,
+            reason: `review node '${from}' has no eval-type artifacts — review nodes must produce evaluations`,
+          }));
+          return;
+        }
+        const allKnownRoles = new Set(roleFiles.map(f => f.replace(/\.md$/, "")));
+        const presentRoles = new Set();
+        for (const a of evalArtifacts) {
+          const match = a.path.match(/eval-([^/]+)\.md$/);
+          if (match) presentRoles.add(match[1]);
+        }
+        // Enforce mandatory roles when ANY present role is a known role from roles/ dir
+        // (skip enforcement only when ALL roles are custom/test — no overlap with roles/ at all)
+        const hasAnyKnownRole = [...presentRoles].some(r => allKnownRoles.has(r));
+        if (hasAnyKnownRole) {
+          const missingRoles = mandatoryRoles.filter(r => !presentRoles.has(r));
+          if (missingRoles.length > 0) {
+            console.log(JSON.stringify({
+              allowed: false,
+              error: `Missing mandatory role evaluations: [${missingRoles.join(", ")}]. Review node must include all mandatory roles.`,
+              missingRoles,
+            }));
+            return;
+          }
+        }
+      }
     }
   }
 
@@ -470,14 +534,15 @@ export function cmdAdvance(args) {
   const upstreamNode = upstreamEntry.nodeId;
 
   // Find the harness binary path (same dir as this module)
-  const harnessPath = join(dirname(import.meta.url.replace("file://", "")), "..", "opc-harness.mjs");
+  const harnessPath = join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
 
   // Step 1: synthesize
   console.error(`[advance] synthesizing ${upstreamNode}...`);
   let synthOutput;
   try {
-    synthOutput = execSync(
-      `node "${harnessPath}" synthesize --node ${upstreamNode} --dir "${dir}"`,
+    synthOutput = execFileSync(
+      "node",
+      [harnessPath, "synthesize", "--node", upstreamNode, "--dir", dir],
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
   } catch (err) {
@@ -502,8 +567,12 @@ export function cmdAdvance(args) {
   console.error(`[advance] routing ${currentNode} --${verdict}-->...`);
   let routeOutput;
   try {
-    routeOutput = execSync(
-      `node "${harnessPath}" route --node ${currentNode} --verdict ${verdict} --flow ${state.flowTemplate}${state._flow_file ? ` --flow-file "${state._flow_file}"` : ""} --dir "${dir}"`,
+    const routeArgs = [harnessPath, "route", "--node", currentNode, "--verdict", verdict, "--flow", state.flowTemplate];
+    if (state._flow_file) routeArgs.push("--flow-file", state._flow_file);
+    routeArgs.push("--dir", dir);
+    routeOutput = execFileSync(
+      "node",
+      routeArgs,
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
   } catch (err) {
@@ -535,8 +604,12 @@ export function cmdAdvance(args) {
   const toArg = next === null ? "null" : next;
   console.error(`[advance] transitioning ${currentNode} → ${toArg}...`);
   try {
-    const transOutput = execSync(
-      `node "${harnessPath}" transition --from ${currentNode} --to ${toArg} --verdict ${verdict} --flow ${state.flowTemplate}${state._flow_file ? ` --flow-file "${state._flow_file}"` : ""} --dir "${dir}"`,
+    const transArgs = [harnessPath, "transition", "--from", currentNode, "--to", toArg, "--verdict", verdict, "--flow", state.flowTemplate];
+    if (state._flow_file) transArgs.push("--flow-file", state._flow_file);
+    transArgs.push("--dir", dir);
+    const transOutput = execFileSync(
+      "node",
+      transArgs,
       { encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }
     );
     let transResult;

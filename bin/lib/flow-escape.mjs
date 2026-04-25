@@ -3,6 +3,9 @@
 
 import { readFileSync, readdirSync, statSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
+import { execFileSync } from "child_process";
+import { dirname } from "path";
+import { fileURLToPath } from "url";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 import { cmdTransition } from "./flow-transition.mjs";
 import {
@@ -155,6 +158,55 @@ export function cmdPass(args) {
     console.log(JSON.stringify({ error: `gate '${current}' PASS \u2192 null (terminal). Use finalize instead.` }));
     return;
   }
+
+  // ── OUT-1: Refuse pass when upstream verdict is ITERATE or FAIL ──
+  // Find the upstream node: the non-gate node that has an edge pointing to this gate
+  const upstreamId = Object.keys(template.edges).find(n => {
+    const nt = template.nodeTypes?.[n];
+    return nt && nt !== "gate" && Object.values(template.edges[n]).includes(current);
+  });
+  if (upstreamId) {
+    const upstreamHandshakePath = join(dir, "nodes", upstreamId, "handshake.json");
+    if (existsSync(upstreamHandshakePath)) {
+      try {
+        const harnessPath = join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
+        const synthOutput = execFileSync(
+          "node",
+          [harnessPath, "synthesize", "--node", upstreamId, "--dir", dir, "--no-strict"],
+          { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+        );
+        // synthesize may output pretty-printed JSON; extract from first { to last }
+        const trimmed = synthOutput.trim();
+        const firstBrace = trimmed.indexOf("{");
+        const lastBrace = trimmed.lastIndexOf("}");
+        const synthResult = JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+        const mechVerdict = synthResult.verdict;
+        if (mechVerdict === "ITERATE" || mechVerdict === "FAIL") {
+          console.log(JSON.stringify({
+            error: `Cannot force-pass: upstream verdict is ${mechVerdict}. Use /opc skip instead.`,
+            allowed: false,
+          }));
+          return;
+        }
+      } catch (err) {
+        // synthesize fails when no eval files exist yet — allow pass
+        // But propagate unexpected errors (e.g. synthesize crashed)
+        const stderr = err.stderr?.toString() || "";
+        const stdout = err.stdout?.toString() || "";
+        const combined = stderr + stdout;
+        // "no eval" / "no artifact" / "not found" patterns indicate no evals exist — safe to pass
+        if (!/no eval|no artifact|not found|does not exist|no runs/i.test(combined)) {
+          console.log(JSON.stringify({
+            error: `synthesize failed unexpectedly: ${stderr || err.message}`,
+            allowed: false,
+          }));
+          return;
+        }
+        // No evals yet — allow pass through
+      }
+    }
+  }
+
   // Delegate to cmdTransition (which has its own locking)
   const transArgs = ["--from", current, "--to", next, "--verdict", "PASS", "--flow", templateName, "--dir", dir];
   if (state._flow_file) transArgs.push("--flow-file", state._flow_file);

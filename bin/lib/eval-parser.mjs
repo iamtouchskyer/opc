@@ -106,9 +106,35 @@ export function parseEvaluation(text) {
       hasFileRefs = true;
     }
 
-    // Severity / finding detection (skip markdown headings and section labels)
+    // Reasoning line — accept: "Reasoning: ...", "**Reasoning:** ...", "→ Reasoning: ..."
+    // NOTE: must check BEFORE severity detection, since severity matches emoji anywhere in line
+    const reasoningRe = /^(?:→\s*)?(?:\*{0,2})reasoning(?:\*{0,2}):\s*/i;
+    if (currentFinding && reasoningRe.test(trimmed)) {
+      currentFinding.reasoning = trimmed.replace(reasoningRe, "").trim();
+      if (HEDGING_RE.test(trimmed)) {
+        hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
+      }
+      continue;
+    }
+
+    // Fix line — accept: "→ ...", "Fix: ...", "**Fix:** ...", "→ Fix: ..."
+    // NOTE: must check BEFORE severity detection, since "→ Fix: ... 🔵 ..." would match severity
+    const fixMatch = currentFinding && (trimmed.startsWith("→") || /^\*{0,2}fix\*{0,2}:/i.test(trimmed));
+    if (fixMatch) {
+      if (trimmed.startsWith("→")) {
+        currentFinding.fix = trimmed.replace(/^→\s*(?:\*{0,2}fix\*{0,2}:\s*)?/i, "").trim();
+      } else {
+        currentFinding.fix = trimmed.replace(/^\*{0,2}fix\*{0,2}:\s*/i, "").trim();
+      }
+      if (HEDGING_RE.test(trimmed)) {
+        hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
+      }
+      continue;
+    }
+
+    // Severity / finding detection (skip markdown headings, tables, and section labels)
     const sevMatch = trimmed.match(SEVERITY_RE);
-    if (sevMatch && !trimmed.startsWith("#")) {
+    if (sevMatch && !trimmed.startsWith("#") && !trimmed.startsWith("|") && !VERDICT_RE.test(trimmed)) {
       const fileMatch = trimmed.match(FILE_REF_RE);
       const dashIdx = trimmed.indexOf("—");
 
@@ -164,29 +190,6 @@ export function parseEvaluation(text) {
       };
 
       if (!trimmed.startsWith("#") && HEDGING_RE.test(trimmed)) {
-        hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
-      }
-      continue;
-    }
-
-    // Fix line — accept: "→ ...", "Fix: ...", "**Fix:** ..."
-    const fixMatch = currentFinding && (trimmed.startsWith("→") || /^\*{0,2}fix\*{0,2}:/i.test(trimmed));
-    if (fixMatch) {
-      if (trimmed.startsWith("→")) {
-        currentFinding.fix = trimmed.slice(1).trim();
-      } else {
-        currentFinding.fix = trimmed.replace(/^\*{0,2}fix\*{0,2}:\s*/i, "").trim();
-      }
-      if (HEDGING_RE.test(trimmed)) {
-        hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
-      }
-      continue;
-    }
-
-    // Reasoning line — accept: "Reasoning: ...", "**Reasoning:** ..."
-    if (currentFinding && /^\*{0,2}reasoning\*{0,2}:/i.test(trimmed)) {
-      currentFinding.reasoning = trimmed.replace(/^\*{0,2}reasoning\*{0,2}:\s*/i, "").trim();
-      if (HEDGING_RE.test(trimmed)) {
         hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
       }
       continue;
