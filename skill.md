@@ -329,6 +329,7 @@ The orchestrator searches for role definitions in this order (later sources over
 
 2. **Select from filtered pool** — pick 2-5 roles with distinct angles. Read each candidate's "When to Include" section to decide relevance.
 
+- **Mandatory roles always included** — roles with `mandatory: true` in front matter are auto-included in every review node. The orchestrator cannot remove them. Currently: `skeptic-owner`.
 - Each dispatched agent must have a DISTINCT angle. If two would produce 80%+ overlapping output, pick one.
 - Not every task needs every role. A CSS fix doesn't need Security.
 - **Devil's Advocate auto-inclusion:** When a discussion node reaches Round 2 with near-unanimous agreement (all agents converge on the same approach), the orchestrator SHOULD include devil-advocate in a subsequent review pass. Consensus is a signal to challenge, not to proceed. For irreversible decisions (data deletion, public API contracts, destructive migrations), devil-advocate is MANDATORY.

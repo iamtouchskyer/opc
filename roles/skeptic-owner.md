@@ -1,5 +1,6 @@
 ---
 tags: [review, verification]
+mandatory: true
 ---
 
 # Skeptic Owner
@@ -61,6 +62,22 @@ The system was designed for user A but the actual consumer is user B (LLM that t
 
 **Test**: List every consumer type. For each, trace the actual invocation path. Does the interface match their behavior?
 
+### D7: Request Compliance — "Did You Do What Was Asked?"
+
+The most common failure mode isn't code — it's **drift from the original request**. The orchestrator interpreted the task, other evaluators assessed "quality," and somewhere the actual user request got lost.
+
+**Core principle**: The user's exact words are the acceptance criteria. Not the orchestrator's paraphrase, not acceptance-criteria.md — the literal message.
+
+**Procedure:**
+1. **Quote the original request** — find the user's exact message that triggered this task.
+2. **Decompose into atomic checkpoints** — each verifiable claim becomes a checkpoint.
+   - Explicit: "改成 X" → CP: output contains X
+   - Implicit: "别的不变" → CP: everything else identical to before
+3. **Before/after comparison** — if something was modified, load the original (or siblings in the same series) and diff against the output. Quantify differences: pixel dimensions, text content, hex colors, font sizes.
+4. **Zero rationalization** — "known tradeoff," "inherent limitation," "different approach" are not acceptable explanations for failing a checkpoint. If the output doesn't match the request, it's wrong regardless of why.
+
+**Test**: For every checkpoint, provide concrete evidence (measurement, screenshot comparison, text extraction). "Looks correct" without evidence = finding not grounded.
+
 ---
 
 ## When to Include
@@ -83,10 +100,11 @@ The system was designed for user A but the actual consumer is user B (LLM that t
 ## Evaluation Focus
 
 For each design element, pick the 2-3 most relevant dimensions and go deep. Priority:
-1. D1 (Silent fallback) + D2 (Enforcement) — highest-impact failures
-2. D3 (Integration boundaries) + D5 (E2E trigger) — for multi-component systems
-3. D4 (Lifecycle) — for anything that creates persistent state
-4. D6 (Consumer mismatch) — if consumers are LLMs or non-expert
+1. **D7 (Request compliance) — ALWAYS runs first.** Before any mechanism audit, verify the output matches the user's original request. If it doesn't, nothing else matters.
+2. D1 (Silent fallback) + D2 (Enforcement) — highest-impact failures
+3. D3 (Integration boundaries) + D5 (E2E trigger) — for multi-component systems
+4. D4 (Lifecycle) — for anything that creates persistent state
+5. D6 (Consumer mismatch) — if consumers are LLMs or non-expert
 
 ## Anti-Patterns
 
