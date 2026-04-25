@@ -73,6 +73,19 @@ Reasoning: The same input is queried many times per request cycle.
 ## Conclusion
 No performance regressions. One optimization opportunity noted.
 EVAL
+    cat > "$dir/nodes/$node/run_1/eval-skeptic-owner.md" << 'EVAL'
+# Skeptic Owner Review
+## D7: Request Compliance
+All checkpoints verified.
+
+## Findings
+🔵 suggestion — handler.js:30 — add integration test for cleanup path
+→ Fix: write test that triggers cleanup and asserts artifact removal
+→ Reasoning: cleanup path is untested, silent failure possible
+
+## Verdict
+VERDICT: MECHANISMS HOLD — PASS.
+EVAL
     cat > "$dir/nodes/$node/handshake.json" << HSEOF
 {
   "nodeId": "$node",
@@ -83,7 +96,8 @@ EVAL
   "timestamp": "2024-01-01T00:00:00Z",
   "artifacts": [
     {"type": "eval", "path": "run_1/eval-security.md"},
-    {"type": "eval", "path": "run_1/eval-performance.md"}
+    {"type": "eval", "path": "run_1/eval-performance.md"},
+    {"type": "eval", "path": "run_1/eval-skeptic-owner.md"}
   ],
   "verdict": null
 }
