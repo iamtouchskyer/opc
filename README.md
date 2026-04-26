@@ -175,13 +175,93 @@ One sentence: who you are and what you care about.
 
 Available immediately, no configuration needed.
 
+## CLI Reference
+
+### Flow commands
+
+```
+init --flow <tpl> [--flow-file <p>] [--entry <node>] [--dir <p>]
+route --node <id> --verdict <V> --flow <tpl> [--flow-file <p>]
+transition --from <n> --to <n> --verdict <V> --flow <tpl> [--flow-file <p>] --dir <p>
+validate <handshake.json>
+validate-chain [--dir <p>]
+validate-context --flow <tpl> [--flow-file <p>] --node <id> [--dir <p>]
+finalize [--dir <p>] [--strict]
+viz --flow <tpl> [--flow-file <p>] [--dir <p>] [--json]
+replay [--dir <p>]
+seal --node <id> [--run <N>] [--dir <p>]             # Auto-generate handshake from artifacts
+advance [--dir <p>]                                  # One-click gate: synthesize → route → transition
+```
+
+### Escape hatches
+
+```
+skip [--dir <p>]          # Skip current node via PASS
+pass [--dir <p>]          # Force-pass current gate
+stop [--dir <p>]          # Terminate flow, preserve state
+goto <nodeId> [--dir <p>] # Jump to a node
+ls [--base <p>]           # List active flows
+```
+
+### Eval commands
+
+```
+verify <file>                                        # Parse evaluation → JSON
+synthesize <dir> --node <id> [--run N]               # Merge evaluations → verdict
+report <dir> --mode <m> --task <t>                   # Generate full report JSON
+diff <file1> <file2>                                 # Compare two evaluation rounds
+tier-baseline --tier <functional|polished|delightful> # Generate P0 test cases for tier
+```
+
+### UX simulation
+
+```
+ux-verdict --dir <p> --run <N>                       # Compute UX verdict from observers
+ux-friction-aggregate --dir <p> --run <N> --output <p> # Aggregate friction points
+criteria-lint <file> [--tier <t>]                    # Lint acceptance criteria DoD
+```
+
+### Config commands
+
+```
+config resolve [--dir <p>]   # Print merged OPC config w/ _source map
+```
+
+### Runbook commands
+
+```
+runbook list [--dir <p>]     # List all runbooks
+runbook show <id> [--dir <p>] # Print runbook details
+runbook match <task...> [--dir <p>] # Match task to best runbook
+```
+
+### Extension commands
+
+```
+extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks] [--fixture-dir <p>] [--lint]
+                                         # Dry-run extension hook(s); --fixture-dir seeds ctx.flowDir; --lint runs authoring checks only
+extension-verdict --node <id> --dir <p>  # Fire verdict.append → writes eval-extensions.{md,json}
+extension-artifact --node <id> --dir <p> # Fire artifact.emit → writes artifacts/
+prompt-context --node <id> --role <role> --dir <p>
+                                         # Fire prompt.append → emit extra prompt context
+```
+
+### Loop commands
+
+```
+init-loop [--plan <file>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]
+reinit-loop --unit <id> --sub-units <csv> [--dir <p>]
+complete-tick --unit <id> --artifacts <a,b> --description <text> [--dir <p>]
+next-tick [--dir <p>]
+```
+
 ## Testing
 
 ```bash
 bash test/run-all.sh
 ```
 
-84 test files covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, pipeline E2E lint, D2 calibration, and orchestrator-level E2E flow tests.
+92 test files covering init-loop, complete-tick, next-tick, review independence, JSON crash recovery, compound defense, scope registry, criteria lint, pipeline E2E lint, D2 calibration, seal/advance, session resolution, and orchestrator-level E2E flow tests.
 
 ## Reproducing benchmarks
 
