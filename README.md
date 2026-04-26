@@ -40,7 +40,11 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 npm install -g @touchskyer/opc
 ```
 
-Skill files are automatically copied to `~/.claude/skills/opc/`.
+Skill files are automatically copied to `~/.claude/skills/opc/`. If the postinstall fails, run `opc install` manually.
+
+#### Claude Code plugin
+
+OPC can also be installed as a Claude Code plugin. The `.claude-plugin/` directory in this repo provides the plugin manifest.
 
 #### Manual install (no npm)
 
