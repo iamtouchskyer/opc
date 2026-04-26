@@ -475,11 +475,10 @@ don't cargo-cult from other examples.
 | `execute@1`                     | generic executor slot                             | execute      |
 | `context-enrichment@1`          | any node the flow stamps with it                  | prompt       |
 
-Also widely used by the `examples/extensions/*` set as a "match all three
-generic review/execute nodes" triple: `["verification@1",
-"design-review@1", "execute@1"]` (see `memex-recall` §10.1,
-`session-logex`, `lint-prompt-length`). User-defined flows can stamp
-arbitrary capability strings — these are just the ones shipped.
+Also widely used as a "match all three generic review/execute nodes"
+triple: `["verification@1", "design-review@1", "execute@1"]` (see the
+`memex-recall` example in §10.1). User-defined flows can stamp arbitrary
+capability strings — these are just the ones shipped.
 
 If you target a node that stamps a capability **not** in this table,
 your `compatibleCapabilities` must list it explicitly. The silent-no-op
@@ -1193,9 +1192,12 @@ its `_source` map so you can debug why a given option won.
 
 ## 10. Full minimal example — memex-recall
 
-The reference "smallest real extension" ships at
-`~/.claude/skills/opc/examples/extensions/memex-recall/`. Reading it end-to-end
-is the fastest way to internalize every pattern this guide teaches.
+> **Note:** The `memex-recall` extension (along with other reference
+> extensions) has moved to a separate repo as of v0.8. The code below is
+> preserved as a walkthrough; for the live source see `opc-extensions`.
+
+Reading this end-to-end is the fastest way to internalize every pattern
+this guide teaches.
 
 ### 10.1 `ext.json`
 
