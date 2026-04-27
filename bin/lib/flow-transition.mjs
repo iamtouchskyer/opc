@@ -214,7 +214,12 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
     if (mandatoryRoles.length > 0) {
       const fromHandshakePath = join(dir, "nodes", from, "handshake.json");
       if (existsSync(fromHandshakePath)) {
-        const hsData = JSON.parse(readFileSync(fromHandshakePath, "utf8"));
+        let hsData;
+        try {
+          hsData = JSON.parse(readFileSync(fromHandshakePath, "utf8"));
+        } catch (e) {
+          throw new Error(`Failed to parse ${fromHandshakePath}: ${e.message}`);
+        }
         const evalArtifacts = (hsData.artifacts || []).filter(a => a.type === "eval" || a.type === "evaluation");
         // Review nodes MUST have eval artifacts
         if (evalArtifacts.length === 0) {
@@ -393,7 +398,12 @@ export function cmdValidateChain(args) {
   try {
     const configPath = join(os.homedir(), ".opc", "config.json");
     if (existsSync(configPath)) {
-      const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+      let cfg;
+      try {
+        cfg = JSON.parse(readFileSync(configPath, "utf8"));
+      } catch (e) {
+        throw new Error(`Failed to parse ${configPath}: ${e.message}`);
+      }
       requiredExtensions = Array.isArray(cfg.requiredExtensions) ? cfg.requiredExtensions : [];
     }
   } catch { /* best effort */ }
@@ -772,7 +782,12 @@ export function cmdFinalize(args) {
   }
   try {
     // Re-read state under lock to prevent TOCTOU
-    const freshState = JSON.parse(readFileSync(statePath, "utf8"));
+    let freshState;
+    try {
+      freshState = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch (e) {
+      throw new Error(`Failed to parse ${statePath}: ${e.message}`);
+    }
     if (freshState.status === "completed") {
       console.log(JSON.stringify({
         finalized: true, flow, terminalNode: currentNode, totalSteps: freshState.totalSteps, note: "already finalized",
