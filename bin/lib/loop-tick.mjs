@@ -337,7 +337,19 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
         } catch { return false; }
       });
       if (!hasTestEvidence) {
-        warnings.push(`test_script '${state._external_validators.test_script}' detected but no artifact contains test runner output — did you run tests?`);
+        errors.push(`test_script '${state._external_validators.test_script}' detected but no artifact contains test runner output — you must actually run tests before completing an implement tick`);
+      }
+    }
+  }
+
+  // Rule 10: evidence timestamp freshness — artifacts must be newer than tick start
+  const tickStart = state._last_modified ? new Date(state._last_modified).getTime() : 0;
+  if (tickStart > 0) {
+    for (const a of artifacts) {
+      if (!existsSync(a)) continue;
+      const mtime = statSync(a).mtimeMs;
+      if (mtime < tickStart) {
+        errors.push(`artifact '${a}' is stale (mtime ${new Date(mtime).toISOString()} < tick start ${state._last_modified}) — evidence must be produced during this tick, not reused from a prior run`);
       }
     }
   }

@@ -21,6 +21,28 @@ export function cmdInitLoop(args) {
   const handlersRaw = getFlag(args, "handlers", null);
   const skipLint = args.includes("--skip-lint");
 
+  // ── G0: Recon file gate ─────────────────────────────────────────
+  const reconFile = getFlag(args, "recon", null);
+  if (reconFile) {
+    if (!existsSync(reconFile)) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [`recon file not found: ${reconFile} — run codebase reconnaissance before planning`],
+        hint: "write a recon summary (directory structure, existing tests, current implementation) to a file and pass its path via --recon",
+      }));
+      return;
+    }
+    const reconSize = readFileSync(reconFile, "utf8").length;
+    if (reconSize < 200) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [`recon file too small (${reconSize} chars, need ≥200) — a meaningful recon must describe the existing codebase`],
+        hint: "include: directory layout, existing tests, relevant source files, what's already implemented",
+      }));
+      return;
+    }
+  }
+
   if (!existsSync(planFile)) {
     console.log(JSON.stringify({
       initialized: false,

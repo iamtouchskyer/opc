@@ -105,6 +105,26 @@ Rationale: matching is cheap (O(#runbooks × #patterns)), and a reused
 plan avoids a full LLM decompose round. See `docs/runbooks.md` for the
 schema and `examples/runbooks/add-feature.md` for a canonical seed.
 
+### Step 0.5 — Codebase Reconnaissance (MANDATORY)
+
+Before decomposing, you MUST explore the existing codebase and write a recon summary. This prevents planning units that duplicate existing work.
+
+**What to capture** (write to `$SESSION_DIR/recon.md`):
+- Directory structure of relevant areas
+- Existing tests and their coverage
+- Already-implemented features related to the task
+- Key files that will be touched
+
+**How to pass it:**
+```bash
+node "$OPC_HARNESS" init-loop \
+  --plan $SESSION_DIR/plan.md \
+  --recon $SESSION_DIR/recon.md \
+  --dir $SESSION_DIR
+```
+
+The harness validates: file exists + ≥ 200 chars. If you skip recon, you risk decomposing into units that rebuild what's already there.
+
 ### Step 1 — Plan Decomposition
 
 Given a task or feature backlog, decompose into **atomic units**. Each unit is one OPC flow invocation.
