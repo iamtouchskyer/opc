@@ -20,6 +20,7 @@ import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
 import { cmdRunbook } from "./lib/runbook-commands.mjs";
 import { cmdClean } from "./lib/clean.mjs";
+import { cmdAudit } from "./lib/audit.mjs";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -61,6 +62,7 @@ switch (command) {
   case "runbook":               cmdRunbook(args);                break;
   case "clean":                 cmdClean(args);                  break;
   case "gc":                    cmdGc(args);                     break;
+  case "audit":                 cmdAudit(args);                  break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
