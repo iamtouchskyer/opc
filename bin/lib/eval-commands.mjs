@@ -422,6 +422,33 @@ export function cmdSynthesize(args) {
     totals.suggestion += parsed.suggestion;
   }
 
+  // ── D1.5: Mandatory role enforcement ──────────────────────────────
+  // Roles with `mandatory: true` in front matter MUST appear in eval output.
+  // If missing, emit warning so gate will ITERATE — forcing orchestrator to re-dispatch.
+  const mandatoryMissing = [];
+  try {
+    const rolesDir = new URL("../../roles/", import.meta.url).pathname;
+    if (existsSync(rolesDir)) {
+      const roleFiles = readdirSync(rolesDir).filter(f => f.endsWith(".md"));
+      for (const rf of roleFiles) {
+        try {
+          const content = readFileSync(join(rolesDir, rf), "utf8");
+          // Quick front matter check for mandatory: true
+          const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+          if (fmMatch && /mandatory:\s*true/i.test(fmMatch[1])) {
+            const roleName = rf.replace(/\.md$/, "");
+            const found = roles.some(r => r.role === roleName);
+            if (!found) {
+              mandatoryMissing.push(roleName);
+              totals.warning += 1;
+              thinEvalWarnings.push(`mandatory role '${roleName}' not present in eval output — orchestrator must dispatch this role`);
+            }
+          }
+        } catch { /* unreadable role file */ }
+      }
+    }
+  } catch { /* roles dir resolution failed — skip */ }
+
   // ── D2: Compound eval quality gate ─────────────────────────────
   for (const role of roles) {
     let compoundFails = 0;
@@ -728,6 +755,7 @@ export function cmdSynthesize(args) {
       ? { triggered: true, mode: strict ? "enforce" : "shadow", roles: qfDetail }
       : undefined,
     evaluatorGuidance,
+    mandatoryMissing: mandatoryMissing.length > 0 ? mandatoryMissing : undefined,
     testPlanCoverage: testPlanCoverage || undefined,
   }, null, 2));
 }
