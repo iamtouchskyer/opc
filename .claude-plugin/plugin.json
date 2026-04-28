@@ -1,7 +1,0 @@
-{
-  "name": "opc",
-  "version": "0.10.0",
-  "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with 11 specialist agents. Every task ends with evaluation. Use when asked to '/opc', 'review with multiple agents', 'multi-role evaluation', 'run opc review', 'one person company', 'team review', 'opc build', 'opc analyze', or 'opc brainstorm'.",
-  "repository": "https://github.com/iamtouchskyer/opc",
-  "owners": ["iamtouchskyer"]
-}

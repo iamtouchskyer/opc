@@ -647,8 +647,82 @@ export function cmdSynthesize(args) {
     }
   }
 
+  // ── Extension rubric sidecar (informational enrichment) ──────────
+  let rubricScore = undefined;
+  let convergenceWarning = undefined;
+  let rubricVersionWarning = undefined;
+  if (targetRunDir) {
+    try {
+      const rubricPath = join(targetRunDir, "ext-design-intelligence", "rubric-verdict.json");
+      if (existsSync(rubricPath)) {
+        rubricScore = JSON.parse(readFileSync(rubricPath, "utf8"));
+      }
+    } catch { /* graceful — rubric is informational */ }
+
+    // ── Fix #2: Version mismatch detection ──
+    if (rubricScore && rubricScore.version) {
+      try {
+        const statePath = join(dir, "flow-state.json");
+        if (existsSync(statePath)) {
+          const flowState = JSON.parse(readFileSync(statePath, "utf8"));
+          if (flowState.extensionVersions) {
+            const diExt = flowState.extensionVersions.find(e => e.name === "design-intelligence");
+            if (diExt && diExt.version !== "unknown" && diExt.version !== rubricScore.version) {
+              rubricVersionWarning = `Rubric version drift: flow pinned ${diExt.version} but current rubric is ${rubricScore.version} — scores may not be comparable across iterations`;
+            }
+          }
+        }
+      } catch { /* graceful */ }
+    }
+
+    // ── Fix #3: Rubric verdict enforcement (polished+ tier) ──
+    if (rubricScore && rubricScore.verdict === "FAIL") {
+      try {
+        const statePath = join(dir, "flow-state.json");
+        if (existsSync(statePath)) {
+          const flowState = JSON.parse(readFileSync(statePath, "utf8"));
+          const tier = flowState.tier || "functional";
+          if (tier === "polished" || tier === "delightful") {
+            if (verdict === "PASS") {
+              verdict = "ITERATE";
+              reason = `${reason}; rubric score ${rubricScore.final.toFixed(1)}/5.0 below threshold (FAIL)`;
+            }
+          }
+        }
+      } catch { /* graceful */ }
+    }
+
+    // ── Fix #4: Convergence detection — max-min across last 3 runs ──
+    if (rubricScore && nodeId) {
+      const runFlag = args.indexOf("--run");
+      const currentRunN = runFlag !== -1 && args[runFlag + 1] ? parseInt(args[runFlag + 1], 10) : null;
+      const iteration = currentRunN || parseInt((targetRunDir.match(/run_(\d+)$/) || [])[1] || "1", 10);
+      if (iteration >= 3) {
+        const recentScores = [rubricScore.final];
+        for (let i = iteration - 1; i >= Math.max(1, iteration - 2); i--) {
+          try {
+            const prevPath = join(dir, "nodes", nodeId, `run_${i}`, "ext-design-intelligence", "rubric-verdict.json");
+            if (existsSync(prevPath)) {
+              const prev = JSON.parse(readFileSync(prevPath, "utf8"));
+              if (prev.final != null) recentScores.push(prev.final);
+            }
+          } catch { /* skip */ }
+        }
+        if (recentScores.length >= 3) {
+          const range = Math.max(...recentScores) - Math.min(...recentScores);
+          if (range < 0.5) {
+            convergenceWarning = `Rubric score stagnant (range ${range.toFixed(2)} across last ${recentScores.length} runs, scores: ${recentScores.map(s => s.toFixed(1)).join("→")}) — feedback may not be actionable`;
+          }
+        }
+      }
+    }
+  }
+
   console.log(JSON.stringify({
     roles, totals, verdict, reason, tierCoverage,
+    rubricScore,
+    rubricVersionWarning,
+    convergenceWarning,
     thinEvalWarnings: thinEvalWarnings.length > 0 ? thinEvalWarnings : undefined,
     evalQualityGate: qualityFailRoles.length > 0
       ? { triggered: true, mode: strict ? "enforce" : "shadow", roles: qfDetail }

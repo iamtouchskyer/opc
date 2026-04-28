@@ -146,6 +146,11 @@ export async function cmdInit(args) {
     const registry = await loadExtensions(bypassCfg);
     // Stamp bypass marker into cache for post-hoc audit
     registry.bypass = bypassRecord;
+    // Pin extension versions into flow-state for rubric freeze rule
+    if (registry.extensions && registry.extensions.length > 0) {
+      state.extensionVersions = registry.extensions.map(e => ({ name: e.name, version: e.meta?.rubricVersion || e.meta?.version || "unknown" }));
+      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    }
     try {
       saveRegistryCache(dir, registry);
     } catch (cacheErr) {
