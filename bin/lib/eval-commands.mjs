@@ -163,13 +163,13 @@ export function cmdSynthesize(args) {
             return nb - na;
           });
         if (runs.length === 0) {
-          console.error(`No runs found for node '${nodeId}' in ${nodeDir}`);
-          process.exit(1);
+          console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `no runs found for node '${nodeId}' in ${nodeDir}` }));
+          return;
         }
         targetRunDir = join(nodeDir, runs[0]);
       } catch (err) {
-        console.error(`Cannot read node dir ${nodeDir}: ${err.message}`);
-        process.exit(1);
+        console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `cannot read node dir ${nodeDir}: ${err.message}` }));
+        return;
       }
     }
 
@@ -178,13 +178,13 @@ export function cmdSynthesize(args) {
         .filter((f) => f.startsWith("eval") && f.endsWith(".md"))
         .map((f) => ({ name: f, path: join(targetRunDir, f) }));
     } catch (err) {
-      console.error(`Cannot read ${targetRunDir}: ${err.message}`);
-      process.exit(1);
+      console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `cannot read ${targetRunDir}: ${err.message}` }));
+      return;
     }
 
     if (files.length === 0) {
-      console.error(`No eval-*.md files in ${targetRunDir}`);
-      process.exit(1);
+      console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `no eval-*.md files in ${targetRunDir}` }));
+      return;
     }
   } else {
     const wave = args[waveIdx + 1];
