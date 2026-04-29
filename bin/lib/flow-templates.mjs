@@ -45,6 +45,7 @@ export const FLOW_TEMPLATES = {
     // Capability contract: what specialist expertise each node requests.
     // Extensions with matching `provides` are auto-activated.
     nodeCapabilities: {
+      build:         ["design-system-injection@1", "design-spec-conformance@1"],
       "code-review": ["code-quality-check@1", "visual-consistency-check@1"],
     },
   },
@@ -82,6 +83,7 @@ export const FLOW_TEMPLATES = {
     },
     // Capability contract — which specialist expertise each node requests.
     nodeCapabilities: {
+      build:             ["design-system-injection@1", "design-spec-conformance@1"],
       "code-review":     ["code-quality-check@1", "visual-consistency-check@1"],
       acceptance:        ["visual-consistency-check@1", "user-simulation@1"],
       audit:             ["security-check@1", "a11y-check@1"],
