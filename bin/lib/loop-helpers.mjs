@@ -2,6 +2,7 @@
 // Depends on: util.mjs
 
 import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 import { createHash } from "crypto";
 import { execFileSync } from "child_process";
 
@@ -142,31 +143,36 @@ export function hashContent(text) {
 
 // ── Git helpers ─────────────────────────────────────────────────
 
-export function getGitHeadHash() {
+export function getGitHeadHash(projectDir) {
   try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000 }).trim();
+    const opts = { encoding: "utf8", timeout: 5000 };
+    if (projectDir) opts.cwd = projectDir;
+    return execFileSync("git", ["rev-parse", "HEAD"], opts).trim();
   } catch {
     return null;
   }
 }
 
-export function detectPreCommitHooks() {
+export function detectPreCommitHooks(projectDir) {
+  const base = projectDir || process.cwd();
   const indicators = [
-    ".husky/pre-commit",
-    ".git/hooks/pre-commit",
-    ".pre-commit-config.yaml",
+    join(base, ".husky/pre-commit"),
+    join(base, ".git/hooks/pre-commit"),
+    join(base, ".pre-commit-config.yaml"),
   ];
   return indicators.some(p => existsSync(p));
 }
 
-export function detectTestScript() {
+export function detectTestScript(projectDir) {
   try {
-    const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+    const pkgPath = projectDir ? join(projectDir, "package.json") : "package.json";
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
     const scripts = pkg.scripts || {};
+    // Return actual command strings (for execution) or false
     return {
-      test: !!scripts.test,
-      lint: !!scripts.lint || !!scripts.eslint,
-      typecheck: !!scripts.typecheck || !!scripts["type-check"] || !!scripts.tsc,
+      test: scripts.test ? `npm run test` : false,
+      lint: scripts.lint ? `npm run lint` : (scripts.eslint ? `npm run eslint` : false),
+      typecheck: scripts.typecheck ? `npm run typecheck` : (scripts["type-check"] ? `npm run type-check` : (scripts.tsc ? `npm run tsc` : false)),
     };
   } catch {
     return { test: false, lint: false, typecheck: false };

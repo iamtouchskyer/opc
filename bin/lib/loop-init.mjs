@@ -1,7 +1,7 @@
 // Loop init command: init-loop
 // Depends on: loop-helpers.mjs, util.mjs
 
-import { readFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
 import {
@@ -20,6 +20,33 @@ export function cmdInitLoop(args) {
   const flowFile = getFlag(args, "flow-file", null);
   const handlersRaw = getFlag(args, "handlers", null);
   const skipLint = args.includes("--skip-lint");
+  const projectDirRaw = getFlag(args, "project-dir", null);
+
+  // Resolve and validate projectDir
+  let projectDir = null;
+  if (projectDirRaw) {
+    projectDir = resolve(projectDirRaw);
+    if (!existsSync(projectDir)) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [`--project-dir path does not exist: ${projectDir}`],
+        status: "invalid_config",
+        detail: `The path '${projectDir}' passed via --project-dir does not exist on the filesystem.`,
+        hint: "verify the path exists and is accessible, or omit --project-dir to use the current working directory",
+      }));
+      return;
+    }
+    if (!statSync(projectDir).isDirectory()) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [`--project-dir path is not a directory: ${projectDir}`],
+        status: "invalid_config",
+        detail: `The path '${projectDir}' exists but is not a directory.`,
+        hint: "pass a directory path, not a file path",
+      }));
+      return;
+    }
+  }
 
   // ── G0: Recon file gate ─────────────────────────────────────────
   const reconFile = getFlag(args, "recon", null);
@@ -28,6 +55,8 @@ export function cmdInitLoop(args) {
       console.log(JSON.stringify({
         initialized: false,
         errors: [`recon file not found: ${reconFile} — run codebase reconnaissance before planning`],
+        status: "missing_recon",
+        detail: `The recon file '${reconFile}' does not exist. Codebase reconnaissance must be completed before planning.`,
         hint: "write a recon summary (directory structure, existing tests, current implementation) to a file and pass its path via --recon",
       }));
       return;
@@ -37,6 +66,8 @@ export function cmdInitLoop(args) {
       console.log(JSON.stringify({
         initialized: false,
         errors: [`recon file too small (${reconSize} chars, need ≥200) — a meaningful recon must describe the existing codebase`],
+        status: "insufficient_recon",
+        detail: `Recon file is only ${reconSize} characters (minimum 200). A meaningful recon must describe the existing codebase structure.`,
         hint: "include: directory layout, existing tests, relevant source files, what's already implemented",
       }));
       return;
@@ -47,6 +78,9 @@ export function cmdInitLoop(args) {
     console.log(JSON.stringify({
       initialized: false,
       errors: [`plan file not found: ${planFile}`],
+      status: "missing_plan",
+      detail: `Expected plan file at '${planFile}' but it does not exist.`,
+      hint: "create plan.md with unit definitions (e.g. '- F1.1: implement — description') or pass --plan <path>",
     }));
     return;
   }
@@ -58,6 +92,9 @@ export function cmdInitLoop(args) {
     console.log(JSON.stringify({
       initialized: false,
       errors: ["no units found in plan — expected lines like '- F1.1: spec — description'"],
+      status: "invalid_plan",
+      detail: "Plan file was found but contains no parseable unit definitions.",
+      hint: "each unit must match pattern: '- ID: type — description' (e.g. '- F1.1: implement — add login form')",
     }));
     return;
   }
@@ -86,6 +123,9 @@ export function cmdInitLoop(args) {
         console.log(JSON.stringify({
           initialized: false,
           errors: ["loop-state.json already exists and is active — use next-tick to advance or delete to restart"],
+          status: "active_loop_exists",
+          detail: `An active loop (status: '${existing.status}', tick: ${existing.tick || 0}) already exists in this directory.`,
+          hint: "run next-tick to continue the existing loop, or delete loop-state.json to start fresh",
         }));
         return;
       }
@@ -97,6 +137,8 @@ export function cmdInitLoop(args) {
       initialized: false,
       errors: structureErrors,
       units: units.map(u => `${u.id}: ${u.type}`),
+      status: "invalid_plan_structure",
+      detail: `Plan has ${structureErrors.length} structural error(s): implement/build units must be followed by review units.`,
       hint: "every implement/build unit must be followed by a review unit before the next implement",
     }));
     return;
@@ -109,6 +151,8 @@ export function cmdInitLoop(args) {
     console.log(JSON.stringify({
       initialized: false,
       errors: ["plan.md has no '## Task Scope' section with SCOPE-N items — every plan must declare what the original task requires so the harness can verify coverage at pipeline end"],
+      status: "missing_scope",
+      detail: "Plan file lacks a '## Task Scope' section. The harness uses scope items to verify all requirements are covered at pipeline completion.",
       hint: "add '## Task Scope' with '- SCOPE-1: ...' items, or pass --skip-scope to bypass",
     }));
     return;
@@ -129,6 +173,8 @@ export function cmdInitLoop(args) {
       console.log(JSON.stringify({
         initialized: false,
         errors: lintResult.failures.map(f => `criteria-lint [${f.check}]: ${f.message}`),
+        status: "criteria_lint_failed",
+        detail: `acceptance-criteria.md failed ${lintResult.failures.length} lint check(s). The criteria are not mechanically valid.`,
         hint: "fix acceptance-criteria.md or pass --skip-lint to bypass",
       }));
       return;
@@ -170,7 +216,8 @@ export function cmdInitLoop(args) {
     _written_by: WRITER_SIG,
     _plan_hash: planHash,
     _last_modified: new Date().toISOString(),
-    _git_head: getGitHeadHash(),
+    _git_head: getGitHeadHash(projectDir),
+    projectDir: projectDir || undefined,
     _tick_history: [],
     _max_total_ticks: units.length * 3,
     _started_at: new Date().toISOString(),
@@ -188,11 +235,11 @@ export function cmdInitLoop(args) {
       if (typeof handlers === "object" && handlers !== null && !Array.isArray(handlers)) {
         state._unit_handlers = handlers;
       } else {
-        console.log(JSON.stringify({ initialized: false, errors: ["--handlers must be a JSON object"] }));
+        console.log(JSON.stringify({ initialized: false, errors: ["--handlers must be a JSON object"], status: "invalid_config", detail: "--handlers value parsed as JSON but is not an object (got array or primitive).", hint: "pass a JSON object mapping unit types to handler commands, e.g. '{\"implement\":\"skill:build\"}'" }));
         return;
       }
     } catch (e) {
-      console.log(JSON.stringify({ initialized: false, errors: [`--handlers is not valid JSON: ${e.message}`] }));
+      console.log(JSON.stringify({ initialized: false, errors: [`--handlers is not valid JSON: ${e.message}`], status: "invalid_config", detail: `--handlers value could not be parsed as JSON: ${e.message}`, hint: "ensure the value is valid JSON, properly quoted for your shell" }));
       return;
     }
   }
@@ -201,8 +248,8 @@ export function cmdInitLoop(args) {
     .update(Date.now().toString() + Math.random().toString())
     .digest("hex").slice(0, 16);
 
-  const hasHooks = detectPreCommitHooks();
-  const testScripts = detectTestScript();
+  const hasHooks = detectPreCommitHooks(projectDir);
+  const testScripts = detectTestScript(projectDir);
   state._external_validators = {
     pre_commit_hooks: hasHooks,
     test_script: testScripts.test,

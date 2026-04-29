@@ -1,8 +1,8 @@
 // Loop tick completion command: complete-tick
 // Depends on: loop-helpers.mjs, util.mjs
 
-import { readFileSync, appendFileSync, existsSync, statSync, writeFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, appendFileSync, existsSync, statSync, writeFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
 import { execFileSync } from "child_process";
 import { parsePlan, hashContent, getGitHeadHash, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG, TERMINAL_LOOP_STATUSES } from "./util.mjs";
@@ -61,7 +61,14 @@ export function cmdCompleteTick(args) {
 
   // Rule 7: terminated pipeline
   if (TERMINAL_LOOP_STATUSES.has(state.status)) {
-    console.log(JSON.stringify({ completed: false, errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`] }));
+    console.log(JSON.stringify({
+      completed: false,
+      errors: [`loop is '${state.status}' — cannot complete ticks on a terminated pipeline`],
+      status: "terminal",
+      reason: `pipeline is in terminal status '${state.status}'`,
+      detail: `The loop entered '${state.status}' state and cannot accept new tick completions. This is a permanent state.`,
+      hint: "re-initialize the loop with init-loop to start a fresh pipeline, or use reinit-loop to decompose stalled units",
+    }));
     return;
   }
 
@@ -100,11 +107,11 @@ export function cmdCompleteTick(args) {
   if (status === "completed") {
     // ── Rule 2+3+6: Evidence validation per unit type ──
     if (unitType.startsWith("implement") || unitType.startsWith("build")) {
-      validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state);
+      validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state, dir);
     } else if (unitType.startsWith("review")) {
       reviewVerdict = validateReviewArtifacts(unit, artifacts, errors, warnings, state);
     } else if (unitType.startsWith("fix")) {
-      validateFixArtifacts(unit, artifacts, errors, warnings, state);
+      validateFixArtifacts(unit, artifacts, errors, warnings, state, dir);
     } else if (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim")) {
       if (artifacts.length === 0) {
         errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
@@ -175,7 +182,7 @@ export function cmdCompleteTick(args) {
   state.review_of_previous = "";
   state._written_by = WRITER_SIG;
   state._last_modified = new Date().toISOString();
-  state._git_head = getGitHeadHash();
+  state._git_head = getGitHeadHash(state.projectDir);
 
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
   state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict, description: description || undefined, delta: delta || undefined });
@@ -227,6 +234,61 @@ export function cmdCompleteTick(args) {
 
 const MAX_ARTIFACT_SIZE = 10 * 1024 * 1024; // 10 MB
 
+function _runTestScript(cmd, loopDir, tick, projectDir, label = "test") {
+  const evidenceDir = join(loopDir, "evidence");
+  mkdirSync(evidenceDir, { recursive: true });
+  const logPath = join(evidenceDir, `tick-${tick + 1}-${label}.log`);
+
+  // Resolve project root: use explicit projectDir, or walk up from loopDir
+  let projectRoot = projectDir || loopDir;
+  if (!projectDir) {
+    let d = loopDir;
+    while (d !== dirname(d)) {
+      if (existsSync(join(d, "package.json")) || existsSync(join(d, ".git"))) {
+        projectRoot = d;
+        break;
+      }
+      d = dirname(d);
+    }
+  }
+
+  let stdout = "", stderr = "", exitCode = 0, timedOut = false;
+  try {
+    stdout = execFileSync("sh", ["-c", cmd], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 5 * 1024 * 1024,
+    });
+  } catch (err) {
+    if (err.killed || err.signal === "SIGTERM") {
+      timedOut = true;
+      exitCode = 124; // conventional timeout exit code (like GNU timeout)
+    } else {
+      exitCode = err.status || 1;
+    }
+    stdout = err.stdout || "";
+    stderr = err.stderr || "";
+  }
+
+  const log = [
+    `# Harness-owned test execution`,
+    `# Command: ${cmd}`,
+    `# CWD: ${projectRoot}`,
+    `# Exit code: ${exitCode}`,
+    timedOut ? `# TIMED OUT after 120s` : "",
+    `# Timestamp: ${new Date().toISOString()}`,
+    ``,
+    `--- stdout ---`,
+    stdout,
+    `--- stderr ---`,
+    stderr,
+  ].filter(Boolean).join("\n");
+
+  try { writeFileSync(logPath, log); } catch { /* best effort */ }
+  return { exitCode, logPath, timedOut };
+}
+
 function _checkArtifactSize(a, errors) {
   const sz = statSync(a).size;
   if (sz > MAX_ARTIFACT_SIZE) {
@@ -236,7 +298,7 @@ function _checkArtifactSize(a, errors) {
   return true;
 }
 
-function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state) {
+function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state, dir) {
   if (artifacts.length === 0) {
     errors.push(`implement unit '${unit}' has no artifacts — must have test evidence`);
   }
@@ -296,7 +358,7 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
   }
 
   // Rule 3: atomic commit
-  const currentHead = getGitHeadHash();
+  const currentHead = getGitHeadHash(state.projectDir);
   if (currentHead && state._git_head && currentHead === state._git_head) {
     errors.push(`git HEAD unchanged since last tick — implement unit must produce a commit`);
   }
@@ -308,7 +370,7 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
       warnings.push("git HEAD hash failed format validation — skipping commit content check");
     } else {
       try {
-        const diffStat = execFileSync("git", ["diff", "--name-only", `${state._git_head}..${currentHead}`], { encoding: "utf8", timeout: 5000 }).trim();
+        const diffStat = execFileSync("git", ["diff", "--name-only", `${state._git_head}..${currentHead}`], { encoding: "utf8", timeout: 5000, cwd: state.projectDir || undefined }).trim();
         const changedFiles = diffStat.split("\n").filter(Boolean);
         const substantiveFiles = changedFiles.filter(f => !f.endsWith(".gitkeep") && !f.endsWith(".keep"));
         if (substantiveFiles.length === 0 && changedFiles.length > 0) {
@@ -320,24 +382,32 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
     }
   }
 
-  // Rule 9: external validator enforcement
+  // Rule 9: external validator enforcement — harness-owned test execution
   if (state._external_validators) {
     if (!state._external_validators.pre_commit_hooks) {
       warnings.push("no pre-commit hooks detected — git commit has no external quality gate (lint/typecheck/format)");
     }
     if (state._external_validators.test_script) {
-      // Check if any artifact mentions test runner output markers
-      // Tightened regex: require numeric context to avoid false positives on "password", "failover" etc.
-      const testRunnerMarkers = /\d+\s*tests?\s*(passed|failed|run)|suites?\s*\d|specs?\s*\d|\d+\s*passing|\d+\s*failing|tests?\s*passed|test result|✓\s*\d|✗\s*\d|✘\s*\d|\d+\s*assertions?/i;
-      const hasTestEvidence = artifacts.some(a => {
-        if (!existsSync(a)) return false;
-        try {
-          const content = readFileSync(a, "utf8");
-          return testRunnerMarkers.test(content);
-        } catch { return false; }
-      });
-      if (!hasTestEvidence) {
-        errors.push(`test_script '${state._external_validators.test_script}' detected but no artifact contains test runner output — you must actually run tests before completing an implement tick`);
+      const testResult = _runTestScript(state._external_validators.test_script, dir, state.tick || 0, state.projectDir);
+      if (testResult.exitCode !== 0) {
+        const reason = testResult.timedOut ? "TIMED OUT (120s)" : `exit ${testResult.exitCode}`;
+        errors.push(`test_script '${state._external_validators.test_script}' failed (${reason}) — implement unit must pass tests. Log: ${testResult.logPath}`);
+      } else {
+        warnings.push(`test_script passed (exit 0). Log: ${testResult.logPath}`);
+      }
+    }
+    if (state._external_validators.lint_script) {
+      const lintResult = _runTestScript(state._external_validators.lint_script, dir, state.tick || 0, state.projectDir, "lint");
+      if (lintResult.exitCode !== 0) {
+        const reason = lintResult.timedOut ? "TIMED OUT (120s)" : `exit ${lintResult.exitCode}`;
+        errors.push(`lint_script '${state._external_validators.lint_script}' failed (${reason}) — code must pass lint. Log: ${lintResult.logPath}`);
+      }
+    }
+    if (state._external_validators.typecheck_script) {
+      const tcResult = _runTestScript(state._external_validators.typecheck_script, dir, state.tick || 0, state.projectDir, "typecheck");
+      if (tcResult.exitCode !== 0) {
+        const reason = tcResult.timedOut ? "TIMED OUT (120s)" : `exit ${tcResult.exitCode}`;
+        errors.push(`typecheck_script '${state._external_validators.typecheck_script}' failed (${reason}) — code must pass type checking. Log: ${tcResult.logPath}`);
       }
     }
   }
@@ -418,7 +488,7 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
   return verdict;
 }
 
-function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
+function validateFixArtifacts(unit, artifacts, errors, warnings, state, dir) {
   // Rule 5: verify eval file integrity from previous review
   if (state._last_review_evals && typeof state._last_review_evals === "object") {
     for (const [evalPath, expectedHash] of Object.entries(state._last_review_evals)) {
@@ -450,9 +520,34 @@ function validateFixArtifacts(unit, artifacts, errors, warnings, state) {
   }
 
   // Rule 3: fix should also commit
-  const currentHead = getGitHeadHash();
+  const currentHead = getGitHeadHash(state.projectDir);
   if (currentHead && state._git_head && currentHead === state._git_head) {
     errors.push(`git HEAD unchanged — fix unit must produce a commit`);
+  }
+
+  // Rule 9: fix must also pass tests + lint + typecheck
+  if (state._external_validators) {
+    if (state._external_validators.test_script) {
+      const testResult = _runTestScript(state._external_validators.test_script, dir, state.tick || 0, state.projectDir);
+      if (testResult.exitCode !== 0) {
+        const reason = testResult.timedOut ? "TIMED OUT (120s)" : `exit ${testResult.exitCode}`;
+        errors.push(`test_script '${state._external_validators.test_script}' failed (${reason}) — fix unit must pass tests. Log: ${testResult.logPath}`);
+      }
+    }
+    if (state._external_validators.lint_script) {
+      const lintResult = _runTestScript(state._external_validators.lint_script, dir, state.tick || 0, state.projectDir, "lint");
+      if (lintResult.exitCode !== 0) {
+        const reason = lintResult.timedOut ? "TIMED OUT (120s)" : `exit ${lintResult.exitCode}`;
+        errors.push(`lint_script '${state._external_validators.lint_script}' failed (${reason}) — fix must pass lint. Log: ${lintResult.logPath}`);
+      }
+    }
+    if (state._external_validators.typecheck_script) {
+      const tcResult = _runTestScript(state._external_validators.typecheck_script, dir, state.tick || 0, state.projectDir, "typecheck");
+      if (tcResult.exitCode !== 0) {
+        const reason = tcResult.timedOut ? "TIMED OUT (120s)" : `exit ${tcResult.exitCode}`;
+        errors.push(`typecheck_script '${state._external_validators.typecheck_script}' failed (${reason}) — fix must pass type checking. Log: ${tcResult.logPath}`);
+      }
+    }
   }
 }
 

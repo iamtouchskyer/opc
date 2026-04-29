@@ -183,6 +183,9 @@ export function cmdNextTick(args) {
           reason: `in_progress stale for ${(age / 3600000).toFixed(1)}h — auto-recovered to stalled. Pipeline terminated due to suspected agent crash.`,
           recovered_from: "in_progress_timeout",
           stall_reason: state._stall_reason,
+          status: "stalled",
+          detail: `Unit was marked in_progress ${(age / 3600000).toFixed(1)}h ago (timeout: ${timeoutHours}h). The agent likely crashed or lost context without completing the tick.`,
+          hint: "resume with next-tick after investigating why the previous agent session ended, or use reinit-loop to restart the stalled unit",
         }));
         return;
       }
@@ -216,6 +219,9 @@ export function cmdNextTick(args) {
       terminate: true,
       reason: `maxTotalTicks (${maxTicks}) reached`,
       total_ticks: state.tick,
+      status: "terminated",
+      detail: `Pipeline consumed all ${maxTicks} allowed ticks (${state.tick} completed) without finishing. This usually means units are being retried too many times.`,
+      hint: "increase _max_total_ticks in loop-state.json, or decompose remaining units into smaller steps via reinit-loop",
     }));
     return;
   }
@@ -235,6 +241,9 @@ export function cmdNextTick(args) {
         terminate: true,
         reason: `wall-clock deadline (${state._max_duration_hours}h) reached after ${elapsed.toFixed(1)}h`,
         elapsed_hours: parseFloat(elapsed.toFixed(1)),
+        status: "terminated",
+        detail: `Pipeline ran for ${elapsed.toFixed(1)}h exceeding the ${state._max_duration_hours}h wall-clock limit. Current tick: ${state.tick}.`,
+        hint: "increase _max_duration_hours in loop-state.json if the task genuinely needs more time, or investigate why progress stalled",
       }));
       return;
     }
@@ -416,26 +425,28 @@ export function cmdNextTick(args) {
 // ── Stall detection helpers ─────────────────────────────────────
 
 function checkStall(state, history, statePath) {
-  if (history.length >= 2) {
-    const last2 = history.slice(-2);
-    if (last2[0].unit === last2[1].unit) {
-      if (history.length >= 3) {
-        const last3 = history.slice(-3);
-        if (last3[0].unit === last3[1].unit && last3[1].unit === last3[2].unit) {
-          state.status = "stalled";
-          state.description = `Stalled on unit '${last3[0].unit}' for 3 consecutive ticks`;
-          state._written_by = WRITER_SIG;
-          state._last_modified = new Date().toISOString();
-          atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  if (history.length >= 3) {
+    const last3 = history.slice(-3);
+    // Only stall if same unit AND none of the 3 ticks succeeded
+    if (last3[0].unit === last3[1].unit && last3[1].unit === last3[2].unit) {
+      const anySuccess = last3.some(t => t.status === "completed" && t.verdict !== "FAIL");
+      if (!anySuccess) {
+        state.status = "stalled";
+        state.description = `Stalled on unit '${last3[0].unit}' for 3 consecutive ticks`;
+        state._written_by = WRITER_SIG;
+        state._last_modified = new Date().toISOString();
+        atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
-          console.log(JSON.stringify({
-            ready: false,
-            terminate: true,
-            reason: `\u26d4 stalled on unit '${last3[0].unit}' for 3 ticks — needs human input`,
-            stalled_unit: last3[0].unit,
-          }));
-          return true;
-        }
+        console.log(JSON.stringify({
+          ready: false,
+          terminate: true,
+          reason: `\u26d4 stalled on unit '${last3[0].unit}' for 3 ticks — needs human input`,
+          stalled_unit: last3[0].unit,
+          status: "stalled",
+          detail: `Unit '${last3[0].unit}' has been attempted 3 consecutive times without advancing. The agent may be stuck in a loop or encountering a persistent blocker.`,
+          hint: "use reinit-loop to decompose the stalled unit into smaller steps, or manually resolve the blocker and restart",
+        }));
+        return true;
       }
     }
   }
@@ -461,6 +472,9 @@ function checkOscillation(state, history, statePath) {
             terminate: true,
             reason: `\u26d4 oscillation stall: '${last6[0].unit}' \u2194 '${last6[1].unit}' for 6 ticks — needs human input`,
             stalled_units: [last6[0].unit, last6[1].unit],
+            status: "stalled",
+            detail: `Units '${last6[0].unit}' and '${last6[1].unit}' are oscillating back and forth without convergence. This typically means a review keeps failing the same implementation.`,
+            hint: "break the cycle by: (1) merging the two units, (2) adding an intermediate unit, or (3) relaxing the review criteria via reinit-loop",
           }));
           return true;
         }
@@ -490,7 +504,7 @@ function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, pla
     `You are resuming an OPC loop pipeline. This is tick ${lastTick + 1}.`,
     "",
     `## Project`,
-    `- Working directory: ${process.cwd()}`,
+    `- Working directory: ${state.projectDir || process.cwd()}`,
     `- Loop directory: ${dir}`,
     "",
     `## Current Unit`,
