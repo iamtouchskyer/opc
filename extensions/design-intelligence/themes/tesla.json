@@ -1,0 +1,50 @@
+{
+  "id": "tesla",
+  "name": "Tesla",
+  "description": "Dark futuristic minimal with signature red accents and clean lines",
+  "tags": [
+    "dark",
+    "futuristic",
+    "minimal",
+    "brand"
+  ],
+  "source": "brand",
+  "tokens": {
+    "color": {
+      "bg": "#171717",
+      "bg-card": "#1e1e1e",
+      "text": "#f5f5f5",
+      "text-muted": "#8a8a8a",
+      "accent": "#e82127",
+      "accent-light": "rgba(232,33,39,0.10)",
+      "accent-hover": "#ff2d33",
+      "border": "#2a2a2a",
+      "passage-bg": "#1a1a1a",
+      "passage-border": "#2a2a2a",
+      "correct-color": "#4caf50",
+      "correct-bg": "rgba(76,175,80,0.08)",
+      "explanation-border": "#e8212744",
+      "cat1": "#e82127",
+      "cat2": "#3b82f6",
+      "cat3": "#10b981",
+      "cat4": "#f59e0b",
+      "cat5": "#8b5cf6",
+      "cat6": "#ec4899"
+    },
+    "typography": {
+      "heading-font": "'Inter',system-ui,sans-serif",
+      "body-font": "'Inter',system-ui,sans-serif"
+    },
+    "shape": {
+      "border-radius": "4px",
+      "card-shadow": "0 1px 3px rgba(0,0,0,0.4)"
+    }
+  },
+  "effects": [
+    "subtle-transition"
+  ],
+  "google-fonts": [
+    "Inter"
+  ],
+  "overrides": ""
+}

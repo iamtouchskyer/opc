@@ -619,7 +619,12 @@ The `transition` command enforces:
 
 **Agent spawn failures:** Retry once. If it fails again, surface to user.
 
-**Context running low:** Write current state to `$SESSION_DIR/flow-state.json` (already maintained by transition commands). The flow-state.json + handshake files carry all state needed to resume. Tell user to re-invoke — orchestrator will detect flow-state.json and resume.
+**Context compaction resilience:** OPC provides PreCompact/PostCompact hooks that automatically snapshot state and inject resume context after compaction. Run `opc install-hooks` to register them. When auto-compact fires:
+1. **PreCompact** writes a resume brief to `$SESSION_DIR/resume-brief.md`
+2. **PostCompact** injects the brief as `additionalContext` into the new context
+3. The orchestrator sees the injection and resumes the flow automatically
+
+If hooks are not installed, the fallback behavior is: flow-state.json persists on disk, but the orchestrator must be manually re-invoked via `/opc` (which runs `opc-harness ls` to discover active flows).
 
 **State recovery:** On resume, run `opc-harness validate-chain`. If inconsistent → surface to user, do not auto-repair.
 
