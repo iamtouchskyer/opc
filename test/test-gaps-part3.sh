@@ -133,6 +133,22 @@ The team has clearly invested in CSS architecture and it shows in the quality.
 
 VERDICT: PASS FINDINGS[1]
 EVAL
+cat > .h-synth2/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize .h-synth2 --node code-review)
 assert_contains "PASS verdict" "$OUT" "PASS"
 assert_contains "LGTM reason" "$OUT" "LGTM\|suggestions only"
@@ -151,15 +167,17 @@ OUT=$($HARNESS synthesize .h-synth3 --node code-review --run 2)
 assert_contains "explicit run" "$OUT" "FAIL"
 
 echo ""
-echo "--- 7.4: Synthesize no runs found exits nonzero ---"
+echo "--- 7.4: Synthesize no runs found → BLOCKED ---"
 rm -rf .h-synth4 && mkdir -p .h-synth4/nodes/code-review
-assert_exit_nonzero "synth no runs" $HARNESS synthesize .h-synth4 --node code-review
+OUT=$($HARNESS synthesize .h-synth4 --node code-review 2>/dev/null)
+assert_contains "synth no runs" "$OUT" "BLOCKED"
 
 echo ""
-echo "--- 7.5: Synthesize no eval files exits nonzero ---"
+echo "--- 7.5: Synthesize no eval files → BLOCKED ---"
 rm -rf .h-synth5 && mkdir -p .h-synth5/nodes/code-review/run_1
 echo "not an eval" > .h-synth5/nodes/code-review/run_1/readme.txt
-assert_exit_nonzero "synth no evals" $HARNESS synthesize .h-synth5 --node code-review
+OUT=$($HARNESS synthesize .h-synth5 --node code-review 2>/dev/null)
+assert_contains "synth no evals" "$OUT" "BLOCKED"
 
 echo ""
 echo "--- 7.6: Synthesize role name from eval.md ---"
@@ -235,6 +253,22 @@ EVAL
 cat > .h-wave/.harness/evaluation-wave-1-round1-security.md << 'EVAL'
 Round 1 draft — should be filtered
 EVAL
+cat > .h-wave/.harness/evaluation-wave-1-skeptic-owner.md << 'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize .h-wave --wave 1)
 assert_contains "round filtered" "$OUT" "PASS"
 assert_not_contains "round not included" "$OUT" "Round 1 draft"

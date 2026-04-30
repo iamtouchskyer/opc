@@ -146,6 +146,23 @@ setup_review_node
   echo "All security and performance aspects are solid."
 } > .harness/nodes/code-review/run_1/eval-suggestions.md
 
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
+
 OUT=$($HARNESS synthesize .harness --node code-review)
 assert_field_eq "suggestions only: PASS" "$OUT" "verdict" '"PASS"'
 assert_gate_not_triggered "suggestions only: no gate" "$OUT"
@@ -246,6 +263,23 @@ setup_review_node
   echo "No action items required before merge."
 } > .harness/nodes/code-review/run_1/eval-lgtm.md
 
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
+
 OUT=$($HARNESS synthesize .harness --node code-review)
 assert_field_eq "LGTM: PASS" "$OUT" "verdict" '"PASS"'
 
@@ -278,6 +312,23 @@ setup_review_node
     esac
   done
 } > .harness/nodes/code-review/run_1/eval-boundary.md
+
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 
 OUT=$($HARNESS synthesize .harness --node code-review)
 # singleHeading(1 heading in 50+ lines) + noCodeRefs(no file:line refs) = 2 layers, threshold is 3

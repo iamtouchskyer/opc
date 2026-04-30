@@ -178,6 +178,7 @@ $HARNESS transition --from build --to code-review --verdict PASS --flow build-ve
 
 write_good_eval .harness code-review frontend
 write_good_eval .harness code-review backend
+write_good_eval .harness code-review skeptic-owner
 write_handshake .harness code-review "Code review done" "PASS"
 ROUTE=$($HARNESS route --node code-review --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")

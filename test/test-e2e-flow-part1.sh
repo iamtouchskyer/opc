@@ -197,6 +197,8 @@ write_good_eval .harness review senior
 mv .harness/nodes/review/run_1/eval-senior.md .harness/nodes/review/run_2/eval-senior.md
 write_good_eval .harness review tester
 mv .harness/nodes/review/run_1/eval-tester.md .harness/nodes/review/run_2/eval-tester.md
+write_good_eval .harness review skeptic-owner
+mv .harness/nodes/review/run_1/eval-skeptic-owner.md .harness/nodes/review/run_2/eval-skeptic-owner.md
 write_handshake .harness review "Review round 2" "PASS"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
 SYNTH=$($HARNESS synthesize .harness --node review --run 2)

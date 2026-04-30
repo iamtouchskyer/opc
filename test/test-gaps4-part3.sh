@@ -119,6 +119,22 @@ body = '\n'.join(['Validated that layer {} now behaves correctly after the fix.'
 footer = '\n\n## Findings\n🔵 suggestion — new.js:2 — minor style thing\n→ Use a more descriptive variable name here\nReasoning: The name does not communicate intent to readers unfamiliar with the module.\n\n🔵 suggestion — new.js:8 — add a brief comment above the helper function\n→ Document the pre-condition the caller must uphold\nReasoning: The function assumes sorted input but this is not obvious from the signature.\n\n## Conclusion\nTwo minor style suggestions remain.\n\nVERDICT: PASS FINDINGS[2]\n'
 open('$D/nodes/code-review/run_2/eval-new.md', 'w').write(header + body + footer)
 "
+cat > "$D/nodes/code-review/run_2/eval-skeptic-owner.md" <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize "$D" --node code-review --run 2 2>/dev/null)
 assert_field_eq "$OUT" "['verdict']" "PASS" "4.4a: --run 2 uses run_2 (PASS verdict)"
 # Verify run_1 would give FAIL

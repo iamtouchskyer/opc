@@ -150,7 +150,7 @@ setup_loop_state "$DIR"
 sleep 1
 echo "just some log without test markers" > "$DIR/output.log"
 OUT=$(H complete-tick --unit F1.1 --artifacts "$DIR/output.log" --dir "$DIR" 2>&1 || true)
-check "test runner missing = error" '[[ "$OUT" == *"must actually run tests"* ]]'
+check "test runner missing = error" '[[ "$OUT" == *"must pass tests"* ]]'
 check "complete-tick fails" '[[ "$OUT" == *"\"valid\":false"* || "$OUT" == *"errors"* ]]'
 
 # ═══════════════════════════════════════════════════════════════════

@@ -114,6 +114,22 @@ Interaction patterns are consistent and predictable across all views.
 ## VERDICT
 VERDICT: LGTM — nothing found after thorough review
 EVAL
+cat > .h-synth2/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize .h-synth2 --node code-review 2>/dev/null)
 assert_field_eq "thorough eval PASS" "$OUT" "verdict" "\"PASS\""
 COV=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tierCoverage']['covered'])")
@@ -186,6 +202,22 @@ Mock factories generate realistic test data with proper relationships.
 ## VERDICT
 VERDICT: LGTM
 EVAL
+cat > .h-synth3/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize .h-synth3 --node code-review 2>/dev/null)
 assert_field_eq "no tier PASS" "$OUT" "verdict" "\"PASS\""
 TC=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tierCoverage'))")
@@ -253,6 +285,22 @@ The backup schedule meets the RPO requirement for this service tier.
 ## VERDICT
 VERDICT: LGTM — code correct
 EVAL
+cat > .h-synth4/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 OUT=$($HARNESS synthesize .h-synth4 --node code-review 2>/dev/null)
 assert_field_eq "functional PASS" "$OUT" "verdict" "\"PASS\""
 # functional tier has no warning/critical items → uncovered items are all suggestions → no extra warnings

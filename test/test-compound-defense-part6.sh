@@ -129,6 +129,23 @@ Overall patterns are consistent and well-maintained.
 VERDICT: ITERATE FINDINGS[4]
 EVALEOF
 
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
+
 OUT=$($HARNESS synthesize .harness --node code-review --iteration 2 2>/dev/null)
 assert_not_contains "no escalation for clean eval" "$OUT" "persist after"
 

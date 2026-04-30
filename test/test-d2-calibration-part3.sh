@@ -141,6 +141,23 @@ setup_review_node
   done
 } > .harness/nodes/code-review/run_1/eval-clean50.md
 
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
+
 OUT=$($HARNESS synthesize .harness --node code-review --iteration 1)
 assert_field_eq "iteration 1: PASS (no thin, no warnings)" "$OUT" "verdict" '"PASS"'
 
@@ -220,6 +237,23 @@ setup_review_node
   echo "Architecture is clean with proper separation of concerns."
   echo "No security vulnerabilities detected beyond hardening opportunities."
 } > .harness/nodes/code-review/run_1/eval-clean.md
+
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md <<'SOEOF'
+# Skeptic-Owner Evaluation
+
+## Mechanism Audit
+🔵 src/config.ts:1 — Config values not validated at startup
+→ Add runtime validation with zod schema at boot
+Reasoning: Invalid config will cause runtime errors instead of fast startup failure.
+
+## Lifecycle
+🔵 src/server.ts:5 — No graceful shutdown handler
+→ Add SIGTERM handler that drains connections
+Reasoning: Hard shutdown drops in-flight requests during deployment.
+
+## Summary
+2 suggestions. No critical or warning issues.
+SOEOF
 
 OUT=$($HARNESS synthesize .harness --node code-review --iteration 2)
 assert_field_eq "clean + iteration 2: PASS" "$OUT" "verdict" '"PASS"'
