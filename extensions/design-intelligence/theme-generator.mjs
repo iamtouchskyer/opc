@@ -9,10 +9,10 @@
 //   node theme-generator.mjs validate <file...>
 //   node theme-generator.mjs list
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const THEMES_DIR = join(__dirname, "themes");
@@ -25,18 +25,11 @@ mkdirSync(THEMES_DIR, { recursive: true });
 
 const SCHEMA = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
 
-const REQUIRED_COLOR_KEYS = [
-  "bg", "bg-card", "text", "text-muted", "accent", "accent-light",
-  "border", "correct-color", "correct-bg",
-];
-const ALL_COLOR_KEYS = [
-  ...REQUIRED_COLOR_KEYS, "accent-hover", "passage-bg", "passage-border",
-  "explanation-border", "cat1", "cat2", "cat3", "cat4", "cat5", "cat6",
-];
-const VALID_EFFECTS = [
-  "hover-lift", "glass-cards", "hard-shadow", "scanline-overlay",
-  "gradient-bg", "subtle-transition", "glow-border", "paper-texture",
-];
+// Derive validation keys from schema — single source of truth
+const colorProps = SCHEMA.properties.tokens.properties.color;
+const REQUIRED_COLOR_KEYS = colorProps.required || [];
+const ALL_COLOR_KEYS = Object.keys(colorProps.properties || {});
+const VALID_EFFECTS = SCHEMA.properties.effects.items.enum || [];
 
 function validate(theme) {
   const errors = [];
@@ -79,8 +72,8 @@ function validate(theme) {
   if (!s || typeof s !== "object") {
     errors.push("Missing tokens.shape");
   } else {
-    if (!s["border-radius"] && s["border-radius"] !== "0px") errors.push("Missing border-radius");
-    if (!s["card-shadow"] && s["card-shadow"] !== "none") errors.push("Missing card-shadow");
+    if (s["border-radius"] == null) errors.push("Missing border-radius");
+    if (s["card-shadow"] == null) errors.push("Missing card-shadow");
   }
 
   // Effects
@@ -151,6 +144,18 @@ function checkContrast(colors) {
   const text = parseColor(colors.text);
   const textMuted = parseColor(colors["text-muted"]);
   const accent = parseColor(colors.accent);
+  const passageBg = parseColor(colors["passage-bg"]);
+  const correctColor = parseColor(colors["correct-color"]);
+  const correctBg = parseColor(colors["correct-bg"]);
+
+  // Warn when colors can't be parsed (e.g. HSL, oklch) — don't silent skip
+  const unparseable = [];
+  for (const [name, val] of Object.entries({ bg: colors.bg, "bg-card": colors["bg-card"], text: colors.text, "text-muted": colors["text-muted"], accent: colors.accent, "passage-bg": colors["passage-bg"], "correct-color": colors["correct-color"], "correct-bg": colors["correct-bg"] })) {
+    if (val && !parseColor(val)) unparseable.push(name);
+  }
+  if (unparseable.length > 0) {
+    issues.push(`WCAG AA warn: cannot parse color format for [${unparseable.join(", ")}] — contrast not checked`);
+  }
 
   // text on bg: AA requires 4.5:1 for normal text
   if (bg && text) {
@@ -166,10 +171,28 @@ function checkContrast(colors) {
     const ratio = contrastRatio(bg, textMuted);
     if (ratio < 3.0) issues.push(`WCAG AA fail: text-muted on bg contrast ${ratio.toFixed(2)} < 3.0`);
   }
-  // accent on bg: 3:1 for UI components
+  if (bgCard && textMuted) {
+    const ratio = contrastRatio(bgCard, textMuted);
+    if (ratio < 3.0) issues.push(`WCAG AA fail: text-muted on bg-card contrast ${ratio.toFixed(2)} < 3.0`);
+  }
+  // accent on bg and bg-card: 3:1 for UI components
   if (bg && accent) {
     const ratio = contrastRatio(bg, accent);
     if (ratio < 3.0) issues.push(`WCAG AA warn: accent on bg contrast ${ratio.toFixed(2)} < 3.0`);
+  }
+  if (bgCard && accent) {
+    const ratio = contrastRatio(bgCard, accent);
+    if (ratio < 3.0) issues.push(`WCAG AA warn: accent on bg-card contrast ${ratio.toFixed(2)} < 3.0`);
+  }
+  // text on passage-bg: critical for reading scenarios
+  if (passageBg && text) {
+    const ratio = contrastRatio(passageBg, text);
+    if (ratio < 4.5) issues.push(`WCAG AA fail: text on passage-bg contrast ${ratio.toFixed(2)} < 4.5`);
+  }
+  // correct-color on correct-bg
+  if (correctBg && correctColor) {
+    const ratio = contrastRatio(correctBg, correctColor);
+    if (ratio < 3.0) issues.push(`WCAG AA warn: correct-color on correct-bg contrast ${ratio.toFixed(2)} < 3.0`);
   }
 
   return issues;
@@ -309,39 +332,91 @@ Generate a theme for: "${descriptor}"
 Respond with ONLY the JSON object. No markdown fences, no explanation.`;
 }
 
-async function generateTheme(descriptor) {
-  const prompt = buildPrompt(descriptor);
-  const result = execFileSync("claude", ["-p", prompt, "--output-format", "json"], {
-    encoding: "utf8",
-    timeout: 120_000,
-    maxBuffer: 1024 * 1024,
-  });
-
-  // claude --output-format json wraps response in {"result": "..."}
-  let parsed;
+function probeClaude() {
   try {
-    const wrapper = JSON.parse(result);
-    const text = wrapper.result || wrapper.content || result;
-    // Extract JSON from the response text
-    const jsonStr = typeof text === "string" ? extractJson(text) : JSON.stringify(text);
-    parsed = JSON.parse(jsonStr);
+    execFileSync("claude", ["--version"], { encoding: "utf8", timeout: 10_000, stdio: "pipe" });
+    return true;
   } catch {
-    // Try direct parse
-    parsed = JSON.parse(extractJson(result));
+    return false;
   }
+}
 
-  return parsed;
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function generateTheme(descriptor, { maxRetries = 2 } = {}) {
+  const prompt = buildPrompt(descriptor);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = execFileSync("claude", ["-p", prompt, "--output-format", "json"], {
+        encoding: "utf8",
+        timeout: 120_000,
+        maxBuffer: 1024 * 1024,
+      });
+
+      // claude --output-format json wraps response in {"result": "..."}
+      let parsed;
+      try {
+        const wrapper = JSON.parse(result);
+        const text = wrapper.result || wrapper.content || result;
+        const jsonStr = typeof text === "string" ? extractJson(text) : JSON.stringify(text);
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        parsed = JSON.parse(extractJson(result));
+      }
+
+      return parsed;
+    } catch (err) {
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt) + Math.random() * 1000;
+        console.error(`  ⚠️  Attempt ${attempt + 1} failed: ${err.message}. Retrying in ${(delay / 1000).toFixed(1)}s...`);
+        await sleep(delay);
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 function extractJson(text) {
-  // Try to find a JSON object in the text
+  // Strip markdown fences if present
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenceMatch) text = fenceMatch[1];
+
+  // Bracket-balanced extraction: find first { and track depth to matching }
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON object found in LLM response");
-  return text.slice(start, end + 1);
+  if (start === -1) throw new Error("No JSON object found in LLM response");
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") { depth--; if (depth === 0) return text.slice(start, i + 1); }
+  }
+  throw new Error("No complete JSON object found in LLM response (unbalanced braces)");
 }
 
 // ─── Export ──────────────────────────────────────────────────────────
+
+const CSS_OVERRIDE_BLOCKLIST = /(?:@import|@charset|expression\s*\(|url\s*\(\s*["']?javascript:|<\/style|<script|-moz-binding)/i;
+
+function sanitizeOverrides(css) {
+  if (!css || typeof css !== "string") return "";
+  if (CSS_OVERRIDE_BLOCKLIST.test(css)) return "/* overrides blocked: contains disallowed pattern */";
+  // Block scope escape: unbalanced } that could break out of [data-theme] selector
+  let depth = 0;
+  for (const ch of css) {
+    if (ch === "{") depth++;
+    else if (ch === "}") { depth--; if (depth < 0) return "/* overrides blocked: unbalanced braces */"; }
+  }
+  return css;
+}
 
 const EFFECT_CSS = {
   "hover-lift": `.card:hover { transform: translateY(-2px); transition: transform 0.2s ease; }`,
@@ -384,17 +459,23 @@ function themeToCSSBlock(theme) {
     }
   }
 
-  // Add overrides
+  // Add overrides (sanitized)
   if (theme.overrides) {
-    css += `\n  /* ${theme.id} overrides */\n  [data-theme="${theme.id}"] ${theme.overrides}`;
+    const safe = sanitizeOverrides(theme.overrides);
+    css += `\n  [data-theme="${theme.id}"] { ${safe} }`;
   }
 
   return css;
 }
 
 function themeToSwitcherEntry(theme) {
-  const dotColor = theme.tokens.color.accent;
-  return `{id:'${theme.id}', name:'${theme.name}', desc:'${(theme.description || "").replace(/'/g, "\\'")}', dot:'${dotColor}'}`;
+  const entry = {
+    id: theme.id,
+    name: theme.name,
+    desc: theme.description || "",
+    dot: theme.tokens.color.accent,
+  };
+  return JSON.stringify(entry);
 }
 
 // ─── CLI ─────────────────────────────────────────────────────────────
@@ -420,6 +501,21 @@ function saveTheme(theme) {
   return p;
 }
 
+// ─── Exports (for testing) ──────────────────────────────────────────────
+export {
+  validate, extractJson, sanitizeOverrides,
+  parseColor, luminance, contrastRatio, checkContrast,
+  themeToCSS, themeToCSSBlock, themeToSwitcherEntry,
+  REQUIRED_COLOR_KEYS, ALL_COLOR_KEYS, VALID_EFFECTS,
+};
+
+// ─── CLI (only when run directly) ───────────────────────────────────────
+const isMain = process.argv[1] && existsSync(process.argv[1])
+  && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (!isMain) {
+  // Imported as module — skip CLI
+} else {
+
 const [,, cmd, ...args] = process.argv;
 
 switch (cmd) {
@@ -440,7 +536,13 @@ switch (cmd) {
     }
 
     console.error(`🎨 Generating theme for: "${descriptor}"...`);
-    const theme = await generateTheme(descriptor);
+    let theme;
+    try {
+      theme = await generateTheme(descriptor);
+    } catch (err) {
+      console.error(`❌ Generation failed: ${err.message}`);
+      process.exit(1);
+    }
     const errors = validate(theme);
     if (errors.length > 0) {
       console.error(`⚠️  Validation issues (${errors.length}):`);
@@ -480,11 +582,18 @@ switch (cmd) {
     const batch = pool.slice(0, count);
     console.error(`📦 Batch generating ${batch.length} themes (${pool.length - batch.length} remaining)...`);
 
-    let ok = 0, fail = 0;
+    // Early probe: check claude CLI is available before wasting time
+    if (!probeClaude()) {
+      console.error("❌ 'claude' CLI not found or not working. Install it first.");
+      process.exit(1);
+    }
+
+    let ok = 0, fail = 0, consecutiveFails = 0;
     for (const seed of batch) {
       try {
         console.error(`\n🎨 [${ok + fail + 1}/${batch.length}] ${seed.id}...`);
         const theme = await generateTheme(seed.descriptor);
+        consecutiveFails = 0;
         // Use seed ID if LLM generated a different one
         theme.id = seed.id;
         const errors = validate(theme);
@@ -503,6 +612,11 @@ switch (cmd) {
       } catch (err) {
         console.error(`  ❌ Failed: ${err.message}`);
         fail++;
+        consecutiveFails++;
+        if (consecutiveFails >= 3) {
+          console.error(`\n⛔ 3 consecutive failures — likely rate limited. Stopping batch.`);
+          break;
+        }
       }
     }
 
@@ -605,3 +719,5 @@ Examples:
   node theme-generator.mjs export --all --format switcher-js`);
     break;
 }
+
+} // end isMain

@@ -1,0 +1,7 @@
+{
+  "name": "design-intelligence",
+  "version": "0.2.0",
+  "description": "LLM-powered design system theming for OPC build nodes",
+  "provides": ["design-system-injection@1"],
+  "managed": true
+}
