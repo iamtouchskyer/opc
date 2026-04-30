@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILL_NAME = "opc";
 const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
-const extensionsDir = join(homedir(), ".opc", "extensions");
+
 const srcDir = join(__dirname, "..");
 
 // Only these files/dirs are managed by OPC — custom roles are left alone
@@ -49,45 +49,6 @@ switch (command) {
       cpSync(src, join(skillsDir, entry), { recursive: true, force: true });
     }
     console.log(`✓ OPC v${pkg.version} installed to ${skillsDir}`);
-
-    // Install bundled extensions to ~/.opc/extensions/
-    // Managed extensions (manifest.managed=true) are updated when source version is newer.
-    // Unmanaged/custom extensions are never overwritten.
-    const srcExtDir = join(srcDir, "extensions");
-    if (existsSync(srcExtDir)) {
-      mkdirSync(extensionsDir, { recursive: true });
-      let installed = 0, updated = 0, skipped = 0;
-      for (const ext of readdirSync(srcExtDir)) {
-        const srcExt = join(srcExtDir, ext);
-        const destExt = join(extensionsDir, ext);
-        if (!lstatSync(srcExt).isDirectory()) continue;
-        if (existsSync(destExt)) {
-          // Check if managed extension needs update
-          const srcManifest = join(srcExt, "manifest.json");
-          const destManifest = join(destExt, "manifest.json");
-          if (existsSync(srcManifest) && existsSync(destManifest)) {
-            try {
-              const src = JSON.parse(readFileSync(srcManifest, "utf8"));
-              const dest = JSON.parse(readFileSync(destManifest, "utf8"));
-              if (src.managed && dest.managed && src.version !== dest.version) {
-                cpSync(srcExt, destExt, { recursive: true, force: true });
-                updated++;
-                console.log(`  Updated ${ext}: ${dest.version} → ${src.version}`);
-                continue;
-              }
-            } catch { /* ignore parse errors, treat as skip */ }
-          }
-          skipped++;
-          continue;
-        }
-        cpSync(srcExt, destExt, { recursive: true });
-        installed++;
-      }
-      if (installed > 0) console.log(`  ${installed} extension(s) installed to ${extensionsDir}`);
-      if (updated > 0) console.log(`  ${updated} extension(s) updated`);
-      if (skipped > 0) console.log(`  ${skipped} extension(s) already up-to-date, skipped`);
-    }
-
     console.log(`  Use /opc in Claude Code to get started.`);
     console.log(`  Run 'opc install-hooks' to enable compression resilience.`);
     break;
