@@ -54,12 +54,9 @@ fi
 # Escape for JSON
 ESCAPED=$(echo "$CONTEXT" | jq -Rs .)
 
-# Output hook JSON
+# Output hook JSON — use top-level systemMessage (hookSpecificOutput only supports PreToolUse/PostToolUse/UserPromptSubmit)
 cat <<EOF
 {
-  "hookSpecificOutput": {
-    "hookEventName": "PostCompact",
-    "additionalContext": $ESCAPED
-  }
+  "systemMessage": $ESCAPED
 }
 EOF
