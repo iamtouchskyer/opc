@@ -13,7 +13,7 @@ const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
 const srcDir = join(__dirname, "..");
 
 // Only these files/dirs are managed by OPC — custom roles are left alone
-const MANAGED_ENTRIES = ["skill.md", "replay.md", "roles", "pipeline", "bin", "package.json"];
+const MANAGED_ENTRIES = ["SKILL.md", "replay.md", "roles", "pipeline", "bin", "package.json"];
 
 // Files removed in newer versions — clean up from target on install
 const STALE_FILES = [

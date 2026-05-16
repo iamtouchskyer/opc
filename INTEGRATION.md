@@ -274,7 +274,7 @@ The `dw` skill uses OPC for quality-gated product discovery. See `examples/dw-in
 ```
 User: /dw discover "AI code review tool"
 
-dw skill.md (orchestrator):
+dw SKILL.md (orchestrator):
   1. Reads task → selects dw-flow.json
   2. Calls: opc-harness init --flow-file ./flows/dw-flow.json --entry discover --dir .harness
   3. Dispatches /dw-discover subagent (via unitHandler)
@@ -291,7 +291,7 @@ dw skill.md (orchestrator):
 ```
 User: /dw loop "Build AI code review product"
 
-dw skill.md:
+dw SKILL.md:
   1. Decomposes into units in plan.md
   2. Calls: opc-harness init-loop --plan plan.md --flow-file ./flows/dw-flow.json --dir .harness
   3. Each tick:

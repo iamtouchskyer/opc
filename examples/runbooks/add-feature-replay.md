@@ -27,7 +27,7 @@ Invocation:
 
 ### Tick 0 — Runbook lookup + plan seed
 
-The orchestrator reads `skill.md` + `pipeline/loop-protocol.md`. Per
+The orchestrator reads `SKILL.md` + `pipeline/loop-protocol.md`. Per
 the new Step 0, before decomposition it shells out to:
 
 ```bash

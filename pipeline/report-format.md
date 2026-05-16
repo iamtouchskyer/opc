@@ -238,7 +238,7 @@ The tool (`bin/opc-report.mjs`) mechanically parses `$SESSION_DIR/` eval files a
 - R2 verdicts: per-reviewer verdict with fix counts
 
 **Integration points:**
-- Flow completion (`skill.md` § Flow Completion & Replay, step 3)
+- Flow completion (`SKILL.md` § Flow Completion & Replay, step 3)
 - Loop auto-termination (`loop-protocol.md` § Step 7, step 4)
 
 **No LLM judgment** — all counts and verdicts are regex-parsed from eval file content. The tool is a pure mechanical aggregator.

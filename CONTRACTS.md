@@ -358,6 +358,6 @@ Three enforcement mechanisms operate at the harness level — no LLM judgment, p
 ## Stability Promise
 
 - **Stable:** CLI command names, flag names, JSON output field names, file schema fields listed above
-- **Unstable:** Internal module exports (`bin/lib/*.mjs`), `skill.md` wording, `pipeline/*.md` content, role `.md` content
+- **Unstable:** Internal module exports (`bin/lib/*.mjs`), `SKILL.md` wording, `pipeline/*.md` content, role `.md` content
 - **Additive:** New fields may be added to JSON outputs and schemas. Consumers should ignore unknown fields.
 - **Breaking changes:** Signaled by bumping the minor version in `HARNESS_VERSION`. External flows use `opc_compat` to declare minimum version.
