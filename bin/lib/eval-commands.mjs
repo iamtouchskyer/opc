@@ -175,7 +175,7 @@ export function cmdSynthesize(args) {
 
     try {
       files = readdirSync(targetRunDir)
-        .filter((f) => f.startsWith("eval") && f.endsWith(".md"))
+        .filter((f) => f.startsWith("eval") && f.endsWith(".md") && f !== "eval-extensions.md")
         .map((f) => ({ name: f, path: join(targetRunDir, f) }));
     } catch (err) {
       console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `cannot read ${targetRunDir}: ${err.message}` }));

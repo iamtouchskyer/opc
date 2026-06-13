@@ -18,11 +18,11 @@ import { loadLayeredOpcConfig, stripProvenance } from "./config-layering.mjs";
 // object downstream so extension code iterating Object.keys does not see OPC
 // internals as if they were user config.
 
-function loadOpcConfig(harnessDir) {
+export function loadOpcConfig(harnessDir) {
   return stripProvenance(loadLayeredOpcConfig(harnessDir || process.cwd(), {}));
 }
 
-function readTaskFromAC(dir) {
+export function readTaskFromAC(dir) {
   const acPath = resolve(dir, "acceptance-criteria.md");
   if (!existsSync(acPath)) return "";
   try {
@@ -31,7 +31,7 @@ function readTaskFromAC(dir) {
   } catch { return ""; }
 }
 
-function findLatestRunDir(nodeDir) {
+export function findLatestRunDir(nodeDir) {
   if (!existsSync(nodeDir)) return null;
   try {
     const entries = readdirSync(nodeDir, { withFileTypes: true });

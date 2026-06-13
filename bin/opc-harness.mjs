@@ -33,7 +33,7 @@ switch (command) {
   case "route":        cmdRoute(args);         break;
   case "init":         await cmdInit(args);      break;
   case "validate":     cmdValidate(args);      break;
-  case "transition":   cmdTransition(args);    break;
+  case "transition":   await cmdTransition(args);    break;
   case "validate-chain": cmdValidateChain(args); break;
   case "finalize":     cmdFinalize(args);      break;
   case "seal":         cmdSeal(args);          break;

@@ -2,7 +2,7 @@
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker), util.mjs
 
 import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 import { createHash } from "crypto";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -13,7 +13,7 @@ import {
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
-import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState } from "./extensions.mjs";
+import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
@@ -190,7 +190,43 @@ export async function cmdInit(args) {
   vizLines.push("");
   console.error(vizLines.join("\n"));
 
-  console.log(JSON.stringify({ created: true, flow, entry: entryNode, tier: tier || null, dir }));
+  // ── Auto-preflight for entry node or first build node ──────────
+  // Fire preflight hooks so design artifacts (tokens, brief) are ready
+  // before the first node executes. Preflight failures must not block init.
+  let preflightNode = null;
+  let preflightResult = null;
+  if (bypassCfg.noExtensions !== true) {
+    try {
+      const firstBuildNode = template.nodes.find(n =>
+        template.nodeTypes?.[n] === "build" || n === "build"
+      );
+      preflightNode = firstBuildNode || entryNode;
+      const preflightCaps = template.nodeCapabilities?.[preflightNode] || [];
+
+      if (preflightCaps.length > 0) {
+        const preflightRegistry = await loadExtensions(bypassCfg);
+        const preflightCtx = {
+          node: preflightNode,
+          nodeId: preflightNode,
+          nodeType: template.nodeTypes?.[preflightNode] || null,
+          role: "preflight",
+          task: "",
+          flowDir: resolve(dir),
+          devServerUrl: process.env.DEV_SERVER_URL || "",
+          nodeCapabilities: preflightCaps,
+        };
+        preflightResult = await fireNodePreflight(preflightRegistry, preflightCtx);
+        console.error(`[init] auto-preflight for '${preflightNode}': ${preflightResult?.length ? 'artifacts generated' : 'no output'}`);
+      }
+    } catch (err) {
+      console.error(`WARN: auto-preflight failed: ${err.message}`);
+    }
+  }
+
+  console.log(JSON.stringify({
+    created: true, flow, entry: entryNode, tier: tier || null, dir,
+    ...(preflightResult?.length ? { preflight: { node: preflightNode, status: "ok" } } : {}),
+  }));
 }
 
 // ─── validate ───────────────────────────────────────────────────

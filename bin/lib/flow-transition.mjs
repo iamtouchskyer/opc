@@ -1,7 +1,7 @@
 // Flow transition commands: transition, validate-chain, finalize
 // Depends on: flow-templates.mjs, flow-core.mjs (validateHandshakeData), viz-commands.mjs, util.mjs, file-lock.mjs
 
-import { readFileSync, readdirSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, readdirSync, mkdirSync, existsSync, writeFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
@@ -14,8 +14,9 @@ import {
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
-import { resolveBypass } from "./extensions.mjs";
+import { resolveBypass, loadExtensions, firePromptAppend, fireVerdictAppend, survivingExtensions, saveRegistryCache } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
+import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
 
@@ -82,7 +83,7 @@ export function checkStructuredResults(dir, state, template, currentNode) {
 
 // ─── transition ─────────────────────────────────────────────────
 
-export function cmdTransition(args) {
+export async function cmdTransition(args) {
   const from = getFlag(args, "from");
   const toRaw = getFlag(args, "to");
   const verdict = getFlag(args, "verdict");
@@ -159,13 +160,13 @@ export function cmdTransition(args) {
     return;
   }
   try {
-    _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath);
+    await _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath);
   } finally {
     lock.release();
   }
 }
 
-function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath) {
+async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath) {
   let state;
   if (existsSync(statePath)) {
     try {
@@ -227,6 +228,7 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
   const isGate = fromNodeType === "gate" || (fromNodeType == null && (from === "gate" || from.startsWith("gate-")));
 
   // ── Pre-transition handshake validation ──
+  // Structural checks block. Quality checks (eval artifacts) become warnings.
   if (!isGate) {
     const fromHandshakePath = join(dir, "nodes", from, "handshake.json");
     if (!existsSync(fromHandshakePath)) {
@@ -328,6 +330,46 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
           }
         }
       }
+    }
+  }
+
+  // ── Auto verdictAppend when leaving review node ──
+  // Fire verdict.append so eval-extensions.json is written before validate checks it.
+  // Only fires when there are actual eval files to supplement — avoids injecting
+  // extension verdicts into empty review dirs (which would poison synthesize).
+  if (!isGate && fromNodeType === "review") {
+    try {
+      const vConfig = loadOpcConfig(dir);
+      Object.assign(vConfig, parseBypassArgs([]), { flowDir: dir });
+      const vTask = readTaskFromAC(dir);
+      const vRegistry = await loadExtensions(vConfig);
+      const fromNodeCaps = template.nodeCapabilities?.[from] || [];
+      if (fromNodeCaps.length > 0 && vRegistry.extensions?.length > 0) {
+        const fromNodeDir = join(dir, "nodes", from);
+        const latestRunDir = findLatestRunDir(fromNodeDir);
+        if (latestRunDir) {
+          // Check that real eval files exist (not just eval-extensions.md)
+          let hasRealEvals = false;
+          try {
+            hasRealEvals = readdirSync(latestRunDir)
+              .filter(f => /^eval-.*\.md$/.test(f) && f !== "eval-extensions.md")
+              .length >= 2;
+          } catch { /* best effort */ }
+          if (hasRealEvals) {
+            const vCtx = {
+              node: from, nodeId: from, nodeType: fromNodeType,
+              role: "verdict-auto", task: vTask, flowDir: resolve(dir),
+              runDir: latestRunDir,
+              devServerUrl: process.env.DEV_SERVER_URL || vConfig.devServerUrl || "",
+              nodeCapabilities: fromNodeCaps,
+            };
+            await fireVerdictAppend(vRegistry, vCtx);
+            saveRegistryCache(resolve(dir), vRegistry);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`WARN: auto verdictAppend failed: ${err.message}`);
     }
   }
 
@@ -459,7 +501,54 @@ function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath)
   console.error("");
 
   const autoReminder = state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined;
-  console.log(JSON.stringify({ allowed: true, reason: "ok", next: to, runId, state, ...(autoReminder ? { reminder: autoReminder } : {}) }));
+
+  // ── Extension context for next node ────────────────────────────
+  // Fire promptAppend so the orchestrator gets extension context without
+  // having to remember to call prompt-context separately.
+  let extensionContext = null;
+  try {
+    const config = loadOpcConfig(dir);
+    Object.assign(config, parseBypassArgs([]), { flowDir: dir });
+    const task = readTaskFromAC(dir);
+    const registry = await loadExtensions(config);
+    const nextNodeCaps = template.nodeCapabilities?.[to] || [];
+    const nextNodeType = template.nodeTypes?.[to] || null;
+    if (nextNodeCaps.length > 0 && registry.extensions?.length > 0) {
+      const context = {
+        node: to,
+        nodeId: to,
+        nodeType: nextNodeType,
+        role: "transition-prefetch",
+        task,
+        flowDir: resolve(dir),
+        devServerUrl: process.env.DEV_SERVER_URL || config.devServerUrl || "",
+        nodeCapabilities: nextNodeCaps,
+      };
+      const append = await firePromptAppend(registry, context);
+      extensionContext = {
+        append,
+        applied: survivingExtensions(registry),
+        nodeCapabilities: nextNodeCaps,
+      };
+      saveRegistryCache(resolve(dir), registry);
+
+      // Write to file so orchestrator can Read it instead of parsing stdout
+      if (append) {
+        const ctxDir = join(dir, "nodes", to);
+        mkdirSync(ctxDir, { recursive: true });
+        writeFileSync(join(ctxDir, "extension-context.md"), append, "utf8");
+      }
+    }
+  } catch (err) {
+    // Extension failures must not block transition
+    console.error(`WARN: extension context prefetch failed: ${err.message}`);
+  }
+
+  console.log(JSON.stringify({
+    allowed: true, reason: "ok", next: to, runId, state,
+    ...(autoReminder ? { reminder: autoReminder } : {}),
+    ...(extensionContext?.append ? { extensionContextPath: resolve(join(dir, "nodes", to, "extension-context.md")) } : {}),
+  }));
 }
 
 // ─── validate-chain ─────────────────────────────────────────────
@@ -484,15 +573,24 @@ export function cmdValidateChain(args) {
   const errors = [];
   const executedPath = [];
 
-  // Load config to get requiredExtensions
+  // Load requiredExtensions from explicit config only.
+  // validate-chain is post-hoc — it verifies claims, not environment state.
+  // Auto-discover (filesystem scan) is a runtime concern (init/transition).
   let requiredExtensions = [];
   try {
     const configPath = join(os.homedir(), ".opc", "config.json");
     if (existsSync(configPath)) {
       const cfg = JSON.parse(readFileSync(configPath, "utf8"));
-      requiredExtensions = Array.isArray(cfg.requiredExtensions) ? cfg.requiredExtensions : [];
+      if (Array.isArray(cfg.requiredExtensions)) requiredExtensions = cfg.requiredExtensions;
     }
   } catch { /* best effort */ }
+
+  // Resolve template for capability-aware enforcement
+  let chainTemplate = null;
+  if (state.flowTemplate) {
+    if (state._flow_file) loadFlowFromFile(state._flow_file);
+    chainTemplate = FLOW_TEMPLATES[state.flowTemplate] || null;
+  }
 
   // ─── Bypass-aware requiredExtensions enforcement ─────────────────
   // If the flow was initialized under bypass (recorded in flow-state.bypassMode),
@@ -544,9 +642,10 @@ export function cmdValidateChain(args) {
             const data = JSON.parse(readFileSync(hp, "utf8"));
             if (!data.node && !data.nodeId) errors.push(`${nd}/handshake.json: missing node identifier`);
             if (!data.status) errors.push(`${nd}/handshake.json: missing status`);
-            // Check extensionsApplied for required extensions — skip gate nodes (auto-generated, no extension context)
+            // Check extensionsApplied for required extensions — only on nodes with capabilities
             const isGateNode = nd.startsWith("gate") || data.node === "gate" || data.nodeId === "gate";
-            if (requiredExtensions.length > 0 && !isGateNode) {
+            const nodeCaps = chainTemplate?.nodeCapabilities?.[nd] || [];
+            if (requiredExtensions.length > 0 && !isGateNode && nodeCaps.length > 0) {
               if (!Object.hasOwn(data, "extensionsApplied")) {
                 errors.push(`${nd}/handshake.json: extensionsApplied missing — run \`extension-verdict\` after review nodes`);
               } else {
