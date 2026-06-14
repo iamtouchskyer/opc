@@ -15,6 +15,7 @@ import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier
 import { checkEvalDistinctness } from "./eval-parser.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
+import { readTaskFromAC } from "./ext-commands.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -210,7 +211,8 @@ export async function cmdInit(args) {
           nodeId: preflightNode,
           nodeType: template.nodeTypes?.[preflightNode] || null,
           role: "preflight",
-          task: "",
+          task: readTaskFromAC(dir),
+          taskDescription: readTaskFromAC(dir),
           flowDir: resolve(dir),
           devServerUrl: process.env.DEV_SERVER_URL || "",
           nodeCapabilities: preflightCaps,

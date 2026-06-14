@@ -99,8 +99,14 @@ export async function cmdTransition(args) {
 
   // Terminal transition (to === null): delegate to finalize
   if (to === null) {
+    // Load persisted state for _flow_file resolution (same as non-terminal path)
+    let terminalState = null;
+    const termStatePath = join(dir, "flow-state.json");
+    if (existsSync(termStatePath)) {
+      try { terminalState = JSON.parse(readFileSync(termStatePath, "utf8")); } catch { /* will be caught later */ }
+    }
     // Verify the edge actually goes to null in the template
-    const resolvedTpl = resolveFlowTemplate(args);
+    const resolvedTpl = resolveFlowTemplate(args, terminalState);
     if (!resolvedTpl.error) {
       const edges = resolvedTpl.template.edges[from];
       if (edges && edges[verdict] === null) {
@@ -160,13 +166,13 @@ export async function cmdTransition(args) {
     return;
   }
   try {
-    await _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath);
+    await _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath, args);
   } finally {
     lock.release();
   }
 }
 
-async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath) {
+async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, statePath, args) {
   let state;
   if (existsSync(statePath)) {
     try {
@@ -340,7 +346,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   if (!isGate && fromNodeType === "review") {
     try {
       const vConfig = loadOpcConfig(dir);
-      Object.assign(vConfig, parseBypassArgs([]), { flowDir: dir });
+      Object.assign(vConfig, parseBypassArgs(args || []), { flowDir: dir });
       const vTask = readTaskFromAC(dir);
       const vRegistry = await loadExtensions(vConfig);
       const fromNodeCaps = template.nodeCapabilities?.[from] || [];
@@ -365,6 +371,12 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
             };
             await fireVerdictAppend(vRegistry, vCtx);
             saveRegistryCache(resolve(dir), vRegistry);
+            // Write extensionsApplied to handshake (same as cmdExtensionVerdict)
+            const handshakePath = join(latestRunDir, "handshake.json");
+            let handshake = {};
+            try { handshake = JSON.parse(readFileSync(handshakePath, "utf8")); } catch { /* start fresh */ }
+            handshake.extensionsApplied = survivingExtensions(vRegistry);
+            writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
           }
         }
       }
@@ -508,7 +520,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   let extensionContext = null;
   try {
     const config = loadOpcConfig(dir);
-    Object.assign(config, parseBypassArgs([]), { flowDir: dir });
+    Object.assign(config, parseBypassArgs(args || []), { flowDir: dir });
     const task = readTaskFromAC(dir);
     const registry = await loadExtensions(config);
     const nextNodeCaps = template.nodeCapabilities?.[to] || [];

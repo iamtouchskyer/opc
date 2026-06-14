@@ -53,7 +53,7 @@ Before mechanical validation, the gate reads structured data from upstream artif
 
 **This check applies to ALL gate nodes** (gate-test, gate-acceptance, gate-audit, gate-e2e, gate-final), not just gate-final. The principle: if any upstream node produced structured evidence of failure, the gate must catch it regardless of the node-level verdict.
 
-**Override:** The orchestrator MUST NOT skip or relax these rules. If structured data says tests failed, the gate FAILs — even if the upstream node verdict was PASS. The only way past this is `/opc pass` (explicit user override).
+**Override:** The orchestrator MUST NOT skip or relax these rules. If structured data says tests failed, the gate FAILs — even if the upstream node verdict was PASS. `/opc pass` (explicit user override) also runs Step 1.5 — it is NOT a bypass. If Step 1.5 detects failing artifacts, `/opc pass` is rejected.
 
 ### Step 2 — Mechanical Validation
 

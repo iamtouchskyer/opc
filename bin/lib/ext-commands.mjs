@@ -96,8 +96,25 @@ export async function cmdPromptContext(args) {
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
   const nodeCapabilities = readNodeCapabilities(dir, node, args);
 
+  // Resolve nodeType from flow-state.json + template
+  let nodeType = null;
+  try {
+    const stPath = join(resolve(dir), "flow-state.json");
+    if (existsSync(stPath)) {
+      const st = JSON.parse(readFileSync(stPath, "utf8"));
+      const tplName = st.flowTemplate;
+      if (tplName) {
+        const { FLOW_TEMPLATES } = await import("./flow-templates.mjs");
+        const tpl = FLOW_TEMPLATES[tplName];
+        if (tpl?.nodeTypes) nodeType = tpl.nodeTypes[node] || null;
+      }
+    }
+  } catch { /* best effort */ }
+
   const context = {
     node,
+    nodeId: node,
+    nodeType,
     role,
     task,
     flowDir: resolve(dir),
