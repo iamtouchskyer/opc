@@ -497,6 +497,12 @@ function warnMissingNodeCapsOnce(registry, context) {
   if (!registry || typeof registry !== "object") return;
   if (registry._warnedMissingCaps) return;
   if (!Array.isArray(registry.extensions) || registry.extensions.length === 0) return;
+  // F10: when caps were deliberately resolved from a flow template, an empty/absent
+  // caps list is LEGITIMATE (the node simply declares no requirements — e.g. gate or
+  // test-design nodes, or a template with no nodeCapabilities map at all). The CLI sets
+  // this flag once it has resolved a template; raw library callers (the F2 "forgot to
+  // pass caps" path) do not set it, so they still warn.
+  if (context?.nodeCapabilitiesResolved) return;
   const caps = context?.nodeCapabilities;
   if (Array.isArray(caps) && caps.length > 0) return;
   const names = registry.extensions.map(e => e.name).filter(Boolean).slice(0, 5).join(", ");

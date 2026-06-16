@@ -649,6 +649,51 @@ export async function verdictAppend() { return []; }
     assert.ok(joined.includes("beta"), "mentions beta");
     assert.ok(joined.includes("flow template") || joined.includes("harness CLI"), "suggests where to set caps");
   });
+
+  // F10: when a flow template was deliberately resolved, an empty/absent caps list is
+  // legitimate (capless node) — the CLI signals this via nodeCapabilitiesResolved:true and
+  // the WARN must stay silent. The raw-library "forgot to pass caps" path (no flag) still warns.
+  test("WARN suppressed when nodeCapabilitiesResolved is true (empty caps)", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir, nodeCapabilities: [], nodeCapabilitiesResolved: true });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 0, "resolved-template capless node stays silent");
+  });
+
+  test("WARN suppressed when nodeCapabilitiesResolved is true (no caps key)", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir, nodeCapabilitiesResolved: true });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 0, "resolved flag suppresses even with no caps key");
+  });
+
+  test("WARN still fires when nodeCapabilitiesResolved is falsy (raw-library path preserved)", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    await fireVerdictAppend(registry, { runDir, nodeCapabilities: [], nodeCapabilitiesResolved: false });
+    const warns = captured.filter(s => s.includes("ctx.nodeCapabilities not set"));
+    assert.equal(warns.length, 1, "unresolved template still warns");
+  });
 });
 
 // ─── F4: eval-extensions.json sidecar ────────────────────────────

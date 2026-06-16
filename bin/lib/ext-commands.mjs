@@ -45,7 +45,18 @@ export function findLatestRunDir(nodeDir) {
 
 /**
  * Read flow-state.json + resolved flow template, return the current node's
- * required capabilities. Missing state or missing nodeCapabilities → [].
+ * required capabilities along with whether a flow template actually resolved.
+ *
+ * Returns `{ caps, templateResolved }`:
+ *   - caps: the node's required capabilities, or [] when the template has no
+ *     nodeCapabilities map or the node is present in template.nodes but absent
+ *     from the map (a LEGITIMATE empty — the node simply declares no requirements).
+ *   - templateResolved: true ONLY when a flow template resolved AND the requested
+ *     node actually exists in template.nodes. An empty caps list is legitimate only
+ *     for a real node; a node typo (--node not in template.nodes) is a misconfig, so
+ *     we report templateResolved: false there to keep the missing-caps WARN loud.
+ *     This lets callers distinguish "resolved, real node, no caps" (legitimate) from
+ *     "couldn't resolve a template / unknown node" (genuine misconfig).
  */
 function readNodeCapabilities(dir, node, args) {
   try {
@@ -55,11 +66,14 @@ function readNodeCapabilities(dir, node, args) {
       try { state = JSON.parse(readFileSync(statePath, "utf8")); } catch { /* state corrupt — treat as absent */ }
     }
     const { template } = resolveFlowTemplate(args, state);
-    if (!template || !template.nodeCapabilities) return [];
+    const templateResolved = !!template;
+    const nodeResolved = templateResolved && Array.isArray(template.nodes) && template.nodes.includes(node);
+    if (!nodeResolved) return { caps: [], templateResolved: false };
+    if (!template.nodeCapabilities) return { caps: [], templateResolved: true };
     const caps = template.nodeCapabilities[node];
-    return Array.isArray(caps) ? caps : [];
+    return { caps: Array.isArray(caps) ? caps : [], templateResolved: true };
   } catch {
-    return [];
+    return { caps: [], templateResolved: false };
   }
 }
 
@@ -94,7 +108,7 @@ export async function cmdPromptContext(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const nodeCapabilities = readNodeCapabilities(dir, node, args);
+  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
 
   // Resolve nodeType from flow-state.json + template
   let nodeType = null;
@@ -121,6 +135,7 @@ export async function cmdPromptContext(args) {
     runDir: resolve(dir),
     devServerUrl,
     nodeCapabilities,
+    nodeCapabilitiesResolved: templateResolved,
   };
 
   const append = await firePromptAppend(registry, context);
@@ -444,7 +459,7 @@ export async function cmdExtensionVerdict(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const nodeCapabilities = readNodeCapabilities(dir, node, args);
+  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
@@ -454,6 +469,7 @@ export async function cmdExtensionVerdict(args) {
     runDir,
     devServerUrl,
     nodeCapabilities,
+    nodeCapabilitiesResolved: templateResolved,
   };
 
   await fireVerdictAppend(registry, context);
@@ -518,7 +534,7 @@ export async function cmdExtensionArtifact(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const nodeCapabilities = readNodeCapabilities(dir, node, args);
+  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
@@ -528,6 +544,7 @@ export async function cmdExtensionArtifact(args) {
     runDir,
     devServerUrl,
     nodeCapabilities,
+    nodeCapabilitiesResolved: templateResolved,
   };
 
   const executeResults = await fireExecuteRun(registry, context);
@@ -603,7 +620,7 @@ export async function cmdNodePreflight(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const nodeCapabilities = readNodeCapabilities(dir, node, args);
+  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
@@ -612,6 +629,7 @@ export async function cmdNodePreflight(args) {
     flowDir: resolve(dir),
     devServerUrl,
     nodeCapabilities,
+    nodeCapabilitiesResolved: templateResolved,
   };
 
   const results = await fireNodePreflight(registry, context);
