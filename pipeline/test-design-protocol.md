@@ -32,6 +32,15 @@ Each dispatched role evaluator receives these additional instructions (append to
 
 You are reviewing the implementation from `{upstream build node}` and designing a comprehensive test plan. Your output will be handed to an executor who runs every case you specify.
 
+> **Ground truth is the BUILT CODE, never the brief.** The upstream `brief`
+> describes *intended* behavior (ideal validation, dynamic re-render, reset-to-empty).
+> The `build` node often ships a *simplified* version. If you design cases from the
+> brief, you will assert behavior the build never implemented — phantom tests that
+> fail against reality or, worse, pass vacuously. **Open the actual build artifacts
+> and read them before writing any assertion.** When an artifact contradicts the
+> brief, the artifact wins; note the divergence as a finding, do not test the brief's
+> ideal.
+
 ### What You Produce
 
 For each test case, specify:
@@ -43,6 +52,11 @@ For each test case, specify:
 5. **Steps**: Concrete steps the executor should follow
 6. **Expected result**: What constitutes PASS
 7. **Failure impact**: What breaks if this fails (the "so what?" test)
+8. **Anchor** (P0/P1 mandatory): a `file:line` citation into a build artifact, or a
+   grep token, proving the behavior/value you assert actually exists in the built
+   code. Any concrete value in your Expected result (a length, an enum member, a sum,
+   a count) must be traceable to the source line that produces it. No anchor → the
+   case is unverifiable speculation and will be dropped.
 
 ### Output Format
 
@@ -67,6 +81,7 @@ Write to: `$SESSION_DIR/nodes/test-design/run_{RUN}/eval-{role}.md`
   1. {step}
   2. {step}
 - **Expected**: {concrete expected result}
+- **Anchor**: `{build-artifact-path}:{line}` — {token/snippet proving the asserted behavior is in the built code}
 - **Failure impact**: {what breaks}
 
 ### TC-{ROLE}-02: {short name}
@@ -92,9 +107,12 @@ VERDICT: TEST-CASES [N] — N test cases designed
 
 - Every P0 case must have concrete steps that an executor can follow mechanically (no "verify it works correctly")
 - Every case must have an expected result that is binary (PASS or FAIL, no "should be reasonable")
-- Do not design cases for things you haven't read in the code — read the implementation first
+- **Ground-truth rule (hard):** every P0/P1 case MUST carry an `Anchor` into a build
+  artifact (`file:line` or grep token) that you have actually opened and read. A case
+  asserting a value you cannot point to in the built code is a phantom test — delete
+  it. Reading the brief is not reading the code.
 - Aim for 5-15 cases per role. Fewer is fine if scope is narrow. More than 20 suggests you're testing too broadly — split by feature
-- Test cases MUST reference the actual implementation (endpoints, components, functions) — not hypothetical features
+- Test cases MUST assert behavior present in the actual build artifacts (endpoints, components, functions, literal values) — never the brief's intended-but-unbuilt features. If the brief promised X and the build shipped X′, test X′ and flag the gap
 - Include at least one negative test (what should fail/be rejected) per P0 feature
 - For multi-platform projects: at least one test case per role must target a platform-specific failure mode (not just "it renders correctly"). Include cases that verify behavior ACROSS platforms, not just ON each platform independently
 
