@@ -172,4 +172,29 @@ BASE_G=$(make_git_base)
 OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_G" 2>/dev/null)
 assert_field_eq "git base → verificationWarnings absent" "$OUT" "verificationWarnings" "__NULL__"
 
+# ───────────────────────────────────────────────────────────────
+# F2.4: the false-green guard. A 🔵-suggestion-only eval would normally PASS
+#       (no critical, no warning). But if --base is non-git, change-scope
+#       verification could NOT run — so we must NOT emit a clean PASS. The
+#       unverifiable state must escalate the verdict to ITERATE, otherwise
+#       "verification didn't run" masquerades as "all clear" (假绿).
+#       NOTE: the eval is written as the mandatory 'skeptic-owner' role so the
+#       mandatory-role check does NOT add its own warning — that would mask the
+#       bug by making the verdict ITERATE for an unrelated reason.
+echo ""
+echo "--- F2.4: 🔵-only eval + non-git --base must NOT PASS (verdict=ITERATE) ---"
+setup_session
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md << 'EOF'
+# Skeptic Owner Review
+
+🔵 real.ts:1 — realThing could expose a named constant
+
+**Reasoning:** a named constant would read better than a literal.
+
+**Fix:** extract the magic number to a const.
+EOF
+BASE_NG3=$(make_nongit_base)
+OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_NG3" 2>/dev/null)
+assert_field_eq "non-git base blocks false-green: verdict=ITERATE" "$OUT" "verdict" '"ITERATE"'
+
 print_results

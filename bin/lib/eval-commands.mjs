@@ -412,6 +412,11 @@ export function cmdSynthesize(args) {
         if (!baseIsGit) {
           verificationWarnings.push(`changeScopeCoverage skipped: --base (${baseDir}) is not a git repository — cannot verify the review covers the change scope`);
           _diffFilesCache = [];
+          // F2 false-green guard: change-scope verification could NOT run, so we
+          // must not emit a clean PASS. Escalate to a warning → verdict ITERATE,
+          // making "verification didn't run" block release rather than masquerade
+          // as "all clear". Runs once (guarded by the _diffFilesCache === null cache).
+          totals.warning += 1;
         } else {
           try {
             // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
