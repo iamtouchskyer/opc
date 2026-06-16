@@ -38,6 +38,7 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | "review", "audit", "check", "before we merge", "找问题", "开源前看看" | review | review |
 | "analyze", "diagnose", "what's wrong with", "分析" | review | review |
 | "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | build-verify | brief |
+| "quick fix", "small change", "one-liner", "patch", "trivial fix", "快速修复", "小改动" | quick | build |
 | "brainstorm", "explore options", "what are the approaches", "有什么方案" | build-verify | brief |
 | "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | build-verify | brief |
 | "verify", "test", "QA", "check before release", "发布前验收" | pre-release | acceptance |
@@ -111,6 +112,16 @@ Gate loopback: FAIL/ITERATE → review (multi-round with prior findings as conte
 | gate | gate | — | gate-protocol.md |
 
 **test-design** is a review node where multiple roles design test cases (API tests, E2E UI tests, edge cases) without executing them. **test-execute** runs the designed test plan and captures evidence. Principle: *the person who decides what to test must not be the person who runs the tests.*
+
+### quick
+
+| Node | Type | Agents | Protocol |
+|------|------|--------|----------|
+| build | build | [implementer] | implementer-prompt.md |
+| review | review | [selected roles] | role-evaluator-prompt.md |
+| gate | gate | — | gate-protocol.md |
+
+**Scope**: Non-UI, single-file or ≤3 file changes, low risk. If task involves UI/design, multi-module refactoring, or security-related changes → use build-verify instead. Gate loops back to build (no brief node).
 
 ### full-stack
 

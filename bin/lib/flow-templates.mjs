@@ -52,6 +52,16 @@ export const FLOW_TEMPLATES = {
       "test-execute": ["visual-consistency-check@1"],
     },
   },
+  "quick": {
+    nodes: ["build", "review", "gate"],
+    edges: {
+      build:  { PASS: "review" },
+      review: { PASS: "gate" },
+      gate:   { PASS: null, FAIL: "build", ITERATE: "build" },
+    },
+    limits: { maxLoopsPerEdge: 2, maxTotalSteps: 10, maxNodeReentry: 3 },
+    nodeTypes: { build: "build", review: "review", gate: "gate" },
+  },
   "full-stack": {
     nodes: [
       "discuss", "brief", "build", "code-review", "test-design", "test-execute", "gate-test",
@@ -390,7 +400,7 @@ export function loadFlowFromFile(filePath) {
   }
 
   // Guard: --flow-file cannot override built-in template names
-  const BUILTIN_NAMES = new Set(["review", "build-verify", "full-stack", "pre-release", "legacy-linear"]);
+  const BUILTIN_NAMES = new Set(["review", "build-verify", "full-stack", "pre-release", "legacy-linear", "quick"]);
   if (BUILTIN_NAMES.has(name)) {
     return { error: `cannot override built-in template '${name}' via --flow-file — use a different name` };
   }
