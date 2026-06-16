@@ -14,7 +14,7 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
                               └──────── ITERATE/FAIL ────────┘
 ```
 
-1. **Task inference** — reads your request, picks a flow template (review, build-verify, full-stack, pre-release), and enters at the right node.
+1. **Task inference** — reads your request, picks a flow template (quick, review, build-verify, full-stack, pre-release), and enters at the right node.
 
 2. **Typed nodes** — each node has a type (discussion, build, review, execute, gate) with specific protocols. Build nodes produce commits. Review nodes dispatch parallel subagents. Gate nodes compute verdicts from code, not LLM judgment.
 
@@ -112,10 +112,24 @@ For well-scoped tasks, the system runs **10+ hours continuously** without interv
 
 | Template | Nodes | When |
 |----------|-------|------|
+| **quick** | build → review → gate | "quick fix", "small change", one-liner, ≤3 files, **non-UI, no logic branches** |
 | **review** | code-review → gate | PR review, audit, "find problems" |
-| **build-verify** | build → code-review → test-design → test-execute → gate | "implement X", "fix bug Y" |
+| **build-verify** | brief → build → code-review → test-design → test-execute → gate | "implement X", "fix bug Y" |
 | **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
 | **pre-release** | acceptance → audit → e2e → gates | "verify before release" |
+
+**`quick` vs `build-verify`** — `quick` drops the structured `brief` node and the
+`test-design`/`test-execute` split, halving nodes and evaluator dispatches. It keeps
+the core quality gate (independent `review` + `gate` verdict). Use it only for true
+one-liners / single-file, non-UI, no-logic-branch changes. Anything with logic
+branches, multiple files, or UI → use `build-verify`, where `test-design`'s enforced
+L1–L5 coverage check earns its keep.
+
+The **`brief`** node (entry of `build-verify`) produces a structured build brief —
+resolved design tokens, file plan, component inventory, constraints — that the
+`build` node follows. It measurably lifts first-pass build fidelity, but the brief
+describes *intended* behavior: downstream `test-design` must test the **actual built
+code**, not the brief's ideal, or it will assert behavior the build never implemented.
 
 ## Extensions
 
