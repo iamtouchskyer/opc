@@ -502,9 +502,10 @@ export function resolveFlowTemplate(args, state = null) {
     }
   }
 
-  // Priority 3: lookup by name in FLOW_TEMPLATES
-  if (!flowName) return { error: "no --flow or --flow-file specified" };
-  const template = Object.hasOwn(FLOW_TEMPLATES, flowName) ? FLOW_TEMPLATES[flowName] : null;
-  if (!template) return { error: `unknown flow template: ${flowName}` };
-  return { template, name: flowName };
+  // Priority 3: lookup by name — explicit --flow, else persisted state.flowTemplate
+  const resolvedName = flowName || (state && state.flowTemplate);
+  if (!resolvedName) return { error: "no --flow or --flow-file specified" };
+  const template = Object.hasOwn(FLOW_TEMPLATES, resolvedName) ? FLOW_TEMPLATES[resolvedName] : null;
+  if (!template) return { error: `unknown flow template: ${resolvedName}` };
+  return { template, name: resolvedName };
 }
