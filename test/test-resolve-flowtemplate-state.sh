@@ -77,4 +77,75 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# ── 6: route WITHOUT --flow resolves next from state.flowTemplate (F7) ──
+# The real /opc skill calls `route --node X --verdict Y --dir DIR` without
+# --flow. Before the F7 fix, cmdRoute called resolveFlowTemplate(args) without
+# state → "no --flow or --flow-file specified". Assert the CONCRETE next node
+# (brief PASS → build in build-verify) so this proves the correct template
+# resolved via fallback, not merely that route returned valid.
+echo "--- 6: route (no --flow) resolves concrete next from state.flowTemplate ---"
+OUT=$($HARNESS route --node brief --verdict PASS --dir .harness 2>/dev/null)
+NEXT=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('next',''))" 2>/dev/null)
+if [ "$NEXT" = "build" ]; then
+  echo "  ✅ route resolved build-verify via fallback (brief→build): $OUT"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ route did not resolve correct template (expected next=build): $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 7: route WITH --flow still works (no regression) ──
+echo "--- 7: route WITH --flow still resolves ---"
+OUT=$($HARNESS route --node brief --verdict PASS --dir .harness --flow build-verify 2>/dev/null)
+NEXT=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('next',''))" 2>/dev/null)
+if [ "$NEXT" = "build" ]; then
+  echo "  ✅ route --flow path unaffected: $OUT"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ route --flow path broke: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 8: route WITHOUT --flow AND no state file → graceful valid:false ──
+# Guards the try/catch degradation path: missing flow-state.json must not crash;
+# route should return valid:false with the "no --flow" error, exit 0.
+echo "--- 8: route, no --flow, no state file → graceful error (no crash) ---"
+mkdir -p .empty-harness
+OUT=$($HARNESS route --node gate --verdict PASS --dir .empty-harness 2>/dev/null)
+RC=$?
+VALID=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print('valid' if d.get('valid') else 'invalid')" 2>/dev/null)
+if [ "$VALID" = "invalid" ] && [ "$RC" = "0" ]; then
+  echo "  ✅ graceful: valid:false, no crash (rc=0): $OUT"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ expected graceful valid:false rc=0, got rc=$RC: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 9: autoMode state surfaces reminder in route output ──
+# The F7 refactor moved the autoMode read into the shared state load; guard that
+# `--auto` init still produces the reminder field on a route call.
+echo "--- 9: autoMode init → route emits reminder ---"
+rm -rf .auto-harness
+$HARNESS init --flow build-verify --entry brief --dir .auto-harness --auto >/dev/null 2>&1
+OUT=$($HARNESS route --node brief --verdict PASS --dir .auto-harness 2>/dev/null)
+if echo "$OUT" | grep -q "auto mode"; then
+  echo "  ✅ reminder present under autoMode: $OUT"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ reminder missing under autoMode: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 10: non-auto init → route omits reminder ──
+echo "--- 10: non-auto init → route has no reminder ---"
+OUT=$($HARNESS route --node brief --verdict PASS --dir .harness 2>/dev/null)
+if echo "$OUT" | grep -q "reminder"; then
+  echo "  ❌ unexpected reminder without autoMode: $OUT"
+  FAIL=$((FAIL + 1))
+else
+  echo "  ✅ no reminder without autoMode: $OUT"
+  PASS=$((PASS + 1))
+fi
+
 print_results

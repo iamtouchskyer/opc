@@ -29,7 +29,22 @@ export function cmdRoute(args) {
     process.exit(1);
   }
 
-  const resolved = resolveFlowTemplate(args);
+  // F7 fix: load flow-state.json BEFORE resolving the template so
+  // resolveFlowTemplate can fall back to state.flowTemplate when neither --flow
+  // nor --flow-file is given. The real /opc skill calls `route` without --flow,
+  // so without this it errored "no --flow or --flow-file specified". Mirrors
+  // viz-commands.mjs:34 / ext-commands.mjs:57.
+  const stateDir = resolveDir(args, { optional: true });
+  let state = null;
+  if (stateDir) {
+    const statePath = join(stateDir, "flow-state.json");
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+      if (state._flow_file) loadFlowFromFile(state._flow_file);
+    } catch { /* no/corrupt state file — resolve from args alone */ }
+  }
+
+  const resolved = resolveFlowTemplate(args, state);
   if (resolved.error) {
     console.log(JSON.stringify({ next: null, valid: false, error: resolved.error }));
     return;
@@ -47,15 +62,10 @@ export function cmdRoute(args) {
     return;
   }
 
-  // Read autoMode from state if available
-  const stateDir = resolveDir(args, { optional: true });
+  // Read autoMode from the state loaded above
   let autoReminder;
-  if (stateDir) {
-    const statePath = join(stateDir, "flow-state.json");
-    try {
-      const st = JSON.parse(readFileSync(statePath, "utf8"));
-      if (st.autoMode) autoReminder = "auto mode — do not pause, do not ask user, keep executing";
-    } catch { /* no state file, skip */ }
+  if (state && state.autoMode) {
+    autoReminder = "auto mode — do not pause, do not ask user, keep executing";
   }
 
   console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
@@ -688,7 +698,15 @@ export function cmdValidateContext(args) {
     process.exit(1);
   }
 
-  const resolved = resolveFlowTemplate(args);
+  // F7-sibling: load flow-state.json so resolveFlowTemplate can fall back to
+  // state.flowTemplate / restore state._flow_file when called without --flow.
+  let vcState = null;
+  try {
+    vcState = JSON.parse(readFileSync(join(dir, "flow-state.json"), "utf8"));
+    if (vcState._flow_file) loadFlowFromFile(vcState._flow_file);
+  } catch { /* no/corrupt state file — resolve from args alone */ }
+
+  const resolved = resolveFlowTemplate(args, vcState);
   if (resolved.error) {
     console.log(JSON.stringify({ valid: false, errors: [resolved.error] }));
     return;
