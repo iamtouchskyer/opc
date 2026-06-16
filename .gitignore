@@ -5,7 +5,7 @@ node_modules/
 .claude/
 .harness/
 .harness-*/
-.opc-loop-*/
+.opc-*/
 .validation-corpus/
 docs/*.mp4
 docs/*.gif
