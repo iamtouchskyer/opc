@@ -207,7 +207,7 @@ SRCEOF
 OUT=$($HARNESS synthesize .harness --node code-review --base /tmp/opc-d2-cal-base 2>/dev/null)
 # Finding 1 refs auth.ts:3 (hashPassword line) and mentions "hashPassword" → relevant
 # Finding 2 refs auth.ts:1 (import line) but talks about "database pooling" → weak ref
-assert_contains "28: weak ref detected" "$OUT" "possible mismatch"
+assert_contains "28: weak ref detected" "$OUT" "possible hallucination"
 
 # ───────────────────────────────────────────────────────────────
 

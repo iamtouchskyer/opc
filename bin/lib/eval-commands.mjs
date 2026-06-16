@@ -341,15 +341,24 @@ export function cmdSynthesize(args) {
               if (f.line < 1 || f.line > srcLines.length) {
                 invalidRefCount++;
               } else {
-                // Content relevance: extract source line, check token overlap with finding issue
-                const srcLine = srcLines[f.line - 1].toLowerCase();
+                // Content relevance: ±3 line window, check token overlap with finding issue
+                const lo = Math.max(0, f.line - 4); // f.line is 1-indexed
+                const hi = Math.min(srcLines.length, f.line + 2);
+                const windowText = srcLines.slice(lo, hi).join(" ").toLowerCase();
+                const CODE_STOPWORDS = new Set([
+                  "const", "let", "var", "function", "return", "import", "export",
+                  "from", "this", "that", "the", "and", "for", "with", "not",
+                  "has", "are", "was", "but", "can", "will", "new", "class",
+                  "true", "false", "null", "undefined", "async", "await",
+                ]);
                 const issueTokens = (f.issue || "").toLowerCase()
                   .replace(/[^a-z0-9_]/g, " ").split(/\s+/)
-                  .filter(t => t.length >= 3); // skip noise words
-                const srcTokens = srcLine.replace(/[^a-z0-9_]/g, " ").split(/\s+/)
-                  .filter(t => t.length >= 3);
-                if (issueTokens.length >= 2 && srcTokens.length >= 1) {
-                  const shared = issueTokens.filter(t => srcTokens.some(s => s.includes(t) || t.includes(s)));
+                  .filter(t => t.length >= 3 && !CODE_STOPWORDS.has(t));
+                const windowTokens = windowText
+                  .replace(/[^a-z0-9_]/g, " ").split(/\s+/)
+                  .filter(t => t.length >= 3 && !CODE_STOPWORDS.has(t));
+                if (issueTokens.length >= 2 && windowTokens.length >= 1) {
+                  const shared = issueTokens.filter(t => windowTokens.some(s => s.includes(t) || t.includes(s)));
                   if (shared.length === 0) {
                     weakRefCount++;
                   }
@@ -364,7 +373,8 @@ export function cmdSynthesize(args) {
         thinEvalWarnings.push(`${roleName}: ${invalidRefCount} finding(s) reference non-existent or out-of-range file:line — fabricated refs detected`);
       }
       if (weakRefCount > 0) {
-        thinEvalWarnings.push(`${roleName}: ${weakRefCount} finding(s) reference valid file:line but issue text shares no tokens with actual source — possible mismatch`);
+        totals.warning += weakRefCount;
+        thinEvalWarnings.push(`${roleName}: ${weakRefCount} finding(s) reference valid file:line but issue text shares no tokens with source (±3 lines) — possible hallucination`);
       }
     }
 
