@@ -110,9 +110,9 @@ Working directory: {absolute path}
 {paste acceptance criteria from node plan}
 
 ## Severity Calibration
-- 🔴 Critical: Exploitable vulnerability, data loss, or production crash. Concrete and verifiable.
-- 🟡 Warning: Real code smell, missing validation, or reliability risk. Concrete impact.
-- 🔵 Suggestion: Improvement opportunity. Nice-to-have.
+- 🔴 Critical (or `[CRITICAL]`): Exploitable vulnerability, data loss, or production crash. Concrete and verifiable.
+- 🟡 Warning (or `[WARNING]`): Real code smell, missing validation, or reliability risk. Concrete impact.
+- 🔵 Suggestion (or `[SUGGESTION]`): Improvement opportunity. Nice-to-have.
 When in doubt, downgrade.
 
 ### Quality Tier Severity Calibration
@@ -161,6 +161,10 @@ For each finding:
 [SEVERITY] file:line — Issue description
   reasoning: Why this matters from a {role_name} perspective
   fix: Concrete suggested fix (code snippet, config change, or specific action)
+
+Severity markers — use EITHER emoji OR bracketed text (both are equivalent):
+  🔴 file:line — Issue description
+  [CRITICAL] file:line — Issue description
 
 **IMPORTANT — Finding format requirements:**
 - Every finding MUST have a `reasoning:` line explaining WHY this matters (not just what's wrong)

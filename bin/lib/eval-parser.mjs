@@ -5,9 +5,13 @@ export const SEVERITY_MAP = {
   "🔴": "critical",
   "🟡": "warning",
   "🔵": "suggestion",
+  "CRITICAL": "critical",
+  "WARNING": "warning",
+  "SUGGESTION": "suggestion",
 };
 
-export const SEVERITY_RE = /(?:\[?)(🔴|🟡|🔵)(?:\]?)/;
+// Emoji: optional brackets. Text: MUST use brackets to avoid false positives.
+export const SEVERITY_RE = /(?:\[?)(🔴|🟡|🔵)(?:\]?)|\[(CRITICAL|WARNING|SUGGESTION)\]/i;
 export const FILE_REF_RE = /[\w./-]+\.\w+:\d+/;
 export const HEDGING_RE = /\bmight\b|\bcould potentially\b|\bconsider\b/i;
 // Aspirational / non-actionable claims — phrases that sound good but commit to nothing
@@ -86,6 +90,7 @@ export function parseEvaluation(text) {
   let hasFileRefs = false;
   const hedgingDetected = [];
   const findings = [];
+  const formatErrors = [];
 
   let currentFinding = null;
 
@@ -158,13 +163,15 @@ export function parseEvaluation(text) {
       const bareContent = trimmed
         .replace(/^[-*]\s+/, "")
         .replace(/[🔴🟡🔵]/g, "")
+        .replace(/\[(CRITICAL|WARNING|SUGGESTION)\]/gi, "")
         .replace(/[*_`\[\]()]/g, "")
         .trim();
       if (/^(none|n\/?a|n\.a\.?|nothing|—|-)\s*\.?$/i.test(bareContent)) {
         continue;
       }
 
-      const severity = SEVERITY_MAP[sevMatch[1]];
+      const severityKey = sevMatch[1] || sevMatch[2];
+      const severity = SEVERITY_MAP[severityKey.toUpperCase()] || SEVERITY_MAP[severityKey];
       severityCounts[severity]++;
       const issue = dashIdx !== -1 ? trimmed.slice(dashIdx + 1).trim() : trimmed;
 
@@ -174,6 +181,11 @@ export function parseEvaluation(text) {
         const parts = fileMatch[0].split(":");
         filePath = parts[0];
         fileLine = parseInt(parts[1], 10);
+      }
+
+      // Track unstructured findings: severity marker without em-dash AND without file:line
+      if (dashIdx === -1 && !fileMatch) {
+        formatErrors.push({ line: lineNum, text: trimmed, reason: "severity marker found but no em-dash or file:line — unstructured finding" });
       }
 
       if (currentFinding) findings.push(currentFinding);
@@ -303,5 +315,7 @@ export function parseEvaluation(text) {
     // Aspirational claims layer
     aspirationalClaims,
     aspirationalLineCount: aspirationalLines.length,
+    // Format errors (severity markers that failed to parse as findings)
+    formatErrors,
   };
 }

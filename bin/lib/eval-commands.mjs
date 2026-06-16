@@ -247,6 +247,23 @@ export function cmdSynthesize(args) {
     }
     const parsed = parseEvaluation(text);
 
+    // ── Format error detection ───────────────────────────────
+    // Lines with severity markers that failed to parse as structured findings.
+    // If ALL severity markers failed → protocol violation, eval cannot produce PASS.
+    if (parsed.formatErrors && parsed.formatErrors.length > 0) {
+      const dropped = parsed.formatErrors.length;
+      if (parsed.findings_count === 0 && dropped > 0) {
+        totals.warning += dropped;
+        thinEvalWarnings.push(
+          `${roleName}: ${dropped} line(s) with severity markers failed to parse — 0 findings extracted (format violation)`
+        );
+      } else if (dropped > 0) {
+        thinEvalWarnings.push(
+          `${roleName}: ${dropped} line(s) with severity markers dropped due to format errors`
+        );
+      }
+    }
+
     const blocked = /BLOCKED/i.test(parsed.verdict);
 
     // ── Thin eval detection (mechanical) ──────────────────────
