@@ -2,7 +2,7 @@
 // Depends on: eval-parser.mjs, tier-baselines.mjs, util.mjs
 
 import { readFileSync, readdirSync, existsSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag, resolveDir } from "./util.mjs";
@@ -218,6 +218,7 @@ export function cmdSynthesize(args) {
   const roles = [];
   const totals = { critical: 0, warning: 0, suggestion: 0 };
   const thinEvalWarnings = [];
+  const verificationWarnings = [];
 
   // --base <dir> — project root for validating file:line references in findings
   const baseDir = getFlag(args, "base", null);
@@ -329,21 +330,33 @@ export function cmdSynthesize(args) {
     let invalidRefCount = 0;
     let weakRefCount = 0;
     if (baseDir && parsed.findings.length > 0) {
-      for (const f of parsed.findings) {
-        if (f.file) {
-          const resolved = f.file.startsWith("/") ? f.file : join(baseDir, f.file);
-          if (!existsSync(resolved)) {
+      // F9: resolve refs against the project base AND the session dir(s). Evals
+      // legitimately cite session artifacts (test-plan.md, brief.md, sibling evals)
+      // that live outside the project base — those are valid, not fabricated.
+      const refRoots = [baseDir, dir, dirname(f.path)];
+      for (const finding of parsed.findings) {
+        if (finding.file) {
+          let resolved = null;
+          if (finding.file.startsWith("/")) {
+            if (existsSync(finding.file)) resolved = finding.file;
+          } else {
+            for (const root of refRoots) {
+              const cand = join(root, finding.file);
+              if (existsSync(cand)) { resolved = cand; break; }
+            }
+          }
+          if (!resolved) {
             invalidRefCount++;
-          } else if (f.line != null) {
+          } else if (finding.line != null) {
             try {
               const content = readFileSync(resolved, "utf8");
               const srcLines = content.split("\n");
-              if (f.line < 1 || f.line > srcLines.length) {
+              if (finding.line < 1 || finding.line > srcLines.length) {
                 invalidRefCount++;
               } else {
                 // Content relevance: ±3 line window, check token overlap with finding issue
-                const lo = Math.max(0, f.line - 4); // f.line is 1-indexed
-                const hi = Math.min(srcLines.length, f.line + 2);
+                const lo = Math.max(0, finding.line - 4); // finding.line is 1-indexed
+                const hi = Math.min(srcLines.length, finding.line + 2);
                 const windowText = srcLines.slice(lo, hi).join(" ").toLowerCase();
                 const CODE_STOPWORDS = new Set([
                   "const", "let", "var", "function", "return", "import", "export",
@@ -351,7 +364,7 @@ export function cmdSynthesize(args) {
                   "has", "are", "was", "but", "can", "will", "new", "class",
                   "true", "false", "null", "undefined", "async", "await",
                 ]);
-                const issueTokens = (f.issue || "").toLowerCase()
+                const issueTokens = (finding.issue || "").toLowerCase()
                   .replace(/[^a-z0-9_]/g, " ").split(/\s+/)
                   .filter(t => t.length >= 3 && !CODE_STOPWORDS.has(t));
                 const windowTokens = windowText
@@ -383,20 +396,44 @@ export function cmdSynthesize(args) {
     let changeScopeUncovered = false;
     if (baseDir && parsed.findings_count > 0) {
       if (_diffFilesCache === null) {
+        // F2: a non-git --base cannot be change-scope verified. Detect it up front
+        // (capturing git's stderr so its "fatal: not a git repository" never leaks to
+        // the terminal) and surface an explicit warning instead of silently skipping —
+        // "verification didn't run" must be visible, not masked as a clean result.
+        let baseIsGit = false;
         try {
-          // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
-          let diffOut = "";
-          try {
-            diffOut = execSync("git diff --name-only HEAD~1", { cwd: baseDir, encoding: "utf8", timeout: 15000 });
-          } catch {
-            try {
-              diffOut = execSync("git show --name-only --format='' HEAD", { cwd: baseDir, encoding: "utf8", timeout: 15000 });
-            } catch { /* git not available or no commits */ }
-          }
-          _diffFilesCache = diffOut.trim().split("\n").filter(f => f.length > 0);
-        } catch {
-          console.error("⚠️  git diff timed out or failed — changeScopeCoverage skipped");
+          execSync("git rev-parse --is-inside-work-tree", {
+            cwd: baseDir, encoding: "utf8", timeout: 15000,
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          baseIsGit = true;
+        } catch { baseIsGit = false; }
+
+        if (!baseIsGit) {
+          verificationWarnings.push(`changeScopeCoverage skipped: --base (${baseDir}) is not a git repository — cannot verify the review covers the change scope`);
           _diffFilesCache = [];
+        } else {
+          try {
+            // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
+            let diffOut = "";
+            try {
+              diffOut = execSync("git diff --name-only HEAD~1", {
+                cwd: baseDir, encoding: "utf8", timeout: 15000,
+                stdio: ["ignore", "pipe", "ignore"],
+              });
+            } catch {
+              try {
+                diffOut = execSync("git show --name-only --format='' HEAD", {
+                  cwd: baseDir, encoding: "utf8", timeout: 15000,
+                  stdio: ["ignore", "pipe", "ignore"],
+                });
+              } catch { /* git available but no commits yet */ }
+            }
+            _diffFilesCache = diffOut.trim().split("\n").filter(ff => ff.length > 0);
+          } catch {
+            console.error("⚠️  git diff timed out or failed — changeScopeCoverage skipped");
+            _diffFilesCache = [];
+          }
         }
       }
       if (_diffFilesCache.length > 0) {
@@ -778,6 +815,7 @@ export function cmdSynthesize(args) {
     rubricVersionWarning,
     convergenceWarning,
     thinEvalWarnings: thinEvalWarnings.length > 0 ? thinEvalWarnings : undefined,
+    verificationWarnings: verificationWarnings.length > 0 ? verificationWarnings : undefined,
     evalQualityGate: qualityFailRoles.length > 0
       ? { triggered: true, mode: strict ? "enforce" : "shadow", roles: qfDetail }
       : undefined,
