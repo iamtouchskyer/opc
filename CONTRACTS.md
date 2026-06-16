@@ -305,8 +305,9 @@ The absolute path is stored in state at `init` / `init-loop` time, so subsequent
 
 | Template | Nodes | Entry options |
 |----------|-------|--------------|
+| `quick` | build → review → gate | build |
 | `review` | review → gate | review |
-| `build-verify` | build → code-review → test-design → test-execute → gate | build |
+| `build-verify` | brief → build → code-review → test-design → test-execute → gate | brief, build |
 | `full-stack` | discuss → build → code-review → test-design → test-execute → gate-test → acceptance → gate-acceptance → audit → gate-audit → e2e-user → gate-e2e → post-launch-sim → gate-final | discuss, build |
 | `pre-release` | acceptance → gate-acceptance → audit → gate-audit → e2e-user → gate-e2e | acceptance |
 | `legacy-linear` | design → plan → build → evaluate → deliver | design |
