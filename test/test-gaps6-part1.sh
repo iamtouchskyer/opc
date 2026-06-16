@@ -49,13 +49,13 @@ D=$(mktemp -d)
 cd "$D"
 mkdir -p nodes
 # No init! Direct transition from gate node
-OUT=$($HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "True" "1.1a: transition without init succeeds (fresh state created)"
-assert_field_eq "$OUT" "['next']" "build" "1.1b: next node is build"
+assert_field_eq "$OUT" "['next']" "brief" "1.1b: next node is brief"
 # Verify state was created with correct structure
 assert_contains "$(cat flow-state.json)" '"version": "1.0"' "1.1c: fresh state has version"
 assert_contains "$(cat flow-state.json)" '"flowTemplate": "build-verify"' "1.1d: fresh state has correct flow"
-assert_contains "$(cat flow-state.json)" '"entryNode": "build"' "1.1e: fresh state entryNode = first template node"
+assert_contains "$(cat flow-state.json)" '"entryNode": "brief"' "1.1e: fresh state entryNode = first template node"
 assert_contains "$(cat flow-state.json)" '"maxTotalSteps": 25' "1.1f: fresh state has limits from template"
 
 echo ""
@@ -138,10 +138,10 @@ $HARNESS init --flow build-verify --entry gate --dir . > /dev/null 2>&1
 # Write corrupt handshake for test-execute (upstream of gate)
 mkdir -p nodes/test-execute
 echo "NOT VALID JSON {{{" > nodes/test-execute/handshake.json
-# Try to transition gate → build (ITERATE)
+# Try to transition gate → brief (ITERATE)
 # Wait for idempotency window
 sleep 2
-OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "False" "3.1a: corrupt upstream handshake blocks transition"
 assert_contains "$OUT" "corrupt" "3.1b: error mentions corrupt"
 cd "$ORIG_DIR"

@@ -89,10 +89,10 @@ echo "=== TEST GROUP 7: escape hatches ==="
 echo "--- 7.1: skip ---"
 rm -rf .h-skip && $HARNESS init --flow build-verify --dir .h-skip >/dev/null 2>/dev/null
 OUT=$($HARNESS skip --dir .h-skip 2>/dev/null)
-assert_field_eq "skip from build" "$OUT" "skipped" "\"build\""
-assert_field_eq "skip to code-review" "$OUT" "next" "\"code-review\""
-assert_file_exists "skip handshake" ".h-skip/nodes/build/handshake.json"
-SKIPPED=$(python3 -c "import json; print(json.load(open('.h-skip/nodes/build/handshake.json')).get('skipped',False))")
+assert_field_eq "skip from brief" "$OUT" "skipped" "\"brief\""
+assert_field_eq "skip to build" "$OUT" "next" "\"build\""
+assert_file_exists "skip handshake" ".h-skip/nodes/brief/handshake.json"
+SKIPPED=$(python3 -c "import json; print(json.load(open('.h-skip/nodes/brief/handshake.json')).get('skipped',False))")
 if [ "$SKIPPED" = "True" ]; then
   echo "  ✅ handshake.skipped=true"
   PASS=$((PASS + 1))
@@ -169,9 +169,9 @@ echo ""
 echo "--- 7.10: goto reentry limit ---"
 rm -rf .h-reentry && $HARNESS init --flow build-verify --dir .h-reentry >/dev/null 2>/dev/null
 for i in 1 2 3; do
-  $HARNESS goto build --dir .h-reentry >/dev/null
+  $HARNESS goto brief --dir .h-reentry >/dev/null
 done
-OUT=$($HARNESS goto build --dir .h-reentry)
+OUT=$($HARNESS goto brief --dir .h-reentry)
 assert_contains "edge limit" "$OUT" "maxLoopsPerEdge"
 
 echo ""
@@ -214,12 +214,14 @@ assert_contains "loopbacks" "$OUT" "loopbacks"
 echo ""
 echo "--- 9.3: Viz with state ---"
 rm -rf .h-trans && $HARNESS init --flow build-verify --dir .h-trans >/dev/null 2>/dev/null
-mkdir -p .h-trans/nodes/build
-cat > .h-trans/nodes/build/handshake.json << 'HS'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"built","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+mkdir -p .h-trans/nodes/brief/run_1
+write_golden_brief .h-trans/nodes/brief/build-brief.md
+echo '{"pass":true}' > .h-trans/nodes/brief/run_1/brief-lint-result.json
+cat > .h-trans/nodes/brief/handshake.json << 'HS'
+{"nodeId":"brief","nodeType":"brief","runId":"run_1","status":"completed","summary":"brief done","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]}
 HS
 sleep 1
-$HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null
+$HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null
 OUT=$($HARNESS viz --flow build-verify --dir .h-trans)
 assert_contains "marker symbols" "$OUT" "✅"
 

@@ -18,6 +18,7 @@ import { cmdReinitLoop } from "./lib/loop-reinit.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
+import { cmdBriefLint } from "./lib/brief-lint.mjs";
 import { cmdRunbook } from "./lib/runbook-commands.mjs";
 import { cmdClean } from "./lib/clean.mjs";
 import { cmdAudit } from "./lib/audit.mjs";
@@ -54,6 +55,7 @@ switch (command) {
   case "ux-verdict":            cmdUxVerdict(args);            break;
   case "ux-friction-aggregate": cmdUxFrictionAggregate(args);  break;
   case "criteria-lint":         cmdCriteriaLint(args);         break;
+  case "brief-lint":             cmdBriefLint(args);            break;
   case "prompt-context":        await cmdPromptContext(args);  break;
   case "extension-test":        await cmdExtensionTest(args);  break;
   case "extension-verdict":     await cmdExtensionVerdict(args); break;
@@ -105,6 +107,7 @@ switch (command) {
     console.log("  ux-friction-aggregate --dir <p> --run <N> --output <p>");
     console.log("                                                     Aggregate friction points");
     console.log("  criteria-lint <file> [--tier <t>]                  Lint acceptance criteria DoD");
+    console.log("  brief-lint <file> [--has-prior-findings]           Lint build brief quality");
     console.log();
     console.log("Config commands:");
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");

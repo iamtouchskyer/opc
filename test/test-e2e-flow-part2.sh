@@ -166,9 +166,15 @@ echo "=== E2E TEST 4: build-verify flow — full happy path ==="
 # ═══════════════════════════════════════════════════════════════
 
 rm -rf .harness
-$HARNESS init --flow build-verify --entry build --dir .harness 2>/dev/null
+$HARNESS init --flow build-verify --entry brief --dir .harness 2>/dev/null
 STATE=$(cat .harness/flow-state.json)
-assert_field_eq "4.1: starts at build" "$STATE" "currentNode" '"build"'
+assert_field_eq "4.1: starts at brief" "$STATE" "currentNode" '"brief"'
+
+write_handshake .harness brief "Brief complete" "PASS" brief
+ROUTE=$($HARNESS route --node brief --verdict PASS --flow build-verify)
+NEXT=$(jq_field "$ROUTE" "next")
+assert_contains "4.1b: brief → build" "$NEXT" "build"
+$HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .harness 2>/dev/null
 
 write_handshake .harness build "Implementation complete" "PASS" build
 ROUTE=$($HARNESS route --node build --verdict PASS --flow build-verify)
@@ -206,7 +212,7 @@ assert_field_eq "4.7: terminal" "$ROUTE" "next" '__NULL__'
 echo ""
 
 # ═══════════════════════════════════════════════════════════════
-echo "=== E2E TEST 5: build-verify — gate FAIL loopback to build ==="
+echo "=== E2E TEST 5: build-verify — gate FAIL loopback to brief ==="
 # ═══════════════════════════════════════════════════════════════
 
 rm -rf .harness
@@ -226,7 +232,7 @@ assert_field_eq "5.1: gate FAIL on critical" "$SYNTH" "verdict" '"FAIL"'
 write_handshake .harness gate "Gate fails" "FAIL" gate
 ROUTE=$($HARNESS route --node gate --verdict FAIL --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
-assert_contains "5.2: FAIL → back to build" "$NEXT" "build"
+assert_contains "5.2: FAIL → back to brief" "$NEXT" "brief"
 
 echo ""
 

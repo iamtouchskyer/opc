@@ -175,7 +175,7 @@ json.dump(s,open('flow-state.json','w'),indent=2)
 # Now corrupt the upstream handshake AFTER state was built
 echo "CORRUPT JSON {{{{" > nodes/test-execute/handshake.json
 # ITERATE from gate triggers backlog check on upstream test-execute
-OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 assert_contains "$OUT" "corrupt" "corrupt upstream handshake detected"
 assert_field_eq "$OUT" "['allowed']" "False" "transition blocked by corrupt upstream"
 rm -rf "$D"
@@ -213,7 +213,7 @@ s['edgeCounts']={}
 json.dump(s,open('flow-state.json','w'),indent=2)
 "
 # PASS from gate — no upstream handshake → backlog check should be silently skipped → transition allowed
-OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 # Without upstream handshake, no findings.warning to trigger backlog enforcement
 assert_field_eq "$OUT" "['allowed']" "True" "missing upstream handshake → backlog skipped → allowed"
 rm -rf "$D"

@@ -242,7 +242,7 @@ function createSession(name, { artifacts = [], failingReport = false } = {}) {
     version: "1.0",
     flowTemplate: "build-verify",
     currentNode: "gate",
-    entryNode: "build",
+    entryNode: "brief",
     totalSteps: 4,
     maxTotalSteps: 25,
     maxLoopsPerEdge: 3,
@@ -296,7 +296,7 @@ describe("Step 1.5 bypass enforcement — cmdTransition", () => {
   test("direct transition FAIL with failing artifacts → allowed (correct verdict)", () => {
     const dir = createSession("bypass-transition-fail", { failingReport: true });
     const result = runHarness("transition", [
-      "--from", "gate", "--to", "build", "--verdict", "FAIL",
+      "--from", "gate", "--to", "brief", "--verdict", "FAIL",
       "--flow", "build-verify", "--dir", dir,
     ]);
     assert.equal(result.allowed, true, `FAIL verdict should be allowed, got: ${JSON.stringify(result)}`);

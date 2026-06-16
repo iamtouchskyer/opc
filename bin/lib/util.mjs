@@ -70,7 +70,7 @@ export function atomicWriteSync(filePath, data) {
 }
 
 // ── Shared constants ────────────────────────────────────────────
-export const VALID_NODE_TYPES = new Set(["discussion", "build", "review", "execute", "gate"]);
+export const VALID_NODE_TYPES = new Set(["discussion", "brief", "build", "review", "execute", "gate"]);
 export const VALID_STATUSES = new Set(["completed", "failed", "blocked"]);
 export const VALID_VERDICTS = new Set(["PASS", "ITERATE", "FAIL", "BLOCKED"]);
 export const EVIDENCE_TYPES = new Set(["test-result", "screenshot", "cli-output"]);

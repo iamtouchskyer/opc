@@ -2,7 +2,7 @@
 // Depends on: flow-templates.mjs, flow-core.mjs (validateHandshakeData), viz-commands.mjs, util.mjs, file-lock.mjs
 
 import { readFileSync, readdirSync, mkdirSync, existsSync, writeFileSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { join, dirname, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
 import { execFileSync } from "child_process";
@@ -371,12 +371,19 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
             };
             await fireVerdictAppend(vRegistry, vCtx);
             saveRegistryCache(resolve(dir), vRegistry);
-            // Write extensionsApplied to handshake (same as cmdExtensionVerdict)
-            const handshakePath = join(latestRunDir, "handshake.json");
-            let handshake = {};
-            try { handshake = JSON.parse(readFileSync(handshakePath, "utf8")); } catch { /* start fresh */ }
-            handshake.extensionsApplied = survivingExtensions(vRegistry);
-            writeFileSync(handshakePath, JSON.stringify(handshake, null, 2));
+            const appliedExts = survivingExtensions(vRegistry);
+            // Write extensionsApplied to run-level handshake
+            const runHandshakePath = join(latestRunDir, "handshake.json");
+            let runHandshake = {};
+            try { runHandshake = JSON.parse(readFileSync(runHandshakePath, "utf8")); } catch { /* start fresh */ }
+            runHandshake.extensionsApplied = appliedExts;
+            writeFileSync(runHandshakePath, JSON.stringify(runHandshake, null, 2));
+            // Also stamp node-level handshake (validate-chain checks this level)
+            const nodeHandshakePath = join(fromNodeDir, "handshake.json");
+            let nodeHandshake = {};
+            try { nodeHandshake = JSON.parse(readFileSync(nodeHandshakePath, "utf8")); } catch { /* start fresh */ }
+            nodeHandshake.extensionsApplied = appliedExts;
+            writeFileSync(nodeHandshakePath, JSON.stringify(nodeHandshake, null, 2));
           }
         }
       }
@@ -585,16 +592,12 @@ export function cmdValidateChain(args) {
   const errors = [];
   const executedPath = [];
 
-  // Load requiredExtensions from explicit config only.
+  // Load requiredExtensions from layered config (user → repo → cli).
   // validate-chain is post-hoc — it verifies claims, not environment state.
-  // Auto-discover (filesystem scan) is a runtime concern (init/transition).
   let requiredExtensions = [];
   try {
-    const configPath = join(os.homedir(), ".opc", "config.json");
-    if (existsSync(configPath)) {
-      const cfg = JSON.parse(readFileSync(configPath, "utf8"));
-      if (Array.isArray(cfg.requiredExtensions)) requiredExtensions = cfg.requiredExtensions;
-    }
+    const cfg = loadOpcConfig(dir);
+    if (Array.isArray(cfg.requiredExtensions)) requiredExtensions = cfg.requiredExtensions;
   } catch { /* best effort */ }
 
   // Resolve template for capability-aware enforcement
@@ -656,6 +659,8 @@ export function cmdValidateChain(args) {
             if (!data.status) errors.push(`${nd}/handshake.json: missing status`);
             // Check extensionsApplied for required extensions — only on nodes with capabilities
             const isGateNode = nd.startsWith("gate") || data.node === "gate" || data.nodeId === "gate";
+            const nodeType = data.nodeType || chainTemplate?.nodeTypes?.[nd] || "";
+            const isPromptPhase = nodeType === "brief" || nodeType === "build";
             const nodeCaps = chainTemplate?.nodeCapabilities?.[nd] || [];
             if (requiredExtensions.length > 0 && !isGateNode && nodeCaps.length > 0) {
               if (!Object.hasOwn(data, "extensionsApplied")) {
@@ -665,6 +670,21 @@ export function cmdValidateChain(args) {
                 for (const req of requiredExtensions) {
                   if (!applied.includes(req)) {
                     errors.push(`${nd}/handshake.json: required extension '${req}' missing from extensionsApplied`);
+                  }
+                }
+                // Verify eval-extensions.json actually exists in the latest run dir
+                // Prompt-phase nodes (brief, build) produce code, not evaluations —
+                // they have extensionsApplied from prompt-context but no eval-extensions.json.
+                // Only verdict-phase nodes (review, execute) produce eval artifacts.
+                if (applied.length > 0 && !isPromptPhase) {
+                  const latestRun = findLatestRunDir(join(nodesDir, nd));
+                  if (!latestRun) {
+                    errors.push(`${nd}: extensionsApplied claims [${applied.join(",")}] but no run directory exists`);
+                  } else {
+                    const evalExtPath = join(latestRun, "eval-extensions.json");
+                    if (!existsSync(evalExtPath)) {
+                      errors.push(`${nd}: extensionsApplied claims [${applied.join(",")}] but eval-extensions.json not found in ${basename(latestRun)}`);
+                    }
                   }
                 }
               }

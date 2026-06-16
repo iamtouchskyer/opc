@@ -37,9 +37,9 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 |---|---|---|
 | "review", "audit", "check", "before we merge", "找问题", "开源前看看" | review | review |
 | "analyze", "diagnose", "what's wrong with", "分析" | review | review |
-| "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | build-verify | build |
-| "brainstorm", "explore options", "what are the approaches", "有什么方案" | build-verify | build |
-| "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | build-verify | build |
+| "build", "implement", "create", "fix bug", "帮我实现", "重构成..." | build-verify | brief |
+| "brainstorm", "explore options", "what are the approaches", "有什么方案" | build-verify | brief |
+| "plan", "decompose", "break this down", "scope", "estimate", "拆一下" | build-verify | brief |
 | "verify", "test", "QA", "check before release", "发布前验收" | pre-release | acceptance |
 | "post-release", "user test", "onboarding check", "用户验收" | pre-release | acceptance |
 | Complex, vague, or multi-keyword request | full-stack | discuss |
@@ -50,8 +50,9 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | User has... | Entry override |
 |---|---|
 | A vague idea or brief | First node in template |
-| A spec or design doc | build (if ∈ template) |
-| An implementation plan | build (if ∈ template) |
+| A spec or design doc | brief (if ∈ template), else build |
+| An implementation plan | brief (if ∈ template), else build |
+| A qualified build-brief.md from prior run | build (skip brief if lint passes) |
 | Code/artifact that needs evaluation | review, code-review, or test-design (if ∈ template) |
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
@@ -102,6 +103,7 @@ Gate loopback: FAIL/ITERATE → review (multi-round with prior findings as conte
 
 | Node | Type | Agents | Protocol |
 |------|------|--------|----------|
+| brief | brief | [architect] | brief-protocol.md |
 | build | build | [implementer] | implementer-prompt.md |
 | code-review | review | [selected roles] | role-evaluator-prompt.md |
 | test-design | review | [tester, + user/domain roles] | test-design-protocol.md |
@@ -117,6 +119,7 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 | Node | Type | Agents | Protocol |
 |------|------|--------|----------|
 | discuss | discussion | [architect, engineer, tester] | discussion-protocol.md |
+| brief | brief | [architect] | brief-protocol.md |
 | build | build | [implementer] | implementer-prompt.md |
 | code-review | review | [frontend, backend] | role-evaluator-prompt.md |
 | test-design | review | [tester, + user/domain roles] | test-design-protocol.md |

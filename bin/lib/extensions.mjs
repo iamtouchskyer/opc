@@ -625,11 +625,22 @@ export async function loadExtensions(config = {}) {
 
     if (typeof hook.hooks["startup.check"] === "function") {
       try {
-        await withTimeout(
+        const checkResult = await withTimeout(
           Promise.resolve(hook.hooks["startup.check"]({})),
           HOOK_TIMEOUT_MS,
           `startup.check timed out after ${HOOK_TIMEOUT_MS}ms`
         );
+        // Capture disabledCapabilities from startupCheck result
+        if (checkResult && Array.isArray(checkResult.disabledCapabilities)) {
+          meta._disabledCapabilities = checkResult.disabledCapabilities;
+        }
+        if (checkResult && checkResult.ok === false) {
+          if (isRequired) {
+            throw new Error(`FATAL: required extension '${name}' startup.check returned ok:false`);
+          }
+          console.error(`WARN: optional extension ${name} startup.check returned ok:false`);
+          continue;
+        }
       } catch (err) {
         if (isRequired) {
           throw new Error(`FATAL: required extension '${name}' missing or failed startup.check`);
@@ -637,6 +648,13 @@ export async function loadExtensions(config = {}) {
         console.error(`WARN: optional extension ${name} startup.check failed:`, err.message);
         continue;
       }
+    }
+
+    // Remove disabled capabilities from provides (e.g., VLM missing → visual-consistency-check@1 disabled)
+    if (Array.isArray(meta._disabledCapabilities) && meta._disabledCapabilities.length > 0) {
+      const disabled = new Set(meta._disabledCapabilities.map(normalizeCapability));
+      meta.provides = (meta.provides || []).filter(cap => !disabled.has(normalizeCapability(cap)));
+      console.error(`[extensions] ${name}: disabled capabilities: ${meta._disabledCapabilities.join(", ")}`);
     }
 
     extensions.push({ name, promptMd, hook, meta, enabled: true });

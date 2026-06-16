@@ -42,24 +42,24 @@ EOF
 touch .harness/nodes/test-execute/o
 $HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
-# ── Test 1: gate FAIL → routes back to build ──
-echo "1. gate FAIL → next=build (loopback)"
+# ── Test 1: gate FAIL → routes back to brief ──
+echo "1. gate FAIL → next=brief (loopback)"
 ROUTE=$($HARNESS route --node gate --verdict FAIL --flow build-verify 2>/dev/null)
 NEXT=$(echo "$ROUTE" | python3 -c "import sys,json; print(json.load(sys.stdin)['next'])")
-if [ "$NEXT" = "build" ]; then
-  echo "  ✅ FAIL → build"
+if [ "$NEXT" = "brief" ]; then
+  echo "  ✅ FAIL → brief"
   PASS=$((PASS + 1))
 else
   echo "  ❌ FAIL → $NEXT"
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 2: gate ITERATE → routes back to build ──
-echo "2. gate ITERATE → next=build"
+# ── Test 2: gate ITERATE → routes back to brief ──
+echo "2. gate ITERATE → next=brief"
 ROUTE2=$($HARNESS route --node gate --verdict ITERATE --flow build-verify 2>/dev/null)
 NEXT2=$(echo "$ROUTE2" | python3 -c "import sys,json; print(json.load(sys.stdin)['next'])")
-if [ "$NEXT2" = "build" ]; then
-  echo "  ✅ ITERATE → build"
+if [ "$NEXT2" = "brief" ]; then
+  echo "  ✅ ITERATE → brief"
   PASS=$((PASS + 1))
 else
   echo "  ❌ ITERATE → $NEXT2"
@@ -67,14 +67,14 @@ else
 fi
 
 # ── Test 3: transition with FAIL loopback succeeds ──
-echo "3. transition gate → build (FAIL loopback) allowed"
+echo "3. transition gate → brief (FAIL loopback) allowed"
 mkdir -p .harness/nodes/gate
 cat > .harness/nodes/gate/handshake.json <<'EOF'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"completed","verdict":"FAIL","summary":"critical findings","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[]}
 EOF
 # Need backlog.md for FAIL/ITERATE transitions
 echo "- Fix null reference" > .harness/backlog.md
-TRANS=$($HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir .harness 2>/dev/null)
+TRANS=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .harness 2>/dev/null)
 ALLOWED=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin)['allowed'])")
 if [ "$ALLOWED" = "True" ]; then
   echo "  ✅ loopback transition allowed"
@@ -84,11 +84,11 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 4: currentNode is build after loopback ──
-echo "4. currentNode = build after loopback"
+# ── Test 4: currentNode is brief after loopback ──
+echo "4. currentNode = brief after loopback"
 NODE=$(python3 -c "import json; print(json.load(open('.harness/flow-state.json'))['currentNode'])")
-if [ "$NODE" = "build" ]; then
-  echo "  ✅ currentNode=build"
+if [ "$NODE" = "brief" ]; then
+  echo "  ✅ currentNode=brief"
   PASS=$((PASS + 1))
 else
   echo "  ❌ currentNode=$NODE"

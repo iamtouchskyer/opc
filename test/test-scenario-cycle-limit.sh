@@ -9,10 +9,18 @@ echo "Test: Scenario — Cycle Limit Enforcement"
 echo "================================================"
 echo ""
 
-$HARNESS init --flow build-verify --entry build --dir .harness 2>/dev/null
+$HARNESS init --flow build-verify --entry brief --dir .harness 2>/dev/null
 
-# ── Helper: advance build→code-review→test-design→test-execute→gate ──
+# ── Helper: advance brief→build→code-review→test-design→test-execute→gate ──
 advance_to_gate() {
+  mkdir -p .harness/nodes/brief/run_1
+  cat > .harness/nodes/brief/handshake.json <<'EOF'
+{"nodeId":"brief","nodeType":"brief","runId":"run_1","status":"completed","verdict":"PASS","summary":"brief done","timestamp":"2026-01-01T00:00:30.000Z","artifacts":[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]}
+EOF
+  write_golden_brief .harness/nodes/brief/build-brief.md
+  echo '{"pass":true}' > .harness/nodes/brief/run_1/brief-lint-result.json
+  $HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
+
   mkdir -p .harness/nodes/build
   cat > .harness/nodes/build/handshake.json <<'EOF'
 {"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
@@ -44,38 +52,39 @@ EOF
   $HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 }
 
-loopback_gate_to_build() {
+loopback_gate_to_brief() {
   mkdir -p .harness/nodes/gate
   cat > .harness/nodes/gate/handshake.json <<'EOF'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"completed","verdict":"FAIL","summary":"fail","timestamp":"2026-01-01T00:05:00.000Z","artifacts":[]}
 EOF
   echo "- fix" > .harness/backlog.md
-  $HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir .harness 2>/dev/null >/dev/null
+  $HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .harness 2>/dev/null >/dev/null
 }
 
 # Loop 1
 advance_to_gate
-loopback_gate_to_build
+loopback_gate_to_brief
 
 # Loop 2
 advance_to_gate
-loopback_gate_to_build
+loopback_gate_to_brief
 
 # Loop 3
 advance_to_gate
-loopback_gate_to_build
+loopback_gate_to_brief
 
 # ── Test 1: after 3 loopbacks, edges are blocked at limit ──
-echo "1. After 3 loops, build→code-review edge (count=3) is blocked on 4th attempt"
-mkdir -p .harness/nodes/build
-cat > .harness/nodes/build/handshake.json <<'EOF'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
+echo "1. After 3 loops, brief→build edge (count=3) is blocked on 4th attempt"
+mkdir -p .harness/nodes/brief/run_1
+cat > .harness/nodes/brief/handshake.json <<'EOF'
+{"nodeId":"brief","nodeType":"brief","runId":"run_1","status":"completed","verdict":"PASS","summary":"brief done","timestamp":"2026-01-01T00:00:30.000Z","artifacts":[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]}
 EOF
-touch .harness/nodes/build/x
-TRANS=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .harness 2>/dev/null || true)
+write_golden_brief .harness/nodes/brief/build-brief.md
+echo '{"pass":true}' > .harness/nodes/brief/run_1/brief-lint-result.json
+TRANS=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .harness 2>/dev/null || true)
 ALLOWED=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('allowed', True))" 2>/dev/null)
 if [ "$ALLOWED" = "False" ]; then
-  echo "  ✅ 4th traversal of build→code-review blocked (maxLoopsPerEdge=3)"
+  echo "  ✅ 4th traversal of brief→build blocked (maxLoopsPerEdge=3)"
   PASS=$((PASS + 1))
 else
   echo "  ❌ was allowed: $TRANS"

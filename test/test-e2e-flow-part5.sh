@@ -47,6 +47,13 @@ files = [l.strip() for l in sys.stdin if l.strip()]
 print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
 " 2>/dev/null || echo "[]")
   fi
+  if [ "$node_type" = "brief" ]; then
+    local brief_run="$dir/nodes/$node/run_1"
+    mkdir -p "$brief_run"
+    write_golden_brief "$dir/nodes/$node/build-brief.md"
+    echo '{"pass":true}' > "$brief_run/brief-lint-result.json"
+    artifacts='[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]'
+  fi
   cat > "$path" << HSEOF
 {
   "nodeId": "$node",
@@ -122,7 +129,9 @@ echo "=== E2E TEST 16: full-stack discussion node path ==="
 rm -rf .harness
 $HARNESS init --flow full-stack --entry discuss --dir .harness 2>/dev/null
 write_handshake .harness discuss "Discussion round complete" "PASS" discussion
-$HARNESS transition --from discuss --to build --verdict PASS --flow full-stack --dir .harness 2>/dev/null
+$HARNESS transition --from discuss --to brief --verdict PASS --flow full-stack --dir .harness 2>/dev/null
+write_handshake .harness brief "Brief complete" "PASS" brief
+$HARNESS transition --from brief --to build --verdict PASS --flow full-stack --dir .harness 2>/dev/null
 write_handshake .harness build "Implementation done" "PASS" build
 $HARNESS transition --from build --to code-review --verdict PASS --flow full-stack --dir .harness 2>/dev/null
 write_good_eval .harness code-review frontend

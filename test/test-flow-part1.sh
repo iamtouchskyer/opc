@@ -94,7 +94,7 @@ assert_field_eq "valid true" "$OUT" "valid" "true"
 echo ""
 echo "--- 1.2: Route with FAIL edge ---"
 OUT=$($HARNESS route --node gate --verdict FAIL --flow build-verify)
-assert_field_eq "gate FAIL → build" "$OUT" "next" "\"build\""
+assert_field_eq "gate FAIL → brief" "$OUT" "next" "\"brief\""
 
 echo ""
 echo "--- 1.3: Route unknown flow ---"
@@ -136,7 +136,7 @@ echo "=== TEST GROUP 2: init ==="
 echo "--- 2.1: Init build-verify ---"
 rm -rf .h-init && OUT=$($HARNESS init --flow build-verify --dir .h-init 2>/dev/null)
 assert_field_eq "created" "$OUT" "created" "true"
-assert_field_eq "entry is build" "$OUT" "entry" "\"build\""
+assert_field_eq "entry is brief" "$OUT" "entry" "\"brief\""
 assert_file_exists "flow-state.json created" ".h-init/flow-state.json"
 
 echo ""

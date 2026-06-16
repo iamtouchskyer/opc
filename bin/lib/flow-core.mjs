@@ -13,6 +13,7 @@ import {
 } from "./util.mjs";
 import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
+import { runBriefLint } from "./brief-lint.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { readTaskFromAC } from "./ext-commands.mjs";
@@ -198,10 +199,10 @@ export async function cmdInit(args) {
   let preflightResult = null;
   if (bypassCfg.noExtensions !== true) {
     try {
-      const firstBuildNode = template.nodes.find(n =>
-        template.nodeTypes?.[n] === "build" || n === "build"
+      const firstBriefOrBuild = template.nodes.find(n =>
+        template.nodeTypes?.[n] === "brief" || template.nodeTypes?.[n] === "build" || n === "brief" || n === "build"
       );
-      preflightNode = firstBuildNode || entryNode;
+      preflightNode = firstBriefOrBuild || entryNode;
       const preflightCaps = template.nodeCapabilities?.[preflightNode] || [];
 
       if (preflightCaps.length > 0) {
@@ -214,6 +215,7 @@ export async function cmdInit(args) {
           task: readTaskFromAC(dir),
           taskDescription: readTaskFromAC(dir),
           flowDir: resolve(dir),
+          cwd: process.cwd(),
           devServerUrl: process.env.DEV_SERVER_URL || "",
           nodeCapabilities: preflightCaps,
         };
@@ -295,6 +297,58 @@ export function validateHandshakeData(data, opts = {}) {
       }
       if (opts.tier === "delightful" && screenshots.length < 2) {
         errors.push(`delightful tier requires ≥2 screenshot evidence, got ${screenshots.length}`);
+      }
+    }
+  }
+
+  // ─── Brief node must have build-brief.md + passing lint result ───
+  if (data.nodeType === "brief" && data.status === "completed" && !data.skipped && Array.isArray(data.artifacts)) {
+    const briefArt = data.artifacts.find(a => a.type === "brief");
+    const hasReport = data.artifacts.some(a => a.type === "report");
+    if (!briefArt) {
+      errors.push("brief node requires artifact with type: 'brief' (build-brief.md)");
+    }
+    if (!hasReport) {
+      errors.push("brief node requires artifact with type: 'report' (brief-lint-result.json)");
+    }
+    // Anti-forgery: re-run brief-lint on the actual brief content instead of trusting report JSON
+    if (briefArt && opts.baseDir) {
+      const briefPath = existsSync(join(opts.baseDir, briefArt.path))
+        ? join(opts.baseDir, briefArt.path) : briefArt.path;
+      try {
+        const briefText = readFileSync(briefPath, "utf8");
+        // Resolve tier: explicit opts.tier → flow-state.json → undefined (= all checks)
+        let lintTier = opts.tier;
+        if (!lintTier) {
+          try {
+            // baseDir is typically nodes/{nodeId}/, session root is two levels up
+            const sessionRoot = resolve(opts.baseDir, "..", "..");
+            const fsPath = join(sessionRoot, "flow-state.json");
+            if (existsSync(fsPath)) {
+              const fs = JSON.parse(readFileSync(fsPath, "utf8"));
+              lintTier = fs.tier || undefined;
+            }
+          } catch { /* best-effort tier resolution */ }
+        }
+        const lintResult = runBriefLint(briefText, { tier: lintTier });
+        if (lintResult.failures.length > 0) {
+          const failNames = lintResult.failures.map(f => f.check).join(", ");
+          errors.push(`brief-lint re-run failed on actual brief content: ${failNames}`);
+        }
+        // Iteration Delta enforcement on gate loopback: a brief re-entry (run_2+)
+        // only happens when the gate sent the flow back with prior findings, so the
+        // '## Iteration Delta' section becomes mandatory. We re-run with
+        // hasPriorFindings so this is hard-enforced at validate stage — the brief
+        // cannot pass validation on a loopback without listing what changed.
+        const runNum = parseInt(String(data.runId).replace(/^run_/, ""), 10);
+        if (Number.isFinite(runNum) && runNum > 1) {
+          const deltaResult = runBriefLint(briefText, { tier: lintTier, hasPriorFindings: true });
+          if (deltaResult.failures.some(f => f.check === "iteration-delta")) {
+            errors.push("brief re-entered after gate loopback (run_" + runNum + ") but has no '## Iteration Delta' section — list specific changes from prior findings");
+          }
+        }
+      } catch {
+        errors.push(`brief artifact unreadable: ${briefArt.path}`);
       }
     }
   }

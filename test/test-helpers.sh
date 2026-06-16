@@ -34,3 +34,31 @@ print_results() {
   echo "==========================================="
   [ "$FAIL" -eq 0 ] || exit 1
 }
+
+# ── Write a golden brief that passes brief-lint to a given path ──
+write_golden_brief() {
+  local target="$1"
+  cat > "$target" << 'BRIEF'
+## File Plan
+- index.html — main entry, ~200 lines
+- styles.css — all styles, ~150 lines
+
+## Technology Decisions
+- Chart.js v4.4.0 via https://cdn.jsdelivr.net/npm/chart.js@4.4.0
+- Tailwind CSS v3.4.1 via CDN
+
+## Design Tokens (resolved)
+- Primary: #0EA5E9
+- Background: #FFFFFF
+- Text: #1E293B
+
+## Component Inventory
+- Dashboard: 4 cards showing KPI (¥126,560 revenue, 8,846 visits)
+- Chart: line chart with 12 monthly data points
+
+## Constraints
+- Contrast: 4.5:1 body, 3:1 large text
+- Responsive: 992px, 768px, 375px breakpoints
+- Animation: 200ms ease-out transitions
+BRIEF
+}

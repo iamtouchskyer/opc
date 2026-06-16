@@ -152,7 +152,7 @@ assert_file_not_exists "lock removed after goto" ".h-lock3/flow-state.json.lock"
 echo ""
 echo "--- 3.4: Lock file created during transition and removed after ---"
 rm -rf .h-lock4 && $HARNESS init --flow build-verify --entry gate --dir .h-lock4 >/dev/null 2>/dev/null
-$HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir .h-lock4 >/dev/null 2>/dev/null
+$HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .h-lock4 >/dev/null 2>/dev/null
 assert_file_not_exists "lock removed after transition" ".h-lock4/flow-state.json.lock"
 
 echo ""
@@ -168,23 +168,23 @@ cat > .h-stale/flow-state.json.lock << 'LOCK'
 LOCK
 # skip should succeed by stealing the stale lock
 OUT=$($HARNESS skip --dir .h-stale 2>/dev/null)
-assert_field_eq "stale lock stolen, skip succeeds" "$OUT" "skipped" "\"build\""
+assert_field_eq "stale lock stolen, skip succeeds" "$OUT" "skipped" "\"brief\""
 assert_file_not_exists "stale lock cleaned up" ".h-stale/flow-state.json.lock"
 
 echo ""
 echo "--- 3.6: Concurrent protection — two rapid transitions don't corrupt ---"
 rm -rf .h-conc && $HARNESS init --flow build-verify --dir .h-conc >/dev/null 2>/dev/null
 # Do two skips in sequence (not parallel — we can't easily do parallel in bash without &)
-# First skip: build → code-review
+# First skip: brief → build
 OUT1=$($HARNESS skip --dir .h-conc 2>/dev/null)
-assert_field_eq "first skip ok" "$OUT1" "skipped" "\"build\""
-# Second skip: code-review → test-execute
+assert_field_eq "first skip ok" "$OUT1" "skipped" "\"brief\""
+# Second skip: build → code-review
 OUT2=$($HARNESS skip --dir .h-conc 2>/dev/null)
-assert_field_eq "second skip ok" "$OUT2" "skipped" "\"code-review\""
+assert_field_eq "second skip ok" "$OUT2" "skipped" "\"build\""
 # Verify state is consistent
 CUR=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['currentNode'])")
 STEPS=$(python3 -c "import json; print(json.load(open('.h-conc/flow-state.json'))['totalSteps'])")
-if [ "$CUR" = "test-design" ] && [ "$STEPS" = "2" ]; then
+if [ "$CUR" = "code-review" ] && [ "$STEPS" = "2" ]; then
   echo "  ✅ state consistent after sequential ops"
   PASS=$((PASS + 1))
 else

@@ -152,7 +152,7 @@ json.dump(s,open('$SFILE','w'),indent=2)
 # Make upstream (test-execute) handshake corrupt JSON
 echo "NOT JSON AT ALL" > nodes/test-execute/handshake.json
 # Try gate ITERATE transition — should detect corrupt upstream during backlog check
-OUT=$($HARNESS transition --from gate --to build --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 # ITERATE triggers backlog check → corrupt upstream → error
 if echo "$OUT" | grep -q "corrupt"; then
   echo "✅ corrupt upstream handshake detected in backlog check"; PASS=$((PASS+1))

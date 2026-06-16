@@ -75,9 +75,9 @@ assert_contains "corrupt msg" "$OUT" "corrupt"
 echo ""
 echo "--- 5.2: transition corrupt pre-transition handshake ---"
 rm -rf .h-trans2 && $HARNESS init --flow build-verify --dir .h-trans2 >/dev/null 2>/dev/null
-mkdir -p .h-trans2/nodes/build
-echo "not json" > .h-trans2/nodes/build/handshake.json
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans2 2>/dev/null)
+mkdir -p .h-trans2/nodes/brief
+echo "not json" > .h-trans2/nodes/brief/handshake.json
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans2 2>/dev/null)
 assert_field_eq "corrupt handshake" "$OUT" "allowed" "false"
 assert_contains "parse handshake" "$OUT" "parse"
 

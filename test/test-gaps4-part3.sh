@@ -203,7 +203,7 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
 OUT=$($HARNESS viz --flow build-verify --dir . --json 2>/dev/null)
-assert_field_eq "$OUT" "['nodes'][0]['id']" "build" "5.2a: JSON output has first node"
+assert_field_eq "$OUT" "['nodes'][0]['id']" "brief" "5.2a: JSON output has first node"
 assert_contains "$OUT" "loopbacks" "5.2b: JSON output has loopbacks array"
 rm -rf "$D"
 cd /tmp

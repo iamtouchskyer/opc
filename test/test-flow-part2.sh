@@ -88,22 +88,24 @@ echo "=== TEST GROUP 4: transition ==="
 
 echo "--- 4.1: Happy transition ---"
 rm -rf .h-trans && $HARNESS init --flow build-verify --dir .h-trans >/dev/null 2>/dev/null
-# Write handshake for build node
-mkdir -p .h-trans/nodes/build
-cat > .h-trans/nodes/build/handshake.json << 'HS'
+# Write handshake for brief node (first node in build-verify) with required artifacts
+mkdir -p .h-trans/nodes/brief/run_1
+write_golden_brief .h-trans/nodes/brief/build-brief.md
+echo '{"pass":true}' > .h-trans/nodes/brief/run_1/brief-lint-result.json
+cat > .h-trans/nodes/brief/handshake.json << 'HS'
 {
-  "nodeId": "build", "nodeType": "build", "runId": "run_1",
-  "status": "completed", "summary": "built", "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": []
+  "nodeId": "brief", "nodeType": "brief", "runId": "run_1",
+  "status": "completed", "summary": "brief done", "timestamp": "2024-01-01T00:00:00Z",
+  "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
 sleep 1
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
 assert_field_eq "transition ok" "$OUT" "allowed" "true"
-assert_field_eq "next is code-review" "$OUT" "next" "\"code-review\""
+assert_field_eq "next is build" "$OUT" "next" "\"build\""
 # Verify state updated
 CUR=$(python3 -c "import json; print(json.load(open('.h-trans/flow-state.json'))['currentNode'])")
-if [ "$CUR" = "code-review" ]; then
+if [ "$CUR" = "build" ]; then
   echo "  ✅ state.currentNode updated"
   PASS=$((PASS + 1))
 else
@@ -113,13 +115,13 @@ fi
 
 echo ""
 echo "--- 4.2: Transition from wrong node ---"
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
 assert_field_eq "wrong node" "$OUT" "allowed" "false"
-assert_contains "not at build" "$OUT" "not 'build'"
+assert_contains "not at brief" "$OUT" "not 'brief'"
 
 echo ""
 echo "--- 4.3: Transition invalid edge ---"
-OUT=$($HARNESS transition --from code-review --to gate --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
+OUT=$($HARNESS transition --from build --to gate --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
 assert_field_eq "invalid edge" "$OUT" "allowed" "false"
 assert_contains "edge not in flow" "$OUT" "not in flow"
 
@@ -131,22 +133,22 @@ assert_field_eq "unknown flow" "$OUT" "allowed" "false"
 echo ""
 echo "--- 4.5: Pre-transition handshake missing ---"
 rm -rf .h-trans2 && $HARNESS init --flow build-verify --dir .h-trans2 >/dev/null 2>/dev/null
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans2 2>/dev/null)
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans2 2>/dev/null)
 assert_field_eq "hs missing" "$OUT" "allowed" "false"
 assert_contains "handshake missing" "$OUT" "handshake.json missing"
 
 echo ""
 echo "--- 4.6: Pre-transition status not completed ---"
 rm -rf .h-trans3 && $HARNESS init --flow build-verify --dir .h-trans3 >/dev/null 2>/dev/null
-mkdir -p .h-trans3/nodes/build
-cat > .h-trans3/nodes/build/handshake.json << 'HS'
+mkdir -p .h-trans3/nodes/brief
+cat > .h-trans3/nodes/brief/handshake.json << 'HS'
 {
-  "nodeId": "build", "nodeType": "build", "runId": "run_1",
+  "nodeId": "brief", "nodeType": "brief", "runId": "run_1",
   "status": "failed", "summary": "x", "timestamp": "2024-01-01T00:00:00Z",
   "artifacts": []
 }
 HS
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans3 2>/dev/null)
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans3 2>/dev/null)
 assert_field_eq "status not completed" "$OUT" "allowed" "false"
 assert_contains "expected completed" "$OUT" "expected 'completed'"
 
@@ -159,15 +161,17 @@ d = json.load(open('.h-trans4/flow-state.json'))
 d['_written_by'] = 'evil'
 json.dump(d, open('.h-trans4/flow-state.json', 'w'), indent=2)
 "
-mkdir -p .h-trans4/nodes/build
-cat > .h-trans4/nodes/build/handshake.json << 'HS'
+mkdir -p .h-trans4/nodes/brief/run_1
+write_golden_brief .h-trans4/nodes/brief/build-brief.md
+echo '{"pass":true}' > .h-trans4/nodes/brief/run_1/brief-lint-result.json
+cat > .h-trans4/nodes/brief/handshake.json << 'HS'
 {
-  "nodeId": "build", "nodeType": "build", "runId": "run_1",
+  "nodeId": "brief", "nodeType": "brief", "runId": "run_1",
   "status": "completed", "summary": "x", "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": []
+  "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
-OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-trans4 2>/dev/null)
+OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans4 2>/dev/null)
 assert_field_eq "tamper detected" "$OUT" "allowed" "false"
 assert_contains "direct edit" "$OUT" "direct edit"
 
@@ -191,13 +195,13 @@ assert_contains "maxTotalSteps" "$OUT" "maxTotalSteps"
 echo ""
 echo "--- 4.9: Gate auto-writes handshake ---"
 rm -rf .h-gate && $HARNESS init --flow build-verify --entry gate --dir .h-gate >/dev/null 2>/dev/null
-OUT=$($HARNESS transition --from gate --to build --verdict FAIL --flow build-verify --dir .h-gate 2>/dev/null)
+OUT=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .h-gate 2>/dev/null)
 assert_field_eq "gate transition ok" "$OUT" "allowed" "true"
 assert_file_exists "gate handshake auto-written" ".h-gate/nodes/gate/handshake.json"
 
 echo ""
 echo "--- 4.10: Run directory created ---"
-assert_file_exists "run_1 dir exists" ".h-gate/nodes/build/run_1"
+assert_file_exists "run_1 dir exists" ".h-gate/nodes/brief/run_1"
 
 # ═══════════════════════════════════════════════════════════════
 echo ""

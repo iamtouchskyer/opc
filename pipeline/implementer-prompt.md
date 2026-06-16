@@ -21,19 +21,22 @@ Append the returned `append` string to your working context. Record `applied[]` 
 {one of the following — delete the others}
 
 ### Build (first pass — no prior evaluation)
-You are building from a plan. Read the wave plan below and implement it.
+You are building from a structured brief. Read the build brief below — it is your primary specification. The brief was written by an architect and passed mechanical quality checks. Follow it literally; do not re-interpret design decisions or make technology choices the brief already settled.
+
+**Build Brief (mandatory):** Read `{absolute path to $SESSION_DIR/nodes/brief/build-brief.md}`
+**Brief Lint Result:** Read `{absolute path to $SESSION_DIR/nodes/brief/run_{BRIEF_RUN}/brief-lint-result.json}` (confirms quality gate passed)
 
 **Quality Tier: {TIER}** — Read the tier baseline from `./pipeline/quality-tiers.md`. Every baseline checklist item is a requirement, not a nice-to-have. Address them during the first pass alongside functional requirements. The evaluator will score missing baseline items as warnings or criticals depending on tier.
 
 ### Fix (FAIL verdict — things are broken)
+Read the build brief: {absolute path to $SESSION_DIR/nodes/brief/build-brief.md}
 Read the evaluation: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/eval.md}
-Read the original plan: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/plan.md}
-Fix broken acceptance criteria and critical rubric failures (dimensions below 3). Things are broken — make them work. The evaluation tells you what failed; the original plan tells you what was intended. Use both.
+Fix broken acceptance criteria and critical rubric failures (dimensions below 3). Things are broken — make them work. The brief is the source of truth for what was intended; the evaluation tells you what failed. Use both.
 
 ### Polish (ITERATE verdict — push toward excellence)
+Read the build brief: {absolute path to $SESSION_DIR/nodes/brief/build-brief.md}
 Read the evaluation: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/eval.md}
-Read the original plan: {absolute path to $SESSION_DIR/nodes/{NODE_ID}/plan.md}
-All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-scoring rubric dimensions and push them toward 4+. This is about refinement, not fixing breakage. The original plan provides context on intent; the evaluation tells you where quality falls short.
+All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-scoring rubric dimensions and push them toward 4+. This is about refinement, not fixing breakage. The brief provides context on intent; the evaluation tells you where quality falls short.
 
 ## Node Plan
 
