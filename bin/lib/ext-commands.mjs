@@ -26,8 +26,13 @@ export function readTaskFromAC(dir) {
   const acPath = resolve(dir, "acceptance-criteria.md");
   if (!existsSync(acPath)) return "";
   try {
-    const firstLine = readFileSync(acPath, "utf8").split("\n")[0];
-    return firstLine.replace(/^#+\s*/, "").trim();
+    const lines = readFileSync(acPath, "utf8").split("\n");
+    for (const raw of lines) {
+      const line = raw.replace(/^#+\s*/, "").replace(/^[-*]\s+/, "").trim();
+      if (!line || /^acceptance criteria:?$/i.test(line)) continue;
+      return line;
+    }
+    return "";
   } catch { return ""; }
 }
 
