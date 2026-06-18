@@ -36,7 +36,7 @@ export const FLOW_TEMPLATES = {
     edges: {
       brief:           { PASS: "build" },
       build:           { PASS: "code-review" },
-      "code-review":   { PASS: "test-design" },
+      "code-review":   { PASS: "test-design", FAIL: "build", ITERATE: "build" },
       "test-design":   { PASS: "test-execute" },
       "test-execute":  { PASS: "gate" },
       gate:            { PASS: null, FAIL: "brief", ITERATE: "brief" },
@@ -56,7 +56,7 @@ export const FLOW_TEMPLATES = {
     nodes: ["build", "review", "gate"],
     edges: {
       build:  { PASS: "review" },
-      review: { PASS: "gate" },
+      review: { PASS: "gate", FAIL: "build", ITERATE: "build" },
       gate:   { PASS: null, FAIL: "build", ITERATE: "build" },
     },
     limits: { maxLoopsPerEdge: 2, maxTotalSteps: 10, maxNodeReentry: 3 },
@@ -74,7 +74,7 @@ export const FLOW_TEMPLATES = {
       discuss:             { PASS: "brief" },
       brief:               { PASS: "build" },
       build:               { PASS: "code-review" },
-      "code-review":       { PASS: "test-design" },
+      "code-review":       { PASS: "test-design", FAIL: "build", ITERATE: "build" },
       "test-design":       { PASS: "test-execute" },
       "test-execute":      { PASS: "gate-test" },
       "gate-test":         { PASS: "acceptance", FAIL: "brief", ITERATE: "brief" },
