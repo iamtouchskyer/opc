@@ -17,6 +17,8 @@ import { lockFile } from "./file-lock.mjs";
 import { resolveBypass, loadExtensions, firePromptAppend, fireVerdictAppend, survivingExtensions, saveRegistryCache } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
+import { collectGateCriteriaReasons } from "./gate-criteria.mjs";
+import { executeTestCommand } from "./test-command-execution.mjs";
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
 
@@ -27,6 +29,7 @@ import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.
  */
 export function checkStructuredResults(dir, state, template, currentNode) {
   const structuredFailReasons = [];
+  structuredFailReasons.push(...collectGateCriteriaReasons(dir, state, template, currentNode));
   const histNoGates = state.history.filter(h => {
     const nt = template.nodeTypes?.[h.nodeId];
     return nt && nt !== "gate";
@@ -506,6 +509,12 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
   mkdirSync(join(dir, "nodes", to, runId), { recursive: true });
 
+  let testCommandExecution = null;
+  const toNodeType = template.nodeTypes?.[to] || null;
+  if (toNodeType === "execute" && /^test[-_]design$/.test(from) && /^test[-_]execute$/.test(to)) {
+    testCommandExecution = executeTestCommand(dir, to, runId, from);
+  }
+
   // Print live flow viz to stderr
   console.error("");
   for (let i = 0; i < template.nodes.length; i++) {
@@ -566,6 +575,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   console.log(JSON.stringify({
     allowed: true, reason: "ok", next: to, runId, state,
     ...(autoReminder ? { reminder: autoReminder } : {}),
+    ...(testCommandExecution ? { testCommandExecution } : {}),
     ...(extensionContext?.append ? { extensionContextPath: resolve(join(dir, "nodes", to, "extension-context.md")) } : {}),
   }));
 }

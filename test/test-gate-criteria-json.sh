@@ -1,0 +1,95 @@
+#!/bin/bash
+set -e
+
+source "$(dirname "$0")/test-helpers.sh"
+setup_tmpdir
+setup_git
+
+json_field() {
+  echo "$1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('$2'))"
+}
+
+write_state_history() {
+  local dir="$1"
+  python3 - "$dir/flow-state.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["history"] = [{"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"}]
+data["currentNode"] = "gate"
+json.dump(data, open(path, "w"), indent=2)
+PY
+}
+
+echo "Test: gate-criteria.json"
+echo "========================"
+echo ""
+
+$HARNESS init --flow build-verify --entry gate --dir .harness >/dev/null 2>/dev/null
+cat > .harness/report.json <<'JSON'
+{"summary":{"average_score":1.5}}
+JSON
+cat > .harness/gate-criteria.json <<'JSON'
+{"checks":[{"id":"ai-smell-average","source":"report.json","path":"$.summary.average_score","operator":"<","threshold":2.0}]}
+JSON
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
+FINALIZED=$(json_field "$OUT" "finalized")
+if [ "$FINALIZED" = "True" ]; then
+  echo "  ✅ passing root gate criteria allows PASS"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ passing root gate criteria blocked: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry gate --dir .harness-fail >/dev/null 2>/dev/null
+cat > .harness-fail/report.json <<'JSON'
+{"summary":{"average_score":3.1}}
+JSON
+cat > .harness-fail/gate-criteria.json <<'JSON'
+{"checks":[{"id":"ai-smell-average","source":"report.json","path":"$.summary.average_score","operator":"<","threshold":2.0}]}
+JSON
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir .harness-fail 2>/dev/null)
+ALLOWED=$(json_field "$OUT" "allowed")
+if [ "$ALLOWED" = "False" ] && grep -q "does not satisfy" <<< "$OUT"; then
+  echo "  ✅ failing root gate criteria blocks PASS"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ failing root gate criteria did not block: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry gate --dir .harness-run >/dev/null 2>/dev/null
+mkdir -p .harness-run/nodes/test-execute/run_1
+write_state_history .harness-run
+cat > .harness-run/nodes/test-execute/run_1/report.json <<'JSON'
+{"summary":{"average_score":4.2}}
+JSON
+cat > .harness-run/nodes/test-execute/run_1/gate-criteria.json <<'JSON'
+{"checks":[{"id":"run-score","source":"report.json","path":"$.summary.average_score","operator":">=","threshold":4.0}]}
+JSON
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir .harness-run 2>/dev/null)
+FINALIZED=$(json_field "$OUT" "finalized")
+if [ "$FINALIZED" = "True" ]; then
+  echo "  ✅ run-level gate criteria resolves source relative to run dir"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ run-level criteria blocked unexpectedly: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry gate --dir .harness-missing >/dev/null 2>/dev/null
+cat > .harness-missing/gate-criteria.json <<'JSON'
+{"checks":[{"id":"missing-source","source":"missing.json","path":"$.x","operator":"==","threshold":1}]}
+JSON
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir .harness-missing 2>/dev/null)
+ALLOWED=$(json_field "$OUT" "allowed")
+if [ "$ALLOWED" = "False" ] && grep -q "source missing" <<< "$OUT"; then
+  echo "  ✅ missing source fails closed"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ missing source did not fail closed: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+print_results
