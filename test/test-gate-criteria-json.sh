@@ -21,6 +21,21 @@ json.dump(data, open(path, "w"), indent=2)
 PY
 }
 
+write_state_history_two_runs() {
+  local dir="$1"
+  python3 - "$dir/flow-state.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["history"] = [
+  {"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
+  {"nodeId": "test-execute", "runId": "run_2", "timestamp": "2026-01-01T00:01:00.000Z"},
+]
+data["currentNode"] = "gate"
+json.dump(data, open(path, "w"), indent=2)
+PY
+}
+
 echo "Test: gate-criteria.json"
 echo "========================"
 echo ""
@@ -75,6 +90,31 @@ if [ "$FINALIZED" = "True" ]; then
   PASS=$((PASS + 1))
 else
   echo "  ❌ run-level criteria blocked unexpectedly: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry gate --dir .harness-retry >/dev/null 2>/dev/null
+mkdir -p .harness-retry/nodes/test-execute/run_1 .harness-retry/nodes/test-execute/run_2
+write_state_history_two_runs .harness-retry
+cat > .harness-retry/nodes/test-execute/run_1/report.json <<'JSON'
+{"summary":{"average_score":1.0}}
+JSON
+cat > .harness-retry/nodes/test-execute/run_1/gate-criteria.json <<'JSON'
+{"checks":[{"id":"score-old","source":"report.json","path":"$.summary.average_score","operator":">=","threshold":4.0}]}
+JSON
+cat > .harness-retry/nodes/test-execute/run_2/report.json <<'JSON'
+{"summary":{"average_score":4.5}}
+JSON
+cat > .harness-retry/nodes/test-execute/run_2/gate-criteria.json <<'JSON'
+{"checks":[{"id":"score-new","source":"report.json","path":"$.summary.average_score","operator":">=","threshold":4.0}]}
+JSON
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir .harness-retry 2>/dev/null)
+FINALIZED=$(json_field "$OUT" "finalized")
+if [ "$FINALIZED" = "True" ] && ! grep -q "score-old" <<< "$OUT"; then
+  echo "  ✅ stale run-level criteria ignored after retry pass"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ stale run criteria blocked retry: $OUT"
   FAIL=$((FAIL + 1))
 fi
 

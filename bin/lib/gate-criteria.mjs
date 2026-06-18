@@ -73,15 +73,31 @@ function upstreamEntries(state, template, currentNode) {
   return slice.filter(entry => template.nodeTypes?.[entry.nodeId] !== "gate");
 }
 
+function latestRunEntries(entries) {
+  const seen = new Set();
+  const latest = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (!entry.runId || seen.has(entry.nodeId)) continue;
+    seen.add(entry.nodeId);
+    latest.unshift(entry);
+  }
+  return latest;
+}
+
 export function findGateCriteriaFiles(dir, state, template, currentNode) {
   const paths = new Set();
   const rootCriteria = join(dir, "gate-criteria.json");
   if (existsSync(rootCriteria)) paths.add(rootCriteria);
-  for (const entry of upstreamEntries(state, template, currentNode)) {
+  const entries = upstreamEntries(state, template, currentNode);
+  for (const entry of entries) {
     const nodeDir = join(dir, "nodes", entry.nodeId);
     const nodeCriteria = join(nodeDir, "gate-criteria.json");
-    const runCriteria = join(nodeDir, entry.runId || "", "gate-criteria.json");
     if (existsSync(nodeCriteria)) paths.add(nodeCriteria);
+  }
+  for (const entry of latestRunEntries(entries)) {
+    const nodeDir = join(dir, "nodes", entry.nodeId);
+    const runCriteria = join(nodeDir, entry.runId, "gate-criteria.json");
     if (entry.runId && existsSync(runCriteria)) paths.add(runCriteria);
   }
   return [...paths];
