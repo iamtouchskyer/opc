@@ -65,6 +65,51 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# ── 4b: node-preflight WITHOUT --flow resolves caps and task from state ──
+echo "--- 4b: node-preflight (no --flow) → design-preflight fires with task ---"
+EXT_DIR="$TMPDIR/state-exts"
+mkdir -p "$EXT_DIR/state-design-ext" ".harness/.opc"
+cat > "$EXT_DIR/state-design-ext/ext.json" <<'EOF'
+{
+  "name": "state-design-ext",
+  "version": "0.1.0",
+  "meta": { "provides": ["design-preflight@1"], "compatibleCapabilities": [] }
+}
+EOF
+cat > "$EXT_DIR/state-design-ext/hook.mjs" <<'EOF'
+export const meta = {
+  provides: ["design-preflight@1"],
+  compatibleCapabilities: [],
+};
+
+export function preflight(ctx) {
+  return {
+    type: "design",
+    selection: { industry: "state-flow", taskSeen: ctx.task || "" },
+    brief: "# Design Brief\n\nState flow preflight brief.",
+    tokens: { colors: { bg: "#ffffff", text: "#111111" } },
+    confidence: ctx.task ? 0.82 : 0.1,
+    reason: ctx.task ? "task propagated" : "task missing",
+  };
+}
+EOF
+cat > ".harness/.opc/config.json" <<EOF
+{ "extensionsDir": "$EXT_DIR" }
+EOF
+cat > ".harness/acceptance-criteria.md" <<'EOF'
+# Acceptance Criteria
+
+Build an operations analytics dashboard with compact KPI cards and ranking insight.
+EOF
+OUT=$(OPC_BREAKER_STATE=disabled $HARNESS node-preflight --node brief --dir .harness 2>/dev/null)
+if echo "$OUT" | grep -q '"ok":true' && grep -q '"confidence": 0.82' .harness/design-mode.json && grep -q "operations analytics dashboard" .harness/design-selection.json; then
+  echo "  ✅ node-preflight resolved state.flowTemplate and propagated task"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ node-preflight state fallback failed: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
 # ── 5: unknown node → empty caps (no crash) ──
 echo "--- 5: unknown node → empty caps ---"
 OUT=$($HARNESS prompt-context --node nonexistent --role implementer --dir .harness 2>/dev/null)
