@@ -55,6 +55,12 @@ function setupDir(name, handshakes) {
   return dir;
 }
 
+function writeDiVerdict(dir, nodeId, runId, verdict) {
+  const verdictDir = join(dir, "nodes", nodeId, runId, "ext-design-intelligence");
+  mkdirSync(verdictDir, { recursive: true });
+  writeFileSync(join(verdictDir, "verdict.json"), JSON.stringify(verdict, null, 2));
+}
+
 // Cleanup after all tests
 test.after(() => {
   try { rmSync(TMPBASE, { recursive: true, force: true }); } catch {}
@@ -190,12 +196,57 @@ describe("checkStructuredResults — Step 1.5", () => {
     const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
     assert.equal(reasons.length, 0, "screenshot artifacts should be ignored");
   });
+
+  test("hard DI AI smell verdict blocks PASS", () => {
+    const dir = setupDir("t10-di-ai-smell", {
+      build: { artifacts: [] },
+      "code-review": { artifacts: [] },
+    });
+    writeDiVerdict(dir, "build", "run_1", {
+      pass: false,
+      recommendation: "FAIL",
+      aiSmellErrors: 1,
+    });
+
+    const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("DI AI smell verdict")));
+  });
+
+  test("DI verdict sidecar uses latest run per node", () => {
+    const dir = setupDir("t11-di-ai-smell-retry", {
+      build: { artifacts: [] },
+      "code-review": { artifacts: [] },
+    });
+    writeDiVerdict(dir, "build", "run_1", {
+      pass: false,
+      recommendation: "FAIL",
+      aiSmellErrors: 1,
+    });
+    writeDiVerdict(dir, "build", "run_2", {
+      pass: true,
+      recommendation: "PASS",
+      aiSmellErrors: 0,
+    });
+    const state = {
+      flowTemplate: "build-verify",
+      currentNode: "gate",
+      history: [
+        { nodeId: "build", runId: "run_1" },
+        { nodeId: "build", runId: "run_2" },
+        { nodeId: "code-review", runId: "run_1" },
+        { nodeId: "gate", runId: "run_1" },
+      ],
+    };
+
+    const reasons = checkStructuredResults(dir, state, TEMPLATE, "gate");
+    assert.equal(reasons.some(r => r.includes("DI AI smell verdict")), false);
+  });
 });
 
 // ─── Integration: bypass path enforcement via harness CLI ─────────────
 
 /** Create a full session dir that cmdTransition/cmdPass will accept. */
-function createSession(name, { artifacts = [], failingReport = false } = {}) {
+function createSession(name, { artifacts = [], failingReport = false, diVerdict = null } = {}) {
   const dir = join(TMPBASE, name);
   mkdirSync(join(dir, "nodes", "build", "run_1"), { recursive: true });
   mkdirSync(join(dir, "nodes", "code-review", "run_1"), { recursive: true });
@@ -236,6 +287,7 @@ function createSession(name, { artifacts = [], failingReport = false } = {}) {
     buildHs.artifacts = [{ type: "test-result", path: "run_1/test-report.json" }];
     writeFileSync(join(dir, "nodes", "build", "handshake.json"), JSON.stringify(buildHs));
   }
+  if (diVerdict) writeDiVerdict(dir, "build", "run_1", diVerdict);
 
   // flow-state.json: currentNode = gate
   const flowState = {
@@ -290,6 +342,21 @@ describe("Step 1.5 bypass enforcement — cmdTransition", () => {
     assert.ok(
       result.reason?.includes("Step 1.5") || result.reason?.includes("structural"),
       `reason should mention Step 1.5, got: ${result.reason}`
+    );
+  });
+
+  test("direct transition PASS with hard DI AI smell verdict → rejected", () => {
+    const dir = createSession("bypass-transition-di-smell", {
+      diVerdict: { pass: false, recommendation: "FAIL", aiSmellErrors: 1 },
+    });
+    const result = runHarness("transition", [
+      "--from", "gate", "--to", "null", "--verdict", "PASS",
+      "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(result.allowed, false, `should be rejected, got: ${JSON.stringify(result)}`);
+    assert.ok(
+      result.reason?.includes("DI AI smell verdict"),
+      `reason should mention DI AI smell verdict, got: ${result.reason}`
     );
   });
 

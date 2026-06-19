@@ -18,6 +18,7 @@ import { resolveBypass, loadExtensions, firePromptAppend, fireVerdictAppend, sur
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 import { collectGateCriteriaReasons } from "./gate-criteria.mjs";
+import { collectDiVerdictReasons } from "./di-verdict-gate.mjs";
 import { executeTestCommand } from "./test-command-execution.mjs";
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
@@ -30,6 +31,7 @@ import { executeTestCommand } from "./test-command-execution.mjs";
 export function checkStructuredResults(dir, state, template, currentNode) {
   const structuredFailReasons = [];
   structuredFailReasons.push(...collectGateCriteriaReasons(dir, state, template, currentNode));
+  structuredFailReasons.push(...collectDiVerdictReasons(dir, state, template, currentNode));
   const histNoGates = state.history.filter(h => {
     const nt = template.nodeTypes?.[h.nodeId];
     return nt && nt !== "gate";
