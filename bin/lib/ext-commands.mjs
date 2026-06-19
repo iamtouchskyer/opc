@@ -136,8 +136,10 @@ export async function cmdPromptContext(args) {
     nodeType,
     role,
     task,
+    taskDescription: task,
     flowDir: resolve(dir),
     runDir: resolve(dir),
+    cwd: process.cwd(),
     devServerUrl,
     nodeCapabilities,
     nodeCapabilitiesResolved: templateResolved,
@@ -629,9 +631,12 @@ export async function cmdNodePreflight(args) {
 
   const context = {
     node,
+    nodeId: node,
     role: "preflight",
     task,
+    taskDescription: task,
     flowDir: resolve(dir),
+    cwd: process.cwd(),
     devServerUrl,
     nodeCapabilities,
     nodeCapabilitiesResolved: templateResolved,

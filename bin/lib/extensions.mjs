@@ -1135,6 +1135,14 @@ export function writeDesignArtifacts(preflightResult, sessionDir) {
       JSON.stringify(preflightResult.tokens, null, 2) + "\n"
     );
   }
+
+  const diState = preflightResult.diState && typeof preflightResult.diState === "object"
+    ? preflightResult.diState
+    : { version: 1, preflight: { confidence: designMode.confidence, reason: designMode.reason } };
+  atomicWriteSync(
+    join(sessionDir, "di-state.json"),
+    JSON.stringify({ version: 1, ...diState, updatedAt: new Date().toISOString() }, null, 2) + "\n"
+  );
 }
 
 // ─── Failure report ──────────────────────────────────────────────

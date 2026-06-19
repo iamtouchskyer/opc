@@ -207,6 +207,7 @@ export async function cmdInit(args) {
   // before the first node executes. Preflight failures must not block init.
   let preflightNode = null;
   let preflightResult = null;
+  let preflightStatus = null;
   if (bypassCfg.noExtensions !== true) {
     try {
       const firstBriefOrBuild = template.nodes.find(n =>
@@ -214,23 +215,28 @@ export async function cmdInit(args) {
       );
       preflightNode = firstBriefOrBuild || entryNode;
       const preflightCaps = template.nodeCapabilities?.[preflightNode] || [];
+      const preflightTask = readTaskFromAC(dir);
 
-      if (preflightCaps.length > 0) {
+      if (preflightCaps.length > 0 && preflightTask.trim()) {
         const preflightRegistry = await loadExtensions(bypassCfg);
         const preflightCtx = {
           node: preflightNode,
           nodeId: preflightNode,
           nodeType: template.nodeTypes?.[preflightNode] || null,
           role: "preflight",
-          task: readTaskFromAC(dir),
-          taskDescription: readTaskFromAC(dir),
+          task: preflightTask,
+          taskDescription: preflightTask,
           flowDir: resolve(dir),
           cwd: process.cwd(),
           devServerUrl: process.env.DEV_SERVER_URL || "",
           nodeCapabilities: preflightCaps,
         };
         preflightResult = await fireNodePreflight(preflightRegistry, preflightCtx);
+        if (preflightResult?.length) preflightStatus = { node: preflightNode, status: "ok" };
         console.error(`[init] auto-preflight for '${preflightNode}': ${preflightResult?.length ? 'artifacts generated' : 'no output'}`);
+      } else if (preflightCaps.length > 0) {
+        preflightStatus = { node: preflightNode, status: "skipped", reason: "empty acceptance criteria" };
+        console.error(`[init] auto-preflight for '${preflightNode}': skipped (empty acceptance criteria)`);
       }
     } catch (err) {
       console.error(`WARN: auto-preflight failed: ${err.message}`);
@@ -239,7 +245,7 @@ export async function cmdInit(args) {
 
   console.log(JSON.stringify({
     created: true, flow, entry: entryNode, tier: tier || null, dir,
-    ...(preflightResult?.length ? { preflight: { node: preflightNode, status: "ok" } } : {}),
+    ...(preflightStatus ? { preflight: preflightStatus } : {}),
   }));
 }
 

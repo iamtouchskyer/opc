@@ -85,7 +85,7 @@ export const meta = {
 export function preflight(ctx) {
   return {
     type: "design",
-    selection: { industry: "state-flow", taskSeen: ctx.task || "" },
+    selection: { industry: "state-flow", taskSeen: ctx.task || "", taskDescriptionSeen: ctx.taskDescription || "" },
     brief: "# Design Brief\n\nState flow preflight brief.",
     tokens: { colors: { bg: "#ffffff", text: "#111111" } },
     confidence: ctx.task ? 0.82 : 0.1,
@@ -102,7 +102,7 @@ cat > ".harness/acceptance-criteria.md" <<'EOF'
 Build an operations analytics dashboard with compact KPI cards and ranking insight.
 EOF
 OUT=$(OPC_BREAKER_STATE=disabled $HARNESS node-preflight --node brief --dir .harness 2>/dev/null)
-if echo "$OUT" | grep -q '"ok":true' && grep -q '"confidence": 0.82' .harness/design-mode.json && grep -q "operations analytics dashboard" .harness/design-selection.json; then
+if echo "$OUT" | grep -q '"ok":true' && grep -q '"confidence": 0.82' .harness/design-mode.json && grep -q "operations analytics dashboard" .harness/design-selection.json && grep -q "taskDescriptionSeen" .harness/design-selection.json; then
   echo "  ✅ node-preflight resolved state.flowTemplate and propagated task"
   PASS=$((PASS + 1))
 else

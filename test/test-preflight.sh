@@ -23,7 +23,9 @@ ok() {
 }
 
 TMP=$(mktemp -d -t opc-preflight-XXXXXX)
+INIT_EMPTY_REPO="$REPO_ROOT/.tmp-opc-preflight-init-empty-$$"
 cleanup() {
+  rm -rf "$INIT_EMPTY_REPO"
   if [ "$FAIL" -eq 0 ]; then
     rm -rf "$TMP"
   else
@@ -92,6 +94,17 @@ if [ -f "$HARNESS/flow-state.json" ]; then
   ok "flow state created with design-preflight@1 on build node"
 else
   fail "failed to create flow-state.json"
+fi
+
+# ── 1b. Init auto-preflight skips empty AC instead of writing confidence 0.1 ──
+echo "§1b Init auto-preflight skips empty task"
+INIT_EMPTY="$INIT_EMPTY_REPO"
+mkdir -p "$INIT_EMPTY"
+INIT_OUT=$(OPC_EXTENSIONS_DIR="$EXT_DIR" OPC_BREAKER_STATE=disabled $HARNESS_BIN init --flow-file "$FLOW_FILE" --dir "$INIT_EMPTY" 2>"$TMP/init-empty.err")
+if echo "$INIT_OUT" | grep -q '"status":"skipped"' && [ ! -f "$INIT_EMPTY/design-mode.json" ]; then
+  ok "init auto-preflight skipped empty acceptance criteria"
+else
+  fail "init empty AC should skip preflight without design-mode: $INIT_OUT $(cat "$TMP/init-empty.err")"
 fi
 
 # Create a run dir for the build node
@@ -180,6 +193,17 @@ if [ -f "$HARNESS/design-tokens.json" ]; then
   fi
 else
   fail "design-tokens.json not written"
+fi
+
+if [ -f "$HARNESS/di-state.json" ]; then
+  ok "di-state.json exists"
+  if grep -q '"preflight"' "$HARNESS/di-state.json"; then
+    ok "di-state.json records preflight state"
+  else
+    fail "di-state.json missing preflight state: $(cat "$HARNESS/di-state.json")"
+  fi
+else
+  fail "di-state.json not written"
 fi
 
 # ── 7. No preflight on nodes without capability ─────────────────
