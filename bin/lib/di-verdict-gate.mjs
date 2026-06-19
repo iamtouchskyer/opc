@@ -44,7 +44,10 @@ function verdictReason(entry, verdict) {
   if (aiErrors > 0) {
     return `DI AI smell verdict failed in ${entry.nodeId}/${entry.runId}: ${aiErrors} error(s)`;
   }
-  if (verdict.pass === false) {
+  const recommendation = typeof verdict.recommendation === "string"
+    ? verdict.recommendation.toUpperCase()
+    : null;
+  if (verdict.pass === false || (recommendation && recommendation !== "PASS")) {
     return `DI verdict failed in ${entry.nodeId}/${entry.runId}: ${verdict.recommendation || "non-PASS"}`;
   }
   return null;

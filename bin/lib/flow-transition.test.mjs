@@ -212,6 +212,22 @@ describe("checkStructuredResults — Step 1.5", () => {
     assert.ok(reasons.some(r => r.includes("DI AI smell verdict")));
   });
 
+  test("DI ITERATE verdict blocks gate PASS even when pass=true", () => {
+    const dir = setupDir("t10b-di-iterate", {
+      build: { artifacts: [] },
+      "code-review": { artifacts: [] },
+    });
+    writeDiVerdict(dir, "build", "run_1", {
+      pass: true,
+      recommendation: "ITERATE",
+      aiSmellErrors: 0,
+    });
+
+    const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("DI verdict failed")));
+    assert.ok(reasons.some(r => r.includes("ITERATE")));
+  });
+
   test("DI verdict sidecar uses latest run per node", () => {
     const dir = setupDir("t11-di-ai-smell-retry", {
       build: { artifacts: [] },
