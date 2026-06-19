@@ -70,6 +70,12 @@ function isHookTimeoutError(err) {
   return err && (err instanceof HookTimeoutError || err.name === "HookTimeoutError");
 }
 
+function startupCheckReason(result) {
+  if (!result || typeof result !== "object") return "";
+  const value = result.reason ?? result.msg ?? result.message;
+  return value ? `: ${String(value).slice(0, 200)}` : "";
+}
+
 // ─── Failure record helpers ──────────────────────────────────────
 //
 // Every prompt.append / verdict.append failure (throw, timeout, bad-return-shape)
@@ -641,15 +647,17 @@ export async function loadExtensions(config = {}) {
           meta._disabledCapabilities = checkResult.disabledCapabilities;
         }
         if (checkResult && checkResult.ok === false) {
+          const reason = startupCheckReason(checkResult);
           if (isRequired) {
-            throw new Error(`FATAL: required extension '${name}' startup.check returned ok:false`);
+            throw new Error(`startup.check returned ok:false${reason}`);
           }
-          console.error(`WARN: optional extension ${name} startup.check returned ok:false`);
+          console.error(`WARN: optional extension ${name} startup.check returned ok:false${reason}`);
           continue;
         }
       } catch (err) {
         if (isRequired) {
-          throw new Error(`FATAL: required extension '${name}' missing or failed startup.check`);
+          const detail = err?.message ? `: ${err.message}` : "";
+          throw new Error(`FATAL: required extension '${name}' missing or failed startup.check${detail}`);
         }
         console.error(`WARN: optional extension ${name} startup.check failed:`, err.message);
         continue;

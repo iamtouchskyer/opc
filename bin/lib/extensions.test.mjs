@@ -139,6 +139,19 @@ describe("loadExtensions", () => {
     assert.ok(!registry.applied.includes("bad-ext"));
   });
 
+  test("optional extension startup.check ok:false → warns with reason and skips", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(
+      join(extDir, "bad-ext"),
+      `export default { hooks: { 'startup.check': async () => ({ ok: false, msg: "API key missing" }) } };`
+    );
+    writeExtension(join(extDir, "good-ext"), `export default { hooks: {} };`);
+    const { result, stderr } = await captureStderr(() => loadExtensions({ extensionsDir: extDir }));
+    assert.ok(result.applied.includes("good-ext"));
+    assert.ok(!result.applied.includes("bad-ext"));
+    assert.match(stderr, /startup\.check returned ok:false: API key missing/);
+  });
+
   test("required extension startup.check fails → throws FATAL", async () => {
     const extDir = join(tmpBase, "extensions");
     const reqDir = join(extDir, "req-ext");
@@ -150,6 +163,18 @@ describe("loadExtensions", () => {
         assert.ok(err.message.includes("req-ext"));
         return true;
       }
+    );
+  });
+
+  test("required extension startup.check ok:false → throws FATAL with reason", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(
+      join(extDir, "req-ext"),
+      `export default { hooks: { 'startup.check': async () => ({ ok: false, reason: "python missing" }) } };`
+    );
+    await assert.rejects(
+      () => loadExtensions({ extensionsDir: extDir, requiredExtensions: ["req-ext"] }),
+      /FATAL: required extension 'req-ext' missing or failed startup\.check: startup\.check returned ok:false: python missing/
     );
   });
 
