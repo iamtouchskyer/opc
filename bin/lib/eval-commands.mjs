@@ -215,6 +215,9 @@ export function cmdSynthesize(args) {
     }
   }
 
+  const isTestDesignNode = nodeId && /test[-_]design/.test(nodeId);
+  const requiresCodeGrounding = !isTestDesignNode;
+
   const roles = [];
   const totals = { critical: 0, warning: 0, suggestion: 0 };
   const thinEvalWarnings = [];
@@ -280,7 +283,7 @@ export function cmdSynthesize(args) {
       thinEvalWarnings.push(`${roleName}: eval is thin (${parsed.lineCount} lines, min 50)`);
     }
     // Review evals with zero file:line references → no grounding in code.
-    if (parsed.noCodeRefs && parsed.findings_count > 0) {
+    if (requiresCodeGrounding && parsed.noCodeRefs && parsed.findings_count > 0) {
       totals.warning += 1;
       thinEvalWarnings.push(`${roleName}: eval has 0 file:line references — findings not grounded in code`);
     }
@@ -394,7 +397,7 @@ export function cmdSynthesize(args) {
     // Layer: change scope coverage — eval must mention files from the diff
     // Requires --base AND git to be available. We cache diffFiles across roles.
     let changeScopeUncovered = false;
-    if (baseDir && parsed.findings_count > 0) {
+    if (requiresCodeGrounding && baseDir && parsed.findings_count > 0) {
       if (_diffFilesCache === null) {
         // F2: a non-git --base cannot be change-scope verified. Detect it up front
         // (capturing git's stderr so its "fatal: not a git repository" never leaks to
@@ -472,7 +475,7 @@ export function cmdSynthesize(args) {
       blocked,
       thinEval: (parsed.thinEval && !thinEvalExempt) || false,
       thinEvalExempt: thinEvalExempt || false,
-      noCodeRefs: parsed.noCodeRefs || false,
+      noCodeRefs: (requiresCodeGrounding && parsed.noCodeRefs) || false,
       lineCount: parsed.lineCount,
       findingsCount: parsed.findings_count || 0,
       lowUniqueContent: parsed.lowUniqueContent || false,

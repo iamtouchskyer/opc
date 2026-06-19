@@ -164,9 +164,17 @@ cat > .harness/nodes/test-design/run_1/eval-tester.md <<'EVALEOF'
 
 ## Findings
 
-🔵 Test plan covers all critical paths
-→ No changes needed
-Reasoning: Comprehensive coverage of unit, integration, and E2E tests.
+🔵 Test plan covers all critical paths — keep the current layer spread
+→ Preserve the five-layer structure and command-backed assertions
+Reasoning: The plan covers unit, contract, integration, UI, and polish layers.
+
+🔵 Test commands are actionable — keep commands close to each layer
+→ Keep the shell commands in the plan rather than only describing intent
+Reasoning: Executable commands let test-execute run the plan mechanically.
+
+🔵 Risk ordering is clear — retain priority labels on critical paths
+→ Keep priority labels on cases that protect release-blocking behavior
+Reasoning: Priorities make it obvious which failures should block the gate.
 
 The test plan includes good coverage.
 Additional padding line 1.
@@ -215,7 +223,68 @@ Additional padding line 43.
 Additional padding line 44.
 Additional padding line 45.
 
-VERDICT: PASS FINDINGS[1]
+VERDICT: PASS FINDINGS[3]
+EVALEOF
+
+cat > .harness/nodes/test-design/run_1/eval-skeptic-owner.md <<'EVALEOF'
+# Skeptic Owner Test Plan Review
+
+## Coverage
+
+🔵 P0 cases are anchored — keep the behavior-backed case format
+→ Retain anchors for release-blocking test cases
+Reasoning: Anchors make the test plan harder to fake.
+
+🔵 Negative paths are covered — keep invalid input and edge cases
+→ Preserve rejection-path coverage in the contract layer
+Reasoning: Negative-path tests catch regressions that happy-path suites miss.
+
+🔵 Execution path is explicit — keep commands attached to the plan
+→ Keep command lines in the relevant sections
+Reasoning: The next node can execute the plan without interpreting prose.
+
+## Summary
+
+The test plan is reviewable as a test artifact.
+The review intentionally discusses coverage rather than source locations.
+The test-design node should not require code file references in this eval.
+Additional coverage note 1.
+Additional coverage note 2.
+Additional coverage note 3.
+Additional coverage note 4.
+Additional coverage note 5.
+Additional coverage note 6.
+Additional coverage note 7.
+Additional coverage note 8.
+Additional coverage note 9.
+Additional coverage note 10.
+Additional coverage note 11.
+Additional coverage note 12.
+Additional coverage note 13.
+Additional coverage note 14.
+Additional coverage note 15.
+Additional coverage note 16.
+Additional coverage note 17.
+Additional coverage note 18.
+Additional coverage note 19.
+Additional coverage note 20.
+Additional coverage note 21.
+Additional coverage note 22.
+Additional coverage note 23.
+Additional coverage note 24.
+Additional coverage note 25.
+Additional coverage note 26.
+Additional coverage note 27.
+Additional coverage note 28.
+Additional coverage note 29.
+Additional coverage note 30.
+Additional coverage note 31.
+Additional coverage note 32.
+Additional coverage note 33.
+Additional coverage note 34.
+Additional coverage note 35.
+
+VERDICT: PASS FINDINGS[3]
 EVALEOF
 
 # Complete test plan covering all 5 layers
@@ -225,6 +294,7 @@ cat > .harness/nodes/test-design/run_1/test-plan.md <<'EOF'
 ## L1: Unit / Smoke Tests
 - Run `npm test` for unit tests
 - Jest coverage must be > 80%
+- Verify smoke tests fail on a broken entrypoint
 
 ## L2: Contract / Edge Cases
 - Validate schema compliance
@@ -234,6 +304,7 @@ cat > .harness/nodes/test-design/run_1/test-plan.md <<'EOF'
 ## L3: Integration / E2E Flows
 - Test end-to-end flow: login → create → submit
 - Integration test with real database
+- Verify external service failure returns a controlled error
 
 ## L4: UI / Visual / A11y
 - Playwright screenshot at 1440px and 375px viewport
@@ -248,6 +319,8 @@ EOF
 
 OUT=$($HARNESS synthesize .harness --node test-design 2>/dev/null)
 assert_not_contains "no missing layers" "$OUT" "test plan missing layers"
+assert_not_contains "test-design eval may omit code refs" "$OUT" "0 file:line references"
+assert_field_eq "test-design complete plan without code refs → PASS" "$OUT" "verdict" '"PASS"'
 
 echo ""
 echo "--- 2.2: test-design node with incomplete test plan → warns about missing layers ---"
@@ -277,5 +350,6 @@ echo "--- 2.3: Non-test-design node → no layer check ---"
 # code-review node should not trigger test plan layer check
 OUT=$($HARNESS synthesize .harness --node code-review 2>/dev/null)
 assert_not_contains "no layer check for code-review" "$OUT" "test plan missing"
+assert_contains "code-review still requires code refs" "$OUT" "0 file:line references"
 
 print_results
