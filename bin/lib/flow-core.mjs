@@ -11,7 +11,12 @@ import {
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
-import { VALID_TIERS, getRequiredBaselineKeys, getAllBaselineKeys } from "./tier-baselines.mjs";
+import {
+  VALID_TIERS,
+  getRequiredBaselineKeys,
+  getAllBaselineKeys,
+  formatTierCoverageHint,
+} from "./tier-baselines.mjs";
 import { checkEvalDistinctness } from "./eval-parser.mjs";
 import { runBriefLint } from "./brief-lint.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
@@ -405,39 +410,40 @@ export function validateHandshakeData(data, opts = {}) {
 
     if (requiredKeys.size > 0) {
       const tc = data.tierCoverage;
+      const tierHint = formatTierCoverageHint(opts.tier);
       if (tc == null || typeof tc !== "object") {
-        errors.push(`execute node must have tierCoverage object when flow tier is '${opts.tier}'`);
+        errors.push(`execute node must have tierCoverage object when flow tier is '${opts.tier}'. ${tierHint}`);
       } else {
         const covered = Array.isArray(tc.covered) ? tc.covered : null;
         const skipped = Array.isArray(tc.skipped) ? tc.skipped : null;
-        if (covered == null) errors.push("tierCoverage.covered must be an array");
-        if (skipped == null) errors.push("tierCoverage.skipped must be an array");
+        if (covered == null) errors.push(`tierCoverage.covered must be an array. ${tierHint}`);
+        if (skipped == null) errors.push(`tierCoverage.skipped must be an array. ${tierHint}`);
 
         if (covered && skipped) {
           // Validate each skipped entry has {key, reason}
           for (let i = 0; i < skipped.length; i++) {
             const s = skipped[i];
             if (s == null || typeof s !== "object") {
-              errors.push(`tierCoverage.skipped[${i}] must be an object`);
+              errors.push(`tierCoverage.skipped[${i}] must be an object. ${tierHint}`);
               continue;
             }
             if (!s.key || typeof s.key !== "string") {
-              errors.push(`tierCoverage.skipped[${i}] missing 'key'`);
+              errors.push(`tierCoverage.skipped[${i}] missing 'key'. ${tierHint}`);
             }
             if (!s.reason || typeof s.reason !== "string" || s.reason.length < 10) {
-              errors.push(`tierCoverage.skipped[${i}] missing 'reason' (min 10 chars — explain why the item is not applicable)`);
+              errors.push(`tierCoverage.skipped[${i}] missing 'reason' (min 10 chars — explain why the item is not applicable). ${tierHint}`);
             }
           }
 
           // Validate every covered/skipped key is a real baseline key
           for (const k of covered) {
             if (!allKeys.has(k)) {
-              errors.push(`tierCoverage.covered contains unknown baseline key: '${k}'`);
+              errors.push(`tierCoverage.covered contains unknown baseline key: '${k}'. ${tierHint}`);
             }
           }
           for (const s of skipped) {
             if (s && s.key && !allKeys.has(s.key)) {
-              errors.push(`tierCoverage.skipped contains unknown baseline key: '${s.key}'`);
+              errors.push(`tierCoverage.skipped contains unknown baseline key: '${s.key}'. ${tierHint}`);
             }
           }
 
@@ -445,7 +451,7 @@ export function validateHandshakeData(data, opts = {}) {
           const declared = new Set([...covered, ...skipped.map((s) => s && s.key).filter(Boolean)]);
           for (const k of requiredKeys) {
             if (!declared.has(k)) {
-              errors.push(`tierCoverage missing required baseline item: '${k}' (must be in covered or skipped)`);
+              errors.push(`tierCoverage missing required baseline item: '${k}' (must be in covered or skipped). ${tierHint}`);
             }
           }
         }

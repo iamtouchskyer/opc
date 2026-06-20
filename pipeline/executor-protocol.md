@@ -158,6 +158,9 @@ When `flow-state.json` has a `tier`, the execute node handshake MUST include:
 }
 ```
 
+The complete machine-readable schema, valid baseline keys, and examples live in
+[tier-coverage-schema.md](tier-coverage-schema.md).
+
 **Enforced by `opc-harness validate`:**
 - `tierCoverage.covered` and `tierCoverage.skipped` are required arrays
 - Every required baseline key for the tier (severity ≥ warning) must appear in `covered` OR `skipped`

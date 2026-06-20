@@ -84,6 +84,8 @@ describe("validateHandshakeData — tier coverage", () => {
       tierBaselineKeys: ["TC-1"],
     });
     assert.ok(errors.some((e) => e.includes("tierCoverage object")));
+    assert.ok(errors.some((e) => e.includes("pipeline/tier-coverage-schema.md")));
+    assert.ok(errors.some((e) => e.includes("typography")));
   });
 
   test("execute node with tier and tierCoverage.covered not array → error", () => {
@@ -96,6 +98,7 @@ describe("validateHandshakeData — tier coverage", () => {
       tierBaselineKeys: ["TC-1"],
     });
     assert.ok(errors.some((e) => e.includes("tierCoverage.covered must be an array")));
+    assert.ok(errors.some((e) => e.includes("Expected tierCoverage")));
   });
 
   test("execute node with tier and skipped entry missing reason → error", () => {
@@ -120,6 +123,20 @@ describe("validateHandshakeData — tier coverage", () => {
       tierBaselineKeys: ["TC-1", "TC-2"],
     });
     assert.ok(errors.some((e) => e.includes("missing 'reason'")));
+  });
+
+  test("unknown tierCoverage key error includes valid key list", () => {
+    const { errors } = validateHandshakeData(validHandshake({
+      nodeType: "execute",
+      artifacts: [{ type: "test-result", path: "test.log" }],
+      tierCoverage: { covered: ["banana"], skipped: [] },
+    }), {
+      tier: "delightful",
+    });
+    assert.ok(errors.some((e) => e.includes("unknown baseline key: 'banana'")));
+    assert.ok(errors.some((e) => e.includes("Valid keys for delightful")));
+    assert.ok(errors.some((e) => e.includes("micro-interactions")));
+    assert.ok(!errors.some((e) => e.includes("dark-mode")));
   });
 
   test("functional tier (no required keys) → no tierCoverage needed", () => {

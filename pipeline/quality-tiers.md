@@ -93,3 +93,9 @@ The evaluator prompt includes: "This product targets **{tier}** quality tier. Ap
 
 ### Gate Verdict
 No change to gate mechanics — the severity adjustment means a `polished` product missing dark mode gets 🟡, which triggers ITERATE, which triggers the implementer in Polish mode. The system naturally loops until the tier baseline is met.
+
+### Execute Evidence
+Completed `execute` node handshakes for `polished` and `delightful` flows must
+include `tierCoverage`, enumerating which baseline keys were covered or skipped.
+See [tier-coverage-schema.md](tier-coverage-schema.md) for the exact schema and
+valid keys.

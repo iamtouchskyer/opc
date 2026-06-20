@@ -216,6 +216,8 @@ HS
 OUT=$($HARNESS validate .h-t4/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "unknown key rejected" "$OUT" "valid" "false"
 assert_contains "explains unknown" "$OUT" "unknown baseline key"
+assert_contains "prints valid key list" "$OUT" "Valid keys for polished"
+assert_contains "points to tierCoverage schema" "$OUT" "pipeline/tier-coverage-schema.md"
 
 echo ""
 echo "--- 5.5: Missing required item rejected ---"

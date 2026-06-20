@@ -163,9 +163,9 @@ node "$OPC_HARNESS" next-tick --force-terminate --dir <path>  # Bypass drain gat
     "reason": "ITERATE",
     "iteration": 2
   },
-  "tierCoverage": {                   // present on execute nodes with tier (optional)
-    "covered": ["responsive-layout", "dark-mode"],
-    "skipped": [{ "key": "loading-states", "reason": "not applicable" }]
+  "tierCoverage": {                   // required on completed execute nodes with polished/delightful tier
+    "covered": ["typography", "color-scheme", "navigation", "responsive"],
+    "skipped": [{ "key": "code-blocks", "reason": "product has no code examples" }]
   },
   "skipped": true                     // set by /opc skip (optional)
 }
@@ -174,6 +174,7 @@ node "$OPC_HARNESS" next-tick --force-terminate --dir <path>  # Bypass drain gat
 **Node type constraints:**
 - `review` nodes require `≥2 eval artifacts` from independent agents
 - `execute` nodes require `≥1 evidence artifact` (type: screenshot, test-result, or cli-output)
+- `execute` nodes in `polished` / `delightful` flows require `tierCoverage`; see [Tier Coverage Schema](pipeline/tier-coverage-schema.md)
 - `gate` nodes are auto-created by `transition` — external callers don't write them
 
 ### `.harness/loop-state.json`

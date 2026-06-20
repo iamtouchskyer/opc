@@ -391,6 +391,17 @@ export function getAllBaselineKeys(tier) {
   return new Set(getBaselineForTier(tier).map((item) => item.key));
 }
 
+export function formatTierCoverageHint(tier) {
+  const required = [...getRequiredBaselineKeys(tier)];
+  const valid = [...getAllBaselineKeys(tier)];
+  return [
+    "See pipeline/tier-coverage-schema.md.",
+    "Expected tierCoverage: { covered: string[], skipped: { key: string, reason: string }[] }.",
+    `Required keys for ${tier}: ${required.join(", ") || "(none)"}.`,
+    `Valid keys for ${tier}: ${valid.join(", ") || "(none)"}.`,
+  ].join(" ");
+}
+
 /**
  * Check evaluator text for coverage of tier baseline items.
  * Returns { covered: [...], uncovered: [...] } where each entry has { key, label, severity }.

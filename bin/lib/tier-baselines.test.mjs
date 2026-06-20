@@ -21,6 +21,7 @@ import {
   generateTierTestCases,
   getRequiredBaselineKeys,
   getAllBaselineKeys,
+  formatTierCoverageHint,
   checkBaselineCoverage,
 } from "./tier-baselines.mjs";
 
@@ -344,6 +345,18 @@ describe("getAllBaselineKeys", () => {
 
   test("returns empty Set for invalid tier", () => {
     assert.equal(getAllBaselineKeys("bogus").size, 0);
+  });
+});
+
+describe("formatTierCoverageHint", () => {
+  test("names schema doc and valid tier keys", () => {
+    const hint = formatTierCoverageHint("delightful");
+    assert.ok(hint.includes("pipeline/tier-coverage-schema.md"));
+    assert.ok(hint.includes("Expected tierCoverage"));
+    assert.ok(hint.includes("typography"));
+    assert.ok(hint.includes("micro-interactions"));
+    assert.ok(!hint.includes("responsive-layout"));
+    assert.ok(!hint.includes("dark-mode"));
   });
 });
 
