@@ -477,6 +477,7 @@ don't cargo-cult from other examples.
 | `verification@1`                | generic verification slot (widely used by examples) | review     |
 | `design-review@1`               | generic design-review slot                        | review       |
 | `execute@1`                     | generic executor slot                             | execute      |
+| `context-enrichment@1`          | any node the flow stamps with it                  | prompt       |
 
 ### 4.8 Design Intelligence lifecycle
 
@@ -492,7 +493,6 @@ The stock `build-verify` and `full-stack` templates route the
 - `design-spec-conformance@1` and `visual-consistency-check@1` produce
   structured review/execute evidence. Downstream gates consume the sidecars,
   not a human memory that DI was "used".
-| `context-enrichment@1`          | any node the flow stamps with it                  | prompt       |
 
 Also widely used by the `examples/extensions/*` set as a "match all three
 generic review/execute nodes" triple: `["verification@1",
