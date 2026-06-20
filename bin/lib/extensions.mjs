@@ -1098,6 +1098,12 @@ export async function fireNodePreflight(registry, context) {
 export function writeDesignArtifacts(preflightResult, sessionDir) {
   mkdirSync(sessionDir, { recursive: true });
 
+  const diState = preflightResult.diState && typeof preflightResult.diState === "object"
+    ? preflightResult.diState
+    : { version: 1, preflight: { confidence: preflightResult.confidence || 0, reason: preflightResult.reason || "" } };
+  writeDiStateArtifact(sessionDir, diState);
+  if (diState.preflight?.status === "no-task") return;
+
   // design-mode.json — always written (contains the activation decision)
   // Mode semantics:
   //   "explicit" — user explicitly set design tokens (userOverride=true)
@@ -1135,10 +1141,9 @@ export function writeDesignArtifacts(preflightResult, sessionDir) {
       JSON.stringify(preflightResult.tokens, null, 2) + "\n"
     );
   }
+}
 
-  const diState = preflightResult.diState && typeof preflightResult.diState === "object"
-    ? preflightResult.diState
-    : { version: 1, preflight: { confidence: designMode.confidence, reason: designMode.reason } };
+function writeDiStateArtifact(sessionDir, diState) {
   atomicWriteSync(
     join(sessionDir, "di-state.json"),
     JSON.stringify({ version: 1, ...diState, updatedAt: new Date().toISOString() }, null, 2) + "\n"
