@@ -617,6 +617,21 @@ export async function cmdNodePreflight(args) {
   const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
+  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
+
+  if (nodeCapabilities.length > 0 && !task.trim()) {
+    console.log(JSON.stringify({
+      ok: true,
+      node,
+      preflightResults: 0,
+      skipped: true,
+      reason: "empty acceptance criteria",
+      artifactTypes: [],
+      extensionsApplied: [],
+      nodeCapabilities,
+    }));
+    return;
+  }
 
   let registry;
   try {
@@ -627,7 +642,6 @@ export async function cmdNodePreflight(args) {
   }
 
   const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
 
   const context = {
     node,
