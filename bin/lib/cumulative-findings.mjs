@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
+import { parseStructuredFindings, structuredSeverityName } from "./structured-findings.mjs";
 
 const OUT = "cumulative-findings.md";
 
@@ -30,6 +31,17 @@ function listEvalFiles(runDir) {
 function fmtFinding(f) {
   const loc = f.file && f.line ? ` (${f.file}:${f.line})` : "";
   return `  - ${f.severity}: ${f.issue}${loc}`;
+}
+
+function fmtStructuredFinding(f) {
+  const loc = f.location ? ` (${f.location})` : "";
+  const status = f.status ? `, status ${f.status}` : "";
+  return `  - ${structuredSeverityName(f.severity)}: ${f.title}${loc}${status}`;
+}
+
+function parsedHasTitle(parsed, title) {
+  const wanted = String(title || "").toLowerCase();
+  return parsed.findings.some((f) => String(f.issue || "").toLowerCase().includes(wanted));
 }
 
 function fixText(raw) {
@@ -115,10 +127,18 @@ function appendNode(lines, summary) {
 }
 
 function appendEval(lines, ev) {
-  const parsed = parseEvaluation(readFileSync(ev.path, "utf8"));
-  if (parsed.findings_count === 0) return;
-  lines.push(`- ${ev.name}: ${parsed.critical} critical, ${parsed.warning} warning, ${parsed.suggestion} suggestion`);
+  const content = readFileSync(ev.path, "utf8");
+  const parsed = parseEvaluation(content);
+  const structured = parseStructuredFindings(content).filter((f) => !parsedHasTitle(parsed, f.title));
+  if (parsed.findings_count === 0 && structured.length === 0) return;
+  const counts = { critical: parsed.critical, warning: parsed.warning, suggestion: parsed.suggestion };
+  for (const f of structured) {
+    const key = structuredSeverityName(f.severity);
+    if (Object.hasOwn(counts, key)) counts[key]++;
+  }
+  lines.push(`- ${ev.name}: ${counts.critical} critical, ${counts.warning} warning, ${counts.suggestion} suggestion`);
   for (const f of parsed.findings) lines.push(fmtFinding(f));
+  for (const f of structured) lines.push(fmtStructuredFinding(f));
 }
 
 export function buildCumulativeFindingsMarkdown(dir, state) {

@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from '
 import { join, basename, relative } from 'path';
 import { parseEvaluation } from './lib/eval-parser.mjs';
 import { collectExecutionFixes } from './lib/cumulative-findings.mjs';
+import { parseStructuredFindings } from './lib/structured-findings.mjs';
 
 // --- CLI args ---
 const args = process.argv.slice(2);
@@ -53,43 +54,6 @@ function collectEvals(dir) {
     }
   }
   return result;
-}
-
-// --- Parse findings from an eval file ---
-const SEV_RE = /\*\*Severity\*\*:?\s*(🔴|🟡|🔵)/;
-const STATUS_RE = /\*\*(?:R2\s+)?Status\*?\*?:?\s*(✅|⚠️|❌)/;
-const LOCATION_RE = /\*\*Location\*\*:?\s*(.+)/;
-const FINDING_HEADING_RE = /^#{2,3}\s+(?:Finding\s+)?(\d+)[\s.:—\-]+(.+)/i;
-// Also match: ### N. Title  or  ## Finding N — Title
-const FINDING_HEADING_ALT = /^#{2,3}\s+(\d+)\.\s+(.+)/;
-
-function parseStructuredFindings(content) {
-  const lines = content.split('\n');
-  const findings = [];
-  let current = null;
-  for (const line of lines) {
-    let m = line.match(FINDING_HEADING_RE) || line.match(FINDING_HEADING_ALT);
-    if (m) {
-      if (current) findings.push(current);
-      current = { num: m[1], title: m[2].trim(), severity: null, location: null, status: null };
-      continue;
-    }
-    // Non-finding heading (## without numbered pattern) — reset current to avoid status leakage
-    if (/^#{2,3}\s+/.test(line) && !m) {
-      if (current) findings.push(current);
-      current = null;
-      continue;
-    }
-    if (!current) continue;
-    const sevM = line.match(SEV_RE);
-    if (sevM) { current.severity = sevM[1]; continue; }
-    const statM = line.match(STATUS_RE);
-    if (statM) { current.status = statM[1]; continue; }
-    const locM = line.match(LOCATION_RE);
-    if (locM) { current.location = locM[1].replace(/`/g, '').trim(); continue; }
-  }
-  if (current) findings.push(current);
-  return findings;
 }
 
 function severityIcon(severity) {

@@ -41,6 +41,7 @@ $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .
 
 check "transition writes cumulative findings" 'test -f .harness/cumulative-findings.md'
 check "cumulative findings include warning" 'grep -q "Report hides warning finding" .harness/cumulative-findings.md'
+check "cumulative findings include legacy structured title" 'grep -q "Real structured issue title" .harness/cumulative-findings.md'
 check "cumulative findings include retry run" 'grep -q "Retry run finding stays visible" .harness/cumulative-findings.md'
 check "cumulative findings include execution fix" 'grep -q "Bound report parser" .harness/cumulative-findings.md'
 
@@ -48,6 +49,7 @@ PROMPT_JSON=$(OPC_DISABLE_EXTENSIONS=1 $HARNESS prompt-context --node gate --rol
 PROMPT_APPEND=$(printf '%s' "$PROMPT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["append"])')
 check "prompt-context injects recovery context" 'printf "%s" "$PROMPT_APPEND" | grep -q "OPC Recovery Context"'
 check "prompt-context includes prior warning" 'printf "%s" "$PROMPT_APPEND" | grep -q "Report hides warning finding"'
+check "prompt-context includes legacy structured title" 'printf "%s" "$PROMPT_APPEND" | grep -q "Real structured issue title"'
 
 $HARNESS transition --from gate --to null --verdict PASS --flow review --dir .harness > /dev/null 2>&1
 VIZ=$($HARNESS viz --flow review --dir .harness 2>/dev/null)
