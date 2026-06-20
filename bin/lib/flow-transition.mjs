@@ -22,6 +22,7 @@ import { collectDiVerdictReasons } from "./di-verdict-gate.mjs";
 import { executeTestCommand } from "./test-command-execution.mjs";
 import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
 import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
+import { readCumulativeFindingsAppend, writeCumulativeFindings } from "./cumulative-findings.mjs";
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
 
@@ -526,6 +527,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
   mkdirSync(join(dir, "nodes", to, runId), { recursive: true });
+  try { writeCumulativeFindings(dir, state); } catch { /* best effort */ }
 
   let testCommandExecution = null;
   const toNodeType = template.nodeTypes?.[to] || null;
@@ -570,7 +572,10 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
         devServerUrl: process.env.DEV_SERVER_URL || config.devServerUrl || "",
         nodeCapabilities: nextNodeCaps,
       };
-      const append = await firePromptAppend(registry, context);
+      const append = [
+        readCumulativeFindingsAppend(resolve(dir)),
+        await firePromptAppend(registry, context),
+      ].filter(Boolean).join("\n\n");
       extensionContext = {
         append,
         applied: survivingExtensions(registry),
@@ -1048,6 +1053,7 @@ export function cmdFinalize(args) {
     freshState._written_by = WRITER_SIG;
 
     atomicWriteSync(statePath, JSON.stringify(freshState, null, 2) + "\n");
+    try { writeCumulativeFindings(dir, freshState); } catch { /* best effort */ }
 
     // Post-finalize: GC old sessions (best-effort)
     try { gcSessions(); } catch { /* ignore */ }

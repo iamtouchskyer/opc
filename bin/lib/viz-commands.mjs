@@ -8,6 +8,10 @@ import { getFlag, resolveDirReadOnly } from "./util.mjs";
 
 export function getMarker(nodeId, state) {
   if (!state) return "○";
+  if (state.status === "completed") {
+    if (state.currentNode === nodeId) return "✅";
+    if (state.history?.some((h) => h.nodeId === nodeId)) return "✅";
+  }
   if (state.currentNode === nodeId) return "▶";
   if (state.history?.some((h) => h.nodeId === nodeId)) return "✅";
   if (state.entryNode === nodeId && state.currentNode !== nodeId) return "✅";
@@ -50,7 +54,12 @@ export function cmdViz(args) {
 
   if (jsonOut) {
     const nodes = template.nodes.map((id) => ({ id, status: getMarker(id, state) }));
-    console.log(JSON.stringify({ nodes, loopbacks }, null, 2));
+    console.log(JSON.stringify({
+      nodes,
+      loopbacks,
+      completed: state?.status === "completed",
+      terminalNode: state?.status === "completed" ? state.currentNode || null : null,
+    }, null, 2));
     return;
   }
 
@@ -67,6 +76,10 @@ export function cmdViz(args) {
     if (loopMap[id]) line += `          ← ${loopMap[id].verdict} → ${loopMap[id].target}`;
     console.log(line);
     if (i < template.nodes.length - 1) console.log("  │");
+  }
+  if (state?.status === "completed") {
+    console.log("");
+    console.log(`  ══ FLOW COMPLETED${state.currentNode ? ` at ${state.currentNode}` : ""} ══`);
   }
 }
 

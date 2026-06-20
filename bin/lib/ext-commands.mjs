@@ -10,6 +10,7 @@ import { getFlag, atomicWriteSync, resolveDir, resolveDirReadOnly } from "./util
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadLayeredOpcConfig, stripProvenance } from "./config-layering.mjs";
+import { readCumulativeFindingsAppend } from "./cumulative-findings.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
 //
@@ -145,7 +146,11 @@ export async function cmdPromptContext(args) {
     nodeCapabilitiesResolved: templateResolved,
   };
 
-  const append = await firePromptAppend(registry, context);
+  const extensionAppend = await firePromptAppend(registry, context);
+  const append = [
+    readCumulativeFindingsAppend(resolve(dir)),
+    extensionAppend,
+  ].filter(Boolean).join("\n\n");
 
   // Stamp extensionsApplied into this node's latest run handshake (if run dir exists)
   const nodeDir = resolve(dir, "nodes", node);
