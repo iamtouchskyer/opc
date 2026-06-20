@@ -14,6 +14,7 @@ write_test_design_handshake() {
   mkdir -p "$dir/nodes/test-design"
   echo "# Eval A" > "$dir/nodes/test-design/eval-a.md"
   echo "# Eval B" > "$dir/nodes/test-design/eval-b.md"
+  write_complete_test_plan "$dir/nodes/test-design/test-plan.md"
   python3 - "$dir/nodes/test-design/handshake.json" "$command" <<'PY'
 import json, sys
 path, command = sys.argv[1], sys.argv[2]

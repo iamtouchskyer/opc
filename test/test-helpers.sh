@@ -62,3 +62,35 @@ write_golden_brief() {
 - Animation: 200ms ease-out transitions
 BRIEF
 }
+
+write_complete_test_plan() {
+  local target="$1"
+  cat > "$target" << 'PLAN'
+# Test Plan
+
+## Unit smoke
+Run npm test for unit coverage.
+Cover module smoke behavior.
+Assert basic render success.
+
+## Contract edge case
+Validate schema boundaries.
+Cover invalid input.
+Assert error code stability.
+
+## Integration e2e flow
+Run playwright test through the workflow.
+Cover multi-step happy path.
+Assert persisted state.
+
+## UI visual accessibility
+Capture screenshot at desktop and mobile viewport.
+Check responsive layout.
+Run a11y smoke checks.
+
+## Tier baseline polish
+Check typography hierarchy.
+Check navigation affordance.
+Check dark mode baseline.
+PLAN
+}

@@ -131,25 +131,35 @@ describe("loadExtensions", () => {
   test("optional extension startup.check throws → warns, continues", async () => {
     const extDir = join(tmpBase, "extensions");
     const badDir = join(extDir, "bad-ext");
-    writeExtension(badDir, `export default { hooks: { 'startup.check': async () => { throw new Error("env var missing"); } } };`);
+    writeExtension(badDir, `
+      export const meta = { provides: ["visual-consistency-check@1"] };
+      export default { hooks: { 'startup.check': async () => { throw new Error("env var missing"); } } };
+    `);
     const goodDir = join(extDir, "good-ext");
     writeExtension(goodDir, `export default { hooks: {} };`);
     const registry = await loadExtensions({ extensionsDir: extDir });
     assert.ok(registry.applied.includes("good-ext"));
     assert.ok(!registry.applied.includes("bad-ext"));
+    assert.equal(registry.startupFailures[0].ext, "bad-ext");
+    assert.deepEqual(registry.startupFailures[0].provides, ["visual-consistency-check@1"]);
   });
 
   test("optional extension startup.check ok:false → warns with reason and skips", async () => {
     const extDir = join(tmpBase, "extensions");
     writeExtension(
       join(extDir, "bad-ext"),
-      `export default { hooks: { 'startup.check': async () => ({ ok: false, msg: "API key missing" }) } };`
+      `
+        export const meta = { provides: ["design-system-injection@1"] };
+        export default { hooks: { 'startup.check': async () => ({ ok: false, msg: "API key missing" }) } };
+      `
     );
     writeExtension(join(extDir, "good-ext"), `export default { hooks: {} };`);
     const { result, stderr } = await captureStderr(() => loadExtensions({ extensionsDir: extDir }));
     assert.ok(result.applied.includes("good-ext"));
     assert.ok(!result.applied.includes("bad-ext"));
     assert.match(stderr, /startup\.check returned ok:false: API key missing/);
+    assert.equal(result.startupFailures[0].kind, "ok-false");
+    assert.deepEqual(result.startupFailures[0].provides, ["design-system-injection@1"]);
   });
 
   test("required extension startup.check fails → throws FATAL", async () => {
@@ -985,6 +995,17 @@ describe("saveRegistryCache / readRegistryApplied", () => {
     saveRegistryCache(tmpBase, { applied: ["alpha"], extensions: [] });
     const cache = JSON.parse(readFileSync(join(tmpBase, ".ext-registry.json"), "utf8"));
     assert.equal(cache.bypass, null);
+  });
+
+  test("saveRegistryCache writes startup failures", () => {
+    saveRegistryCache(tmpBase, {
+      applied: [],
+      extensions: [],
+      startupFailures: [{ ext: "bad", hook: "startup.check", kind: "ok-false", provides: ["cap@1"] }],
+    });
+    const cache = JSON.parse(readFileSync(join(tmpBase, ".ext-registry.json"), "utf8"));
+    assert.equal(cache.startupFailures[0].ext, "bad");
+    assert.deepEqual(cache.startupFailures[0].provides, ["cap@1"]);
   });
 });
 

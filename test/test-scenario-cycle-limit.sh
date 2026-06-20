@@ -42,6 +42,7 @@ EOF
 EOF
   echo "# Eval A - test design findings" > .harness/nodes/test-design/eval-a.md
   echo "# Eval B - test design secondary" > .harness/nodes/test-design/eval-b.md
+  write_complete_test_plan .harness/nodes/test-design/test-plan.md
   $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
   mkdir -p .harness/nodes/test-execute

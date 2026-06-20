@@ -122,6 +122,18 @@ function recordSuccess(ext) {
   if (ext._failStreak) ext._failStreak = 0;
 }
 
+function startupFailureEntry(name, kind, message, meta = {}) {
+  return {
+    ext: name,
+    hook: "startup.check",
+    kind,
+    message: String(message || "").slice(0, 500),
+    at: new Date().toISOString(),
+    provides: Array.isArray(meta.provides) ? meta.provides : [],
+    disabledCapabilities: Array.isArray(meta._disabledCapabilities) ? meta._disabledCapabilities : [],
+  };
+}
+
 /**
  * Manually re-enable a disabled extension and clear its failure streak so it
  * isn't immediately re-tripped by the next single failure. Call this from an
@@ -588,6 +600,7 @@ export async function loadExtensions(config = {}) {
 
   const extensions = [];
   const applied = [];
+  const startupFailures = [];
 
   for (const name of ordered) {
     const extDir = join(extensionsDir, name);
@@ -603,6 +616,7 @@ export async function loadExtensions(config = {}) {
         throw new Error(`FATAL: required extension '${name}' missing or failed startup.check`);
       }
       console.error(`WARN: optional extension ${name} failed to load:`, err.message);
+      startupFailures.push(startupFailureEntry(name, "load-error", err.message));
       continue;
     }
 
@@ -652,6 +666,7 @@ export async function loadExtensions(config = {}) {
             throw new Error(`startup.check returned ok:false${reason}`);
           }
           console.error(`WARN: optional extension ${name} startup.check returned ok:false${reason}`);
+          startupFailures.push(startupFailureEntry(name, "ok-false", `startup.check returned ok:false${reason}`, meta));
           continue;
         }
       } catch (err) {
@@ -660,6 +675,12 @@ export async function loadExtensions(config = {}) {
           throw new Error(`FATAL: required extension '${name}' missing or failed startup.check${detail}`);
         }
         console.error(`WARN: optional extension ${name} startup.check failed:`, err.message);
+        startupFailures.push(startupFailureEntry(
+          name,
+          isHookTimeoutError(err) ? "timeout" : "throw",
+          err.message,
+          meta
+        ));
         continue;
       }
     }
@@ -667,6 +688,12 @@ export async function loadExtensions(config = {}) {
     // Remove disabled capabilities from provides (e.g., VLM missing → visual-consistency-check@1 disabled)
     if (Array.isArray(meta._disabledCapabilities) && meta._disabledCapabilities.length > 0) {
       const disabled = new Set(meta._disabledCapabilities.map(normalizeCapability));
+      for (const cap of meta._disabledCapabilities) {
+        startupFailures.push(startupFailureEntry(name, "capability-disabled", `startup.check disabled ${cap}`, {
+          provides: [cap],
+          _disabledCapabilities: [cap],
+        }));
+      }
       meta.provides = (meta.provides || []).filter(cap => !disabled.has(normalizeCapability(cap)));
       console.error(`[extensions] ${name}: disabled capabilities: ${meta._disabledCapabilities.join(", ")}`);
     }
@@ -681,7 +708,7 @@ export async function loadExtensions(config = {}) {
     }
   }
 
-  const registry = { extensions, applied, failures: [] };
+  const registry = { extensions, applied, failures: [], startupFailures };
 
   // F5 / U5.7: apply persisted circuit-breaker state from <flowDir>/.extension-state.json.
   // Record flowDir on the registry so fire* hooks can re-persist after updates.
@@ -1277,6 +1304,7 @@ export function saveRegistryCache(dir, registry) {
   const cachePath = join(dir, ".ext-registry.json");
   const data = {
     applied: registry.applied,
+    startupFailures: Array.isArray(registry.startupFailures) ? registry.startupFailures : [],
     timestamp: new Date().toISOString(),
     bypass: registry.bypass || null,
   };

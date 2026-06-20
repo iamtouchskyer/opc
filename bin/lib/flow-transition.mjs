@@ -20,6 +20,8 @@ import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.
 import { collectGateCriteriaReasons } from "./gate-criteria.mjs";
 import { collectDiVerdictReasons } from "./di-verdict-gate.mjs";
 import { executeTestCommand } from "./test-command-execution.mjs";
+import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
+import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
 
@@ -32,6 +34,7 @@ export function checkStructuredResults(dir, state, template, currentNode) {
   const structuredFailReasons = [];
   structuredFailReasons.push(...collectGateCriteriaReasons(dir, state, template, currentNode));
   structuredFailReasons.push(...collectDiVerdictReasons(dir, state, template, currentNode));
+  structuredFailReasons.push(...collectExtensionStartupReasons(dir, state, template, currentNode));
   const histNoGates = state.history.filter(h => {
     const nt = template.nodeTypes?.[h.nodeId];
     return nt && nt !== "gate";
@@ -276,6 +279,19 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
         allowed: false,
         reason: `pre-transition check: handshake.json for '${from}' has errors: ${hsErrors.join("; ")}`,
         handshakeErrors: hsErrors,
+      }));
+      return;
+    }
+  }
+
+  // ── Test-design plan gate ──────────────────────────────────────
+  if (!isGate && /^test[-_]design$/.test(from) && /^test[-_]execute$/.test(to) && verdict === "PASS") {
+    const testPlanReasons = collectTestDesignPlanReasons(dir, from);
+    if (testPlanReasons.length > 0) {
+      console.log(JSON.stringify({
+        allowed: false,
+        reason: `test-design gate failed: ${testPlanReasons.join("; ")}`,
+        testPlanReasons,
       }));
       return;
     }
