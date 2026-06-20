@@ -104,21 +104,26 @@ function mergeStatus(f, structured) {
   }) || null;
 }
 
+function canonicalFinding(f, idx, structured) {
+  const statusSource = mergeStatus(f, structured);
+  const location = f.file && f.line ? `${f.file}:${f.line}` : statusSource?.location;
+  return {
+    num: String(idx + 1),
+    title: f.issue,
+    severity: severityIcon(f.severity),
+    location,
+    status: statusSource?.status || null,
+  };
+}
+
 function parseFindings(content) {
   const structured = parseStructuredFindings(content);
   const parsed = parseEvaluation(content);
   if (!parsed.findings.length) return structured;
-  return parsed.findings.map((f, idx) => {
-    const statusSource = mergeStatus(f, structured);
-    const location = f.file && f.line ? `${f.file}:${f.line}` : statusSource?.location;
-    return {
-      num: String(idx + 1),
-      title: f.issue,
-      severity: severityIcon(f.severity),
-      location,
-      status: statusSource?.status || null,
-    };
-  });
+  const canonical = parsed.findings.map((f, idx) => canonicalFinding(f, idx, structured));
+  if (!structured.length) return canonical;
+  const extras = canonical.filter(f => !mergeStatus({ issue: f.title }, structured));
+  return structured.concat(extras.map((f, idx) => ({ ...f, num: String(structured.length + idx + 1) })));
 }
 
 // --- Parse verdict from eval ---

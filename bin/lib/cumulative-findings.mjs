@@ -58,24 +58,27 @@ function readRunSummary(dir, entry) {
 }
 
 function orderedEntries(dir, state) {
-  const entries = [];
-  const seen = new Set();
-  const add = (entry) => {
+  const nodes = [];
+  const seenNodes = new Set();
+  const addNode = (entry) => {
     const nodeId = entry?.nodeId || entry?.node;
-    if (!nodeId || seen.has(nodeId)) return;
-    seen.add(nodeId);
-    entries.push(entry);
+    if (!nodeId || seenNodes.has(nodeId)) return;
+    seenNodes.add(nodeId);
+    nodes.push(nodeId);
   };
-  add({ nodeId: state?.entryNode });
-  for (const entry of state?.history || []) add(entry);
-  add({ nodeId: state?.currentNode });
+  addNode({ nodeId: state?.entryNode });
+  for (const entry of state?.history || []) addNode(entry);
+  addNode({ nodeId: state?.currentNode });
   const nodesDir = join(dir, "nodes");
-  if (!existsSync(nodesDir)) return entries;
+  if (!existsSync(nodesDir)) return nodes.map((nodeId) => ({ nodeId }));
   for (const nodeId of readdirSync(nodesDir).sort()) {
     const nodeDir = join(nodesDir, nodeId);
-    if (statSync(nodeDir).isDirectory()) add({ nodeId });
+    if (statSync(nodeDir).isDirectory()) addNode({ nodeId });
   }
-  return entries;
+  return nodes.flatMap((nodeId) => {
+    const runIds = listRunDirs(join(nodesDir, nodeId));
+    return runIds.length ? runIds.map((runId) => ({ nodeId, runId })) : [{ nodeId }];
+  });
 }
 
 export function collectExecutionFixes(dir) {

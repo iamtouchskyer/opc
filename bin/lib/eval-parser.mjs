@@ -140,6 +140,9 @@ export function parseEvaluation(text) {
     // Severity / finding detection (skip markdown headings, tables, and section labels)
     const sevMatch = trimmed.match(SEVERITY_RE);
     if (sevMatch && !trimmed.startsWith("#") && !trimmed.startsWith("|") && !VERDICT_RE.test(trimmed)) {
+      if (/^\*{0,2}(severity|location|status|r2\s+status)\*{0,2}:/i.test(trimmed)) {
+        continue;
+      }
       const fileMatch = trimmed.match(FILE_REF_RE);
       const dashIdx = trimmed.indexOf("—");
 

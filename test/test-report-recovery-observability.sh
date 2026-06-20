@@ -23,6 +23,9 @@ write_review() {
   mkdir -p "$dir/nodes/review/run_1"
   printf '# Reviewer A\n\n[WARNING] src/app.js:12 — Report hides warning finding\n→ Render it in the final report\nReasoning: The warning must stay visible after recovery.\nVERDICT: ITERATE FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-a.md"
   printf '# Reviewer B\n\n[SUGGESTION] src/app.js:18 — Add recovery context\n→ Include cumulative findings in prompt context\nReasoning: Compaction needs prior findings.\nVERDICT: PASS FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-b.md"
+  printf '# Legacy Review\n\n## Finding 1 — Real structured issue title\n**Severity**: 🔴\n**Location**: src/legacy.js:7\n**R2 Status**: ⚠️\n\nVERDICT: FAIL FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-legacy.md"
+  mkdir -p "$dir/nodes/review/run_2"
+  printf '# Reviewer C\n\n[WARNING] src/retry.js:33 — Retry run finding stays visible\n→ Preserve loopback findings per run\nReasoning: Retry runs must not be hidden by node-level de-duplication.\nVERDICT: ITERATE FINDINGS[1]\n' > "$dir/nodes/review/run_2/eval-c.md"
   printf '{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2026-06-20T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":"PASS"}\n' > "$dir/nodes/review/handshake.json"
   printf '{"nodeId":"review","runId":"run_1","status":"completed","fixes_applied":["Bound report parser to canonical eval severity parsing"]}\n' > "$dir/nodes/review/run_1/handshake.json"
 }
@@ -38,6 +41,7 @@ $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .
 
 check "transition writes cumulative findings" 'test -f .harness/cumulative-findings.md'
 check "cumulative findings include warning" 'grep -q "Report hides warning finding" .harness/cumulative-findings.md'
+check "cumulative findings include retry run" 'grep -q "Retry run finding stays visible" .harness/cumulative-findings.md'
 check "cumulative findings include execution fix" 'grep -q "Bound report parser" .harness/cumulative-findings.md'
 
 PROMPT_JSON=$(OPC_DISABLE_EXTENSIONS=1 $HARNESS prompt-context --node gate --role resume --dir .harness 2>/dev/null)
@@ -56,6 +60,8 @@ check "viz json exposes terminal node" 'printf "%s" "$VIZ_JSON" | grep -q "\"ter
 
 node "$ROOT/bin/opc-report.mjs" --dir .harness --output report.html --title "Recovery Report" > /dev/null
 check "report includes parser warning finding" 'grep -q "Report hides warning finding" report.html'
+check "report preserves legacy structured title" 'grep -q "Real structured issue title" report.html'
+check "report does not render severity metadata as title" '! grep -q "<h4>\\*\\*Severity\\*\\*" report.html'
 check "report includes execution fixes section" 'grep -q "Fixes Applied During Execution" report.html'
 check "report includes execution fix text" 'grep -q "Bound report parser" report.html'
 

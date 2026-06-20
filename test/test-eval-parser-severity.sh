@@ -170,6 +170,27 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# ── 1.8: Legacy metadata severity line → NOT parsed ──
+echo "--- 1.8: Legacy metadata line (no false positive) ---"
+cat > legacy-meta.md << 'EOF'
+# Review
+
+## Finding 1 — Real structured issue title
+**Severity**: 🔴
+**Location**: src/legacy.js:7
+
+VERDICT: FINDINGS[1]
+EOF
+OUT=$(parse_eval legacy-meta.md)
+TOTAL=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('critical',0)+d.get('warning',0)+d.get('suggestion',0))" 2>/dev/null)
+if [ "$TOTAL" = "0" ]; then
+  echo "  ✅ metadata severity is not parsed as a finding"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ expected 0 metadata findings, got: $TOTAL"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== TEST GROUP 2: formatErrors ==="
 echo ""
