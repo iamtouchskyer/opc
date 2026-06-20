@@ -24,6 +24,22 @@ import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
 import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
 import { readCumulativeFindingsAppend, writeCumulativeFindings } from "./cumulative-findings.mjs";
 
+function nodeHandshakePath(dir, nodeId) {
+  const nodeDir = join(dir, "nodes", nodeId);
+  const direct = join(nodeDir, "handshake.json");
+  if (existsSync(direct)) return direct;
+  const latestRun = findLatestRunDir(nodeDir);
+  const fallback = latestRun ? join(latestRun, "handshake.json") : null;
+  return fallback && existsSync(fallback) ? fallback : direct;
+}
+
+function mandatoryRoleHint(nodeId) {
+  if (/^test[-_]design$/.test(nodeId)) {
+    return " For test-design, skeptic-owner reviews test plan completeness, not code quality.";
+  }
+  return "";
+}
+
 // ─── Step 1.5: Structured result check (extracted for testability) ───
 
 /**
@@ -60,7 +76,7 @@ export function checkStructuredResults(dir, state, template, currentNode) {
   for (const entry of upstreamNodes) {
     if (seen.has(entry.nodeId)) continue;
     seen.add(entry.nodeId);
-    const hsPath = join(dir, "nodes", entry.nodeId, "handshake.json");
+    const hsPath = nodeHandshakePath(dir, entry.nodeId);
     if (!existsSync(hsPath)) continue;
     let hs;
     try { hs = JSON.parse(readFileSync(hsPath, "utf8")); } catch { continue; }
@@ -68,7 +84,7 @@ export function checkStructuredResults(dir, state, template, currentNode) {
 
     for (const art of hs.artifacts) {
       if (art.type !== "report" && art.type !== "test-result") continue;
-      const artPath = resolve(join(dir, "nodes", entry.nodeId), art.path);
+      const artPath = resolve(dirname(hsPath), art.path);
       let data;
       try {
         data = JSON.parse(readFileSync(artPath, "utf8"));
@@ -245,7 +261,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   // ── Pre-transition handshake validation ──
   // Structural checks block. Quality checks (eval artifacts) become warnings.
   if (!isGate) {
-    const fromHandshakePath = join(dir, "nodes", from, "handshake.json");
+    const fromHandshakePath = nodeHandshakePath(dir, from);
     if (!existsSync(fromHandshakePath)) {
       console.log(JSON.stringify({
         allowed: false,
@@ -325,7 +341,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
       }
     }
     if (mandatoryRoles.length > 0) {
-      const fromHandshakePath = join(dir, "nodes", from, "handshake.json");
+      const fromHandshakePath = nodeHandshakePath(dir, from);
       if (existsSync(fromHandshakePath)) {
         const hsData = JSON.parse(readFileSync(fromHandshakePath, "utf8"));
         const evalArtifacts = (hsData.artifacts || []).filter(a => a.type === "eval" || a.type === "evaluation");
@@ -351,7 +367,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
           if (missingRoles.length > 0) {
             console.log(JSON.stringify({
               allowed: false,
-              error: `Missing mandatory role evaluations: [${missingRoles.join(", ")}]. Review node must include all mandatory roles.`,
+              error: `Missing mandatory role evaluations: [${missingRoles.join(", ")}]. Review node must include all mandatory roles.${mandatoryRoleHint(from)}`,
               missingRoles,
             }));
             return;
@@ -668,7 +684,7 @@ export function cmdValidateChain(args) {
 
   for (const entry of state.history) {
     const nd = entry.node || entry.nodeId;
-    const handshakePath = join(dir, "nodes", nd, "handshake.json");
+    const handshakePath = nodeHandshakePath(dir, nd);
     executedPath.push(nd);
 
     if (!existsSync(handshakePath)) {
@@ -684,7 +700,7 @@ export function cmdValidateChain(args) {
         .filter((d) => d.isDirectory())
         .map((d) => d.name);
       for (const nd of nodeDirs) {
-        const hp = join(nodesDir, nd, "handshake.json");
+        const hp = nodeHandshakePath(dir, nd);
         if (existsSync(hp)) {
           try {
             const data = JSON.parse(readFileSync(hp, "utf8"));

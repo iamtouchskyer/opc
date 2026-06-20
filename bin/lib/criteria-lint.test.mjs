@@ -36,8 +36,8 @@ describe("runLint — structural checks", () => {
     assert.ok(r.failures.find((f) => f.check === "outcomes-count").message.includes("2"));
   });
 
-  test("outcomes-count fails with 8 outcomes", () => {
-    const outs = Array.from({ length: 8 }, (_, i) =>
+  test("outcomes-count fails with 11 outcomes", () => {
+    const outs = Array.from({ length: 11 }, (_, i) =>
       `- OUT-${i + 1}: Outcome number ${i + 1} returns status code ${200 + i}`
     );
     const ver = outs.map((o) => {
@@ -46,11 +46,20 @@ describe("runLint — structural checks", () => {
     }).join("\n");
     const r = runLint(validDoc({ outcomes: outs, verification: ver }));
     assert.ok(failChecks(r).includes("outcomes-count"));
+    assert.ok(r.failures.find((f) => f.check === "outcomes-count").message.includes("3-10"));
   });
 
-  test("outcomes-count passes with 3-7 outcomes", () => {
+  test("outcomes-count passes with 3-10 outcomes", () => {
     const r = runLint(validDoc());
     assert.ok(!failChecks(r).includes("outcomes-count"));
+  });
+
+  test("structural failures include expected format hint", () => {
+    const text = "## Outcomes\n- OUT-1: a\n- OUT-2: b\n- OUT-3: c\n## Verification\nOUT-1 OUT-2 OUT-3\n## Out of Scope\n- x";
+    const r = runLint(text);
+    const f = r.failures.find((failure) => failure.check === "quality-section");
+    assert.ok(f.message.includes("## Quality Constraints"));
+    assert.ok(f.message.includes("Expected sections"));
   });
 
   test("verification-exists fails when missing", () => {

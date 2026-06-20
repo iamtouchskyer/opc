@@ -46,7 +46,7 @@ The first agent acts as facilitator. Read all Round 1 outputs + Round 2 diffs.
 2. **Resolved disagreements** — how conflicts were settled (with rationale)
 3. **Unresolved disagreements** — what remains open (with recommendation)
 4. **Final decision** — the concrete plan going forward
-5. **Acceptance criteria** — 3-7 testable bullet points for downstream nodes
+5. **Acceptance criteria** — 3-10 testable bullet points for downstream nodes
 
 Write to: `$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/decision.md`
 

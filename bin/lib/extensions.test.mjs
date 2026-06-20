@@ -86,6 +86,24 @@ describe("loadExtensions", () => {
     assert.equal(registry.extensions[0].enabled, true);
   });
 
+  test("ext.json version is merged into loaded meta", async () => {
+    const extDir = join(tmpBase, "extensions");
+    const alphaDir = join(extDir, "alpha");
+    writeExtension(alphaDir, `export const meta = { provides: ["design-system-injection@1"] };`);
+    writeFileSync(join(alphaDir, "ext.json"), JSON.stringify({ version: "2.3.4" }), "utf8");
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    assert.equal(registry.extensions[0].meta.version, "2.3.4");
+  });
+
+  test("hook meta version overrides ext.json version", async () => {
+    const extDir = join(tmpBase, "extensions");
+    const alphaDir = join(extDir, "alpha");
+    writeExtension(alphaDir, `export const meta = { version: "9.9.9", provides: [] };`);
+    writeFileSync(join(alphaDir, "ext.json"), JSON.stringify({ version: "2.3.4" }), "utf8");
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    assert.equal(registry.extensions[0].meta.version, "9.9.9");
+  });
+
   test("skips .git directory silently (no warn, no crash)", async () => {
     const extDir = join(tmpBase, "extensions");
     // Simulate a git clone — .git/ exists with random files inside

@@ -2,7 +2,7 @@
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker), util.mjs
 
 import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
@@ -21,7 +21,7 @@ import { checkEvalDistinctness } from "./eval-parser.mjs";
 import { runBriefLint } from "./brief-lint.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
-import { readTaskFromAC } from "./ext-commands.mjs";
+import { readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -478,12 +478,28 @@ export function validateHandshakeData(data, opts = {}) {
   return { errors, warnings };
 }
 
+function resolveHandshakeForValidate(file) {
+  const direct = resolve(file);
+  if (existsSync(direct)) return direct;
+  if (basename(direct) !== "handshake.json") return direct;
+  const latestRun = findLatestRunDir(dirname(direct));
+  const fallback = latestRun ? join(latestRun, "handshake.json") : null;
+  return fallback && existsSync(fallback) ? fallback : direct;
+}
+
+function harnessDirForHandshake(file) {
+  const dir = dirname(resolve(file));
+  if (/^run_\d+$/.test(basename(dir))) return dirname(dirname(dirname(dir)));
+  return dirname(dirname(dir));
+}
+
 export function cmdValidate(args) {
-  const file = args[0];
-  if (!file) {
+  const inputFile = args[0];
+  if (!inputFile) {
     console.error("Usage: opc-harness validate <handshake.json>");
     process.exit(1);
   }
+  const file = resolveHandshakeForValidate(inputFile);
 
   let data;
   try {
@@ -496,7 +512,7 @@ export function cmdValidate(args) {
   let soft = false;
   let tier = null;
   try {
-    const harnessDir = dirname(dirname(dirname(file)));
+    const harnessDir = harnessDirForHandshake(file);
     const statePath = join(harnessDir, "flow-state.json");
     if (existsSync(statePath)) {
       const state = JSON.parse(readFileSync(statePath, "utf8"));

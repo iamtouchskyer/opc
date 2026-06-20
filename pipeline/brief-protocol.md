@@ -18,6 +18,11 @@ opc-harness prompt-context --node {NODE_ID} --role architect --dir {HARNESS_DIR}
 ```
 Append the returned `append` string to your working context. Record `applied[]` in the handshake under `extensionsApplied`.
 
+When Design Intelligence is active, node preflight may have already written
+`design-mode.json`, `design-brief.md`, or `design-tokens.json` in the session
+directory. Use those files to make design decisions concrete in
+`build-brief.md`; do not merely mention that DI was applied.
+
 ## Brief Structure
 
 Your output is `build-brief.md`. It MUST contain these sections. The mechanical linter (`opc-harness brief-lint`) gates your output — if it fails, the brief cannot proceed to build.

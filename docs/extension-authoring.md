@@ -236,10 +236,11 @@ failure records, and artifact subdir `ext-<name>/`).
 }
 ```
 
-`ext.json` is **descriptive only** — the loader reads `meta` from your
-`hook.mjs` exports, not from JSON. `ext.json` exists so humans (and package
-indexes) can see what the extension does without eval'ing JS. Keep `meta`
-here in sync with `hook.mjs` as a matter of discipline.
+`ext.json` is the static manifest. The loader still imports `hook.mjs` for
+hooks and runtime `meta`, but it also reads `ext.json` to populate missing
+static fields such as `meta.version`, `meta.description`, and manifest `meta`
+defaults. `hook.mjs` wins on conflicts because it is the executable contract.
+Keep manifest `meta` in sync with `hook.mjs` as a matter of discipline.
 
 In particular, `name` in `ext.json` is **purely cosmetic** — the directory
 name always wins (§3.1). The `_starter/` template omits `name` deliberately
@@ -465,14 +466,32 @@ don't cargo-cult from other examples.
 
 | Capability string               | Emitted by (built-in node)                        | Phase        |
 |---------------------------------|---------------------------------------------------|--------------|
+| `design-system-injection@1`     | `build-verify.brief`, `build-verify.build`, `full-stack.brief`, `full-stack.build` | prompt/preflight |
+| `design-spec-conformance@1`     | `build-verify.brief`, `full-stack.brief`          | review       |
+| `design-preflight@1`            | `build-verify.brief`, `full-stack.brief`          | preflight    |
 | `code-quality-check@1`          | `build-verify.code-review`, `full-stack.code-review` | review    |
-| `visual-consistency-check@1`    | `code-review`, `acceptance` nodes                 | review       |
+| `visual-consistency-check@1`    | `code-review`, `test-execute`, `acceptance` nodes | review/execute |
 | `user-simulation@1`             | `acceptance`, `e2e-user`, `post-launch-sim`       | review/execute |
 | `security-check@1`              | `audit`                                           | review       |
 | `a11y-check@1`                  | `audit`                                           | review       |
 | `verification@1`                | generic verification slot (widely used by examples) | review     |
 | `design-review@1`               | generic design-review slot                        | review       |
 | `execute@1`                     | generic executor slot                             | execute      |
+
+### 4.8 Design Intelligence lifecycle
+
+The stock `build-verify` and `full-stack` templates route the
+`design-intelligence` extension through the brief/build/review/execute chain:
+
+- `design-preflight@1` runs on the `brief` node before prompt assembly and may
+  write session-level sidecars such as `design-mode.json`, `design-brief.md`,
+  and `design-tokens.json`.
+- `design-system-injection@1` runs during `prompt-context`; its append string
+  is prompt context, and `applied[]` must be copied into the node handshake as
+  `extensionsApplied`.
+- `design-spec-conformance@1` and `visual-consistency-check@1` produce
+  structured review/execute evidence. Downstream gates consume the sidecars,
+  not a human memory that DI was "used".
 | `context-enrichment@1`          | any node the flow stamps with it                  | prompt       |
 
 Also widely used by the `examples/extensions/*` set as a "match all three

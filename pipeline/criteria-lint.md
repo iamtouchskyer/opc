@@ -27,7 +27,7 @@ The lint runs after the orchestrator drafts `acceptance-criteria.md` and BEFORE 
 | Check | Rule | Failure message |
 |---|---|---|
 | `outcomes-exist` | `## Outcomes` section exists with >=1 `OUT-N:` prefixed bullet | "No outcomes section or no OUT-N bullets found" |
-| `outcomes-count` | 3-7 `OUT-N:` bullets | "Found {N} outcomes — must be 3-7" |
+| `outcomes-count` | 3-10 `OUT-N:` bullets | "Found {N} outcomes — must be 3-10" |
 | `verification-exists` | `## Verification` section exists | "No verification section" |
 | `verification-mapped` | Every `OUT-N` referenced in Verification section | "OUT-{N} has no verification method" |
 | `quality-section` | `## Quality Constraints` section exists (can be empty list) | "No quality constraints section" |

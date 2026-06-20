@@ -140,6 +140,11 @@ declarations) + `hook.mjs` exporting any of `promptAppend` / `verdictAppend`
 sandboxed via per-extension timeouts + circuit breakers, so a broken
 third-party extension can't take down the harness.
 
+`ext.json.version` is recorded in `flow-state.json → extensionVersions` during
+`init`, so protocol reports can distinguish "extension loaded" from "unknown
+version". Executable hook metadata from `hook.mjs` still wins for runtime
+capability behavior.
+
 The companion repo **[opc-extensions](https://github.com/iamtouchskyer/opc-extensions)** ships 4 extensions: `design-intelligence` (theme injection + design coverage + VLM visual eval), `git-changeset-review`, `memex-recall`, and `session-logex`.
 
 Full authoring guide: **[docs/extension-authoring.md](docs/extension-authoring.md)** — zero-OPC-context

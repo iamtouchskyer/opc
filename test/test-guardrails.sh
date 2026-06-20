@@ -241,6 +241,21 @@ else
   echo "  ❌ transition should refuse (got: $TRANS)"; FAIL=$((FAIL+1))
 fi
 
+echo "--- 2.2b: test-design mandatory role error explains skeptic-owner scope ---"
+DIR=$(mktemp -d)
+cd "$DIR"
+$HARNESS init --flow build-verify --entry test-design --dir .harness 2>/dev/null
+write_good_eval .harness test-design tester
+write_good_eval .harness test-design engineer
+write_complete_test_plan .harness/nodes/test-design/test-plan.md
+write_handshake .harness test-design "Test design done" "PASS"
+TRANS=$($HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
+if echo "$TRANS" | grep -q "reviews test plan completeness"; then
+  echo "  ✅ test-design mandatory role error has context"; PASS=$((PASS+1))
+else
+  echo "  ❌ missing test-design mandatory role context (got: $TRANS)"; FAIL=$((FAIL+1))
+fi
+
 # Test 7: transition from review with ALL unknown roles — mandatory check skipped (no known role overlap)
 echo "--- 2.3: transition allowed with all-unknown roles (no enforcement) ---"
 DIR=$(mktemp -d)

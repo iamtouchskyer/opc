@@ -54,6 +54,7 @@ const MANUAL_ONLY = /\b(manual inspection|code review|looks correct|it should be
 // ── Pipeline E2E trigger detection ────────────────────────────
 const PIPELINE_KEYWORDS = /\b(pipeline|cron|webhook|ci\/?cd|deploy|end-to-end|integration|automated trigger)\b/i;
 const E2E_TRIGGER_PHRASES = /\b(live trigger|end-to-end trigger|e2e trigger|live verification|live-trigger|e2e-trigger|upstream.*trigger|trigger.*downstream)\b/i;
+const FORMAT_HINT = "Expected sections: ## Outcomes with - OUT-N bullets, ## Verification mapping each OUT-N, ## Quality Constraints, ## Out of Scope.";
 
 // ── Run all checks ─────────────────────────────────────────────
 export function runLint(text, tier) {
@@ -72,22 +73,22 @@ export function runLint(text, tier) {
   checksRun++;
   const outcomesSection = sections["Outcomes"];
   if (outcomesSection === undefined) {
-    fail("outcomes-exist", "No outcomes section or no OUT-N bullets found");
+    fail("outcomes-exist", `No outcomes section or no OUT-N bullets found. ${FORMAT_HINT}`);
   }
 
   const outcomes = outcomesSection ? extractOutcomes(outcomesSection) : [];
 
   // 2. outcomes-count
   checksRun++;
-  if (outcomesSection && (outcomes.length < 3 || outcomes.length > 7)) {
-    fail("outcomes-count", `Found ${outcomes.length} outcomes — must be 3-7`);
+  if (outcomesSection && (outcomes.length < 3 || outcomes.length > 10)) {
+    fail("outcomes-count", `Found ${outcomes.length} outcomes — must be 3-10. ${FORMAT_HINT}`);
   }
 
   // 3. verification-exists
   checksRun++;
   const verificationSection = sections["Verification"];
   if (verificationSection === undefined) {
-    fail("verification-exists", "No verification section");
+    fail("verification-exists", `No verification section. ${FORMAT_HINT}`);
   }
 
   // 4. verification-mapped
@@ -103,13 +104,13 @@ export function runLint(text, tier) {
   // 5. quality-section
   checksRun++;
   if (sections["Quality Constraints"] === undefined) {
-    fail("quality-section", "No quality constraints section");
+    fail("quality-section", `No quality constraints section. Use exact heading: ## Quality Constraints. ${FORMAT_HINT}`);
   }
 
   // 6. scope-section
   checksRun++;
   if (sections["Out of Scope"] === undefined) {
-    fail("scope-section", "No out-of-scope section");
+    fail("scope-section", `No out-of-scope section. ${FORMAT_HINT}`);
   }
 
   // 7. tier-section

@@ -532,6 +532,31 @@ function warnMissingNodeCapsOnce(registry, context) {
   registry._warnedMissingCaps = true;
 }
 
+function readExtensionManifest(extDir) {
+  const manifestPath = join(extDir, "ext.json");
+  if (!existsSync(manifestPath)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (err) {
+    console.error(`WARN: could not read extension manifest ${manifestPath}: ${err.message}`);
+    return {};
+  }
+}
+
+function mergeManifestMeta(hookMeta, manifest) {
+  const manifestMeta = manifest.meta && typeof manifest.meta === "object" && !Array.isArray(manifest.meta) ? manifest.meta : {};
+  const runtimeMeta = hookMeta && typeof hookMeta === "object" && !Array.isArray(hookMeta) ? hookMeta : {};
+  const meta = { ...manifestMeta, ...runtimeMeta };
+  if (meta.version === undefined && manifest.version !== undefined) {
+    meta.version = manifest.version;
+  }
+  if (meta.description === undefined && manifest.description !== undefined) {
+    meta.description = manifest.description;
+  }
+  return meta;
+}
+
 // ─── loadExtensions ──────────────────────────────────────────────
 
 /**
@@ -622,9 +647,11 @@ export async function loadExtensions(config = {}) {
 
     const raw = mod.default || mod;
     const hook = normalizeHook(raw, mod);
+    const manifest = readExtensionManifest(extDir);
 
     // Read meta — supports named `export const meta` or `default.meta`
-    const meta = mod.meta || (mod.default && mod.default.meta) || {};
+    const hookMeta = mod.meta || (mod.default && mod.default.meta) || {};
+    const meta = mergeManifestMeta(hookMeta, manifest);
 
     // Validate meta.provides shape (capability contract)
     let provides = meta.provides;

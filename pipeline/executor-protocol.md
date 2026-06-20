@@ -59,6 +59,12 @@ The implement tick that builds the app SHOULD leave the dev server running in ba
 
 Read from upstream handshake summary and `$SESSION_DIR/progress.md`. Each acceptance criterion becomes a test scenario.
 
+If Design Intelligence sidecars are present (`design-brief.md`,
+`design-tokens.json`, `design-mode.json`), read them for expected visual and
+interaction constraints. They are not execution evidence by themselves; you
+still need runtime screenshots, CLI output, or test results from the built
+product.
+
 ### Step 3 — Execute Scenarios
 
 For each acceptance criterion:

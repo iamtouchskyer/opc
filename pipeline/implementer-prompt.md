@@ -16,6 +16,12 @@ opc-harness prompt-context --node {NODE_ID} --role implementer --dir {HARNESS_DI
 ```
 Append the returned `append` string to your working context. Record `applied[]` in the handshake under `extensionsApplied`.
 
+If Design Intelligence is active, also read the session-level sidecars it
+created during preflight/prompt injection when present:
+`design-brief.md`, `design-tokens.json`, and `design-mode.json`. Treat them as
+resolved design constraints, not suggestions. The build brief remains the
+primary specification when there is any conflict.
+
 ## Mode
 
 {one of the following — delete the others}
