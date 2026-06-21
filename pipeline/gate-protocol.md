@@ -137,7 +137,7 @@ Always inform the user of the gate outcome:
 ## Anti-Patterns
 
 - ❌ Overriding the synthesized verdict with your own judgment
-- ❌ Determining the next node by reading skill.md tables — use `opc-harness route`
+- ❌ Determining the next node by reading SKILL.md tables — use `opc-harness route`
 - ❌ Writing gate handshake.json manually — `transition` does this
 - ❌ Continuing after `allowed: false` without user consent
 - ❌ "Acknowledging" a 🟡 finding without writing it to backlog.md — this is how findings get lost

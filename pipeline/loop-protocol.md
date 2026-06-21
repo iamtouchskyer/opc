@@ -171,7 +171,7 @@ The `verify:` line tells the implement tick what to run. The `eval:` line tells 
 
 ### Step 1.5 — Definition of Done (Pre-Flight)
 
-Before writing plan.md, establish a global definition of done. Follow the "Definition of Done — Mandatory Pre-Flight" section in skill.md. The three questions (what does done look like, how to verify, how to evaluate) must be answered and written to `$SESSION_DIR/acceptance-criteria.md`.
+Before writing plan.md, establish a global definition of done. Follow the "Definition of Done — Mandatory Pre-Flight" section in SKILL.md. The three questions (what does done look like, how to verify, how to evaluate) must be answered and written to `$SESSION_DIR/acceptance-criteria.md`.
 
 Per-unit verify/eval lines in plan.md are derived from these global criteria.
 
@@ -334,7 +334,7 @@ If the same unit appears in 3 consecutive ticks → stop the loop, surface to us
 ### Step 9 — Context Resilience
 
 Each tick prompt MUST be self-contained. After context compaction, the orchestrator loses:
-- skill.md procedural instructions
+- SKILL.md procedural instructions
 - CLAUDE.md project conventions  
 - Review independence requirements
 - Backlog management rules
@@ -357,7 +357,7 @@ The cron job should schedule this prompt (adapt paths to project):
 ```
 Read $SESSION_DIR/loop-state.json and $SESSION_DIR/plan.md.
 Read $SESSION_DIR/acceptance-criteria.md for the definition of done.
-Re-read the full loop-protocol.md and skill.md protocols — do NOT rely on memory from previous ticks.
+Re-read the full loop-protocol.md and SKILL.md protocols — do NOT rely on memory from previous ticks.
 Find the current unit's verify: and eval: lines in plan.md — these tell you HOW to verify this specific unit.
 Key rules to re-verify each tick:
   - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)

@@ -39,7 +39,7 @@ Action required:
 1. Run \`opc-harness ls\` to confirm flow state
 2. Read \`$DIR/acceptance-criteria.md\` for the definition of done
 3. Resume executing node **$NODE** in the **$FLOW** flow
-4. Re-read skill.md and the relevant protocol for this node type — do NOT rely on pre-compaction memory"
+4. Re-read SKILL.md and the relevant protocol for this node type — do NOT rely on pre-compaction memory"
 
 # If resume-brief.md exists (written by PreCompact), append it
 BRIEF="$DIR/resume-brief.md"

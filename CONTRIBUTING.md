@@ -147,15 +147,15 @@ Add it to `.opc/config.json` (repo-layer) or `~/.opc/config.json` (user-layer):
 
 Disable temporarily via `disabledExtensions: ["my-ext"]` at any layer.
 
-## Improving skill.md
+## Improving SKILL.md
 
-The coordinator logic lives in `skill.md`. Changes here affect all users, so please:
+The coordinator logic lives in `SKILL.md`. Changes here affect all users, so please:
 1. Open an issue first to discuss the change
 2. Explain the problem with a concrete example
-3. Keep it concise — every line in skill.md costs tokens
+3. Keep it concise — every line in SKILL.md costs tokens
 
 ## Style
 
 - Role files: ~20-30 lines. Concise expertise bullets, clear triggers.
-- skill.md: Minimal viable instructions. The coordinator is an LLM — it can fill in gaps. Don't over-specify.
+- SKILL.md: Minimal viable instructions. The coordinator is an LLM — it can fill in gaps. Don't over-specify.
 - README: Developer-facing. No marketing fluff.
