@@ -21,6 +21,13 @@ const TEMPLATE = {
   },
 };
 
+const EXEC_TEMPLATE = {
+  nodeTypes: {
+    "test-execute": "execute",
+    gate: "gate",
+  },
+};
+
 // Minimal flow state: build → code-review → gate
 function makeState() {
   return {
@@ -29,6 +36,17 @@ function makeState() {
     history: [
       { nodeId: "build", runId: "run_1" },
       { nodeId: "code-review", runId: "run_1" },
+      { nodeId: "gate", runId: "run_1" },
+    ],
+  };
+}
+
+function makeExecState() {
+  return {
+    flowTemplate: "build-verify",
+    currentNode: "gate",
+    history: [
+      { nodeId: "test-execute", runId: "run_1" },
       { nodeId: "gate", runId: "run_1" },
     ],
   };
@@ -180,6 +198,81 @@ describe("checkStructuredResults — Step 1.5", () => {
     });
     const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
     assert.ok(reasons.some(r => r.includes("3 test(s) failed")));
+  });
+
+  test("checks[].pass=false → FAIL", () => {
+    const dir = setupDir("t8b-checks-fail", {
+      build: {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { checks: [{ id: "OUT-real", pass: false, detail: "broken" }] },
+        }],
+      },
+      "code-review": { artifacts: [] },
+    });
+    const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("structured check(s) failed")));
+  });
+
+  test("checks[] total=0 pass is vacuous → FAIL", () => {
+    const dir = setupDir("t8c-vacuous-check", {
+      build: {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { checks: [{ id: "OUT-star-aria", pass: true, detail: { total: 0, withal: 0 } }] },
+        }],
+      },
+      "code-review": { artifacts: [] },
+    });
+    const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("vacuous PASS")));
+    assert.ok(reasons.some(r => r.includes("OUT-star-aria")));
+  });
+
+  test("checks[] total=0 can be explicitly allowed", () => {
+    const dir = setupDir("t8d-vacuous-allowed", {
+      build: {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { checks: [{ id: "OUT-empty-state", pass: true, allowVacuous: true, detail: { total: 0 } }] },
+        }],
+      },
+      "code-review": { artifacts: [] },
+    });
+    const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
+    assert.equal(reasons.some(r => r.includes("vacuous PASS")), false);
+  });
+
+  test("test-execute checks without testCommand provenance → FAIL", () => {
+    const dir = setupDir("t8e-self-authored-checks", {
+      "test-execute": {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }] },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("lack OPC testCommand provenance")));
+  });
+
+  test("test-execute checks with testCommand provenance pass", () => {
+    const dir = setupDir("t8f-command-provenance", {
+      "test-execute": {
+        testEvidenceProvenance: { kind: "opc-test-command", commandHash: "abc123" },
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }] },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.equal(reasons.some(r => r.includes("lack OPC testCommand provenance")), false);
   });
 
   test("artifact type=screenshot → ignored (PASS)", () => {

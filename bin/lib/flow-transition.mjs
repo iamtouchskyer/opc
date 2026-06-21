@@ -23,6 +23,7 @@ import { executeTestCommand } from "./test-command-execution.mjs";
 import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
 import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
 import { readCumulativeFindingsAppend, writeCumulativeFindings } from "./cumulative-findings.mjs";
+import { collectTestResultReasons } from "./test-result-gate.mjs";
 
 function nodeHandshakePath(dir, nodeId) {
   const nodeDir = join(dir, "nodes", nodeId);
@@ -92,15 +93,11 @@ export function checkStructuredResults(dir, state, template, currentNode) {
         structuredFailReasons.push(`artifact ${art.path} unreadable — fail-closed`);
         continue;
       }
-      const safeInt = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
-      if (safeInt(data.test_fail_count) > 0)
-        structuredFailReasons.push(`${safeInt(data.test_fail_count)} test(s) failed`);
-      if (safeInt(data.dead_test_count) > 0)
-        structuredFailReasons.push(`${safeInt(data.dead_test_count)} dead test(s) detected`);
-      if (safeInt(data.p0_count) > 0)
-        structuredFailReasons.push(`${safeInt(data.p0_count)} P0 issue(s) unresolved`);
-      if (String(data.sync_check_status || "").toUpperCase() === "FAIL")
-        structuredFailReasons.push("sync-check failed");
+      structuredFailReasons.push(...collectTestResultReasons(data, {
+        handshake: hs,
+        nodeId: entry.nodeId,
+        artifact: art,
+      }));
     }
   }
   return structuredFailReasons;

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { spawnSync } from "child_process";
+import { createHash } from "crypto";
 import { join, resolve } from "path";
 
 function readJson(path) {
@@ -26,6 +27,10 @@ function commandSpecFrom(data) {
     cwd: typeof data.cwd === "string" && data.cwd ? data.cwd : null,
     timeoutMs: Number.isInteger(data.timeoutMs) ? data.timeoutMs : 120000,
   };
+}
+
+function commandHash(command) {
+  return createHash("sha256").update(command).digest("hex");
 }
 
 export function loadTestCommandSpec(sessionDir, nodeId) {
@@ -63,6 +68,10 @@ function writeResultFiles(runDir, spec, result, cwd) {
     testCommand: spec.testCommand,
     prerequisites: spec.prerequisites,
     cwd,
+    provenance: {
+      kind: "opc-test-command",
+      commandHash: commandHash(spec.testCommand),
+    },
     exitCode,
     timedOut: Boolean(result.error && result.error.code === "ETIMEDOUT"),
     stdout,
@@ -99,6 +108,11 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
   const result = runTestCommand(spec, cwd);
   const summary = writeResultFiles(runDir, spec, result, cwd);
   const verdict = summary.exitCode === 0 ? "PASS" : "FAIL";
+  const testEvidenceProvenance = {
+    kind: "opc-test-command",
+    sourceNode,
+    commandHash: commandHash(spec.testCommand),
+  };
   const handshake = {
     nodeId: targetNode,
     nodeType: "execute",
@@ -113,6 +127,7 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
     ],
     testCommand: spec.testCommand,
     prerequisites: spec.prerequisites,
+    testEvidenceProvenance,
   };
   writeFileSync(join(sessionDir, "nodes", targetNode, "handshake.json"), JSON.stringify(handshake, null, 2) + "\n");
   return { executed: true, verdict, exitCode: summary.exitCode, resultPath: join(runDir, "test-command-result.json") };

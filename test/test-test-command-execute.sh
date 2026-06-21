@@ -79,6 +79,15 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json; then
+  echo "  ✅ testCommand evidence records OPC provenance"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ testCommand evidence missing OPC provenance"
+  FAIL=$((FAIL + 1))
+fi
+
 $HARNESS init --flow build-verify --entry test-design --dir .harness-fail >/dev/null 2>/dev/null
 write_test_design_handshake .harness-fail "node -e \"process.exit(7)\""
 $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness-fail >/dev/null 2>/dev/null
