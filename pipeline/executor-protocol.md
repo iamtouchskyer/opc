@@ -115,7 +115,8 @@ For each acceptance criterion:
 ## Verdict Rules
 
 - All scenarios PASS → verdict: PASS
-- Any scenario FAIL with workaround → verdict: ITERATE
+- Any scenario FAIL that is fixable by a trivial implementation change → verdict: ITERATE
+  and route to `hotfix`; do not edit product code in `test-execute`.
 - Any scenario FAIL blocking core flow → verdict: FAIL
 - Tool unavailable → status: blocked (not a verdict)
 

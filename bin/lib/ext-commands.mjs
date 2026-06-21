@@ -182,7 +182,9 @@ export async function cmdPromptContext(args) {
 
 export async function cmdExtensionTest(args) {
   if (args.includes("--help")) {
-    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--all-hooks] [--fixture-dir <path>] [--lint] [--lint-strict]");
+    console.error("Usage: opc-harness extension-test --ext <path> [--hook <hookname>] [--context <json>] [--dev-server <url>] [--all-hooks] [--fixture-dir <path>] [--lint] [--lint-strict]");
+    console.error("  --dev-server <url>  Shorthand for --context '{\"devServerUrl\":\"<url>\"}'.");
+    console.error("                        Overrides context.devServerUrl when both are set.");
     console.error("  --fixture-dir <path>  Copy fixture dir to a fresh tmpdir and set ctx.flowDir/ctx.runDir to it.");
     console.error("                        Symlinks are dereferenced to prevent sandbox escape. The tmpdir is");
     console.error("                        cleaned up on every exit path (success, error, lint-only).");
@@ -199,7 +201,7 @@ export async function cmdExtensionTest(args) {
   // `--fixture-dir`). Previously getFlag silently ignored these, causing
   // fixture-dir typos to write into the user's repo. Fail loudly instead.
   const KNOWN_FLAGS = new Set([
-    "--ext", "--hook", "--context", "--all-hooks", "--fixture-dir",
+    "--ext", "--hook", "--context", "--dev-server", "--all-hooks", "--fixture-dir",
     "--lint", "--lint-strict", "--help",
   ]);
   for (const a of args) {
@@ -215,6 +217,7 @@ export async function cmdExtensionTest(args) {
   const extPath = getFlag(args, "ext");
   const hookName = getFlag(args, "hook");
   const contextJson = getFlag(args, "context", "{}");
+  const devServerUrl = getFlag(args, "dev-server");
   const allHooks = args.includes("--all-hooks");
   const fixtureDir = getFlag(args, "fixture-dir");
   const lintOnly = args.includes("--lint") || args.includes("--lint-strict");
@@ -247,6 +250,7 @@ export async function cmdExtensionTest(args) {
       exitCode = 1;
       return;
     }
+    if (devServerUrl) context.devServerUrl = devServerUrl;
 
     // F3: --fixture-dir copies the given dir into a fresh mkdtemp() dir and
     // rewrites ctx.flowDir + ctx.runDir. Override precedence: fixture-dir

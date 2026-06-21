@@ -32,17 +32,18 @@ export const FLOW_TEMPLATES = {
     nodeTypes: { review: "review", gate: "gate" },
   },
   "build-verify": {
-    nodes: ["brief", "build", "code-review", "test-design", "test-execute", "gate"],
+    nodes: ["brief", "build", "code-review", "test-design", "test-execute", "hotfix", "gate"],
     edges: {
       brief:           { PASS: "build" },
       build:           { PASS: "code-review" },
       "code-review":   { PASS: "test-design", FAIL: "build", ITERATE: "build" },
       "test-design":   { PASS: "test-execute" },
-      "test-execute":  { PASS: "gate" },
+      "test-execute":  { PASS: "gate", ITERATE: "hotfix" },
+      hotfix:          { PASS: "test-execute", FAIL: "brief", ITERATE: "build" },
       gate:            { PASS: null, FAIL: "brief", ITERATE: "brief" },
     },
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 25, maxNodeReentry: 5 },
-    nodeTypes: { brief: "brief", build: "build", "code-review": "review", "test-design": "review", "test-execute": "execute", gate: "gate" },
+    nodeTypes: { brief: "brief", build: "build", "code-review": "review", "test-design": "review", "test-execute": "execute", hotfix: "hotfix", gate: "gate" },
     // Capability contract: what specialist expertise each node requests.
     // Extensions with matching `provides` are auto-activated.
     nodeCapabilities: {
@@ -64,7 +65,7 @@ export const FLOW_TEMPLATES = {
   },
   "full-stack": {
     nodes: [
-      "discuss", "brief", "build", "code-review", "test-design", "test-execute", "gate-test",
+      "discuss", "brief", "build", "code-review", "test-design", "test-execute", "hotfix", "gate-test",
       "acceptance", "gate-acceptance",
       "audit", "gate-audit",
       "e2e-user", "gate-e2e",
@@ -76,7 +77,8 @@ export const FLOW_TEMPLATES = {
       build:               { PASS: "code-review" },
       "code-review":       { PASS: "test-design", FAIL: "build", ITERATE: "build" },
       "test-design":       { PASS: "test-execute" },
-      "test-execute":      { PASS: "gate-test" },
+      "test-execute":      { PASS: "gate-test", ITERATE: "hotfix" },
+      hotfix:              { PASS: "test-execute", FAIL: "brief", ITERATE: "build" },
       "gate-test":         { PASS: "acceptance", FAIL: "brief", ITERATE: "brief" },
       acceptance:          { PASS: "gate-acceptance" },
       "gate-acceptance":   { PASS: "audit", FAIL: "brief", ITERATE: "acceptance" },
@@ -90,7 +92,7 @@ export const FLOW_TEMPLATES = {
     limits: { maxLoopsPerEdge: 3, maxTotalSteps: 35, maxNodeReentry: 5 },
     nodeTypes: {
       discuss: "discussion", brief: "brief", build: "build", "code-review": "review",
-      "test-design": "review", "test-execute": "execute",
+      "test-design": "review", "test-execute": "execute", hotfix: "hotfix",
       "gate-test": "gate", acceptance: "review", "gate-acceptance": "gate",
       audit: "review", "gate-audit": "gate", "e2e-user": "execute", "gate-e2e": "gate",
       "post-launch-sim": "execute", "gate-final": "gate",

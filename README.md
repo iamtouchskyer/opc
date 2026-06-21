@@ -114,7 +114,7 @@ For well-scoped tasks, the system runs **10+ hours continuously** without interv
 |----------|-------|------|
 | **quick** | build → review → gate | "quick fix", "small change", one-liner, ≤3 files, **non-UI, no logic branches** |
 | **review** | code-review → gate | PR review, audit, "find problems" |
-| **build-verify** | brief → build → code-review → test-design → test-execute → gate | "implement X", "fix bug Y" |
+| **build-verify** | brief → build → code-review → test-design → test-execute; ITERATE → hotfix → test-execute; PASS → gate | "implement X", "fix bug Y" |
 | **full-stack** | discuss → build → review → test → acceptance → audit → e2e → gates | Complex/vague requests |
 | **pre-release** | acceptance → audit → e2e → gates | "verify before release" |
 

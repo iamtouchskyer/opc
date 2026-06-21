@@ -547,8 +547,9 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
 
   let testCommandExecution = null;
   const toNodeType = template.nodeTypes?.[to] || null;
-  if (toNodeType === "execute" && /^test[-_]design$/.test(from) && /^test[-_]execute$/.test(to)) {
-    testCommandExecution = executeTestCommand(dir, to, runId, from);
+  if (toNodeType === "execute" && /^test[-_]execute$/.test(to) && (/^test[-_]design$/.test(from) || /^hotfix$/.test(from))) {
+    const testSpecNode = /^hotfix$/.test(from) ? "test-design" : from;
+    testCommandExecution = executeTestCommand(dir, to, runId, testSpecNode);
   }
 
   // Print live flow viz to stderr

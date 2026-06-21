@@ -76,7 +76,7 @@ switch (command) {
     console.log("                                                     Get next node from graph");
     console.log("  transition --from <n> --to <n> --verdict <V> --flow <tpl> [--flow-file <p>] --dir <p>");
     console.log("                                                     Execute state transition");
-    console.log("  validate <handshake.json>                          Validate handshake schema");
+    console.log("  validate [handshake.json] [--dir <p>]              Validate handshake schema; no path = current node in latest session");
     console.log("  validate-chain [--dir <p>]                         Validate entire execution path");
     console.log("  validate-context --flow <tpl> [--flow-file <p>] --node <id> [--dir <p>]");
     console.log("                                                     Validate flow-context.json");
@@ -118,7 +118,7 @@ switch (command) {
     console.log("  runbook match <task...> [--dir <p>]                Match task to best runbook");
     console.log();
     console.log("Extension commands:");
-    console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--all-hooks] [--fixture-dir <p>] [--lint]");
+    console.log("  extension-test --ext <p> [--hook <name>] [--context <json>] [--dev-server <url>] [--all-hooks] [--fixture-dir <p>] [--lint]");
     console.log("                                                     Dry-run extension hook(s); --fixture-dir seeds ctx.flowDir; --lint runs authoring checks only");
     console.log("  extension-verdict --node <id> --dir <p>            Fire verdict.append → writes eval-extensions.{md,json}");
     console.log("  extension-artifact --node <id> --dir <p>           Fire artifact.emit → writes artifacts/");

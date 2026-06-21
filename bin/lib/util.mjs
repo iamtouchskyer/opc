@@ -9,6 +9,9 @@ import { execSync } from "child_process";
 
 // ── CLI flag parsing ────────────────────────────────────────────
 export function getFlag(args, name, fallback = null) {
+  const eqPrefix = `--${name}=`;
+  const eq = args.find(a => typeof a === "string" && a.startsWith(eqPrefix));
+  if (eq) return eq.slice(eqPrefix.length);
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
 }
@@ -70,7 +73,7 @@ export function atomicWriteSync(filePath, data) {
 }
 
 // ── Shared constants ────────────────────────────────────────────
-export const VALID_NODE_TYPES = new Set(["discussion", "brief", "build", "review", "execute", "gate"]);
+export const VALID_NODE_TYPES = new Set(["discussion", "brief", "build", "review", "execute", "hotfix", "gate"]);
 export const VALID_STATUSES = new Set(["completed", "failed", "blocked"]);
 export const VALID_VERDICTS = new Set(["PASS", "ITERATE", "FAIL", "BLOCKED"]);
 export const EVIDENCE_TYPES = new Set(["test-result", "screenshot", "cli-output"]);

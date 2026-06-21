@@ -1089,7 +1089,7 @@ CI builds fail loud instead of quiet.
 ## 9. `extension-test` CLI reference
 
 ```
-opc-harness extension-test --ext <path> [--hook <hookname>] [--all-hooks] [--context <json>]
+opc-harness extension-test --ext <path> [--hook <hookname>] [--all-hooks] [--context <json>] [--dev-server <url>]
 ```
 
 | Flag            | Type     | Default | Meaning                                                       |
@@ -1098,6 +1098,7 @@ opc-harness extension-test --ext <path> [--hook <hookname>] [--all-hooks] [--con
 | `--hook <name>` | optional | —       | Run a single hook by its kebab name: `prompt.append`, `verdict.append`, `execute.run`, `artifact.emit`, `startup.check`. |
 | `--all-hooks`   | flag     | false   | Run every hook exported by the extension.                     |
 | `--context <json>` | optional | `{}` | JSON string passed as `ctx` to each hook.                     |
+| `--dev-server <url>` | optional | — | Shorthand for `ctx.devServerUrl`; overrides `--context` when both are set. |
 | `--help`        | flag     | —       | Print usage to stderr and exit 0.                             |
 
 **Behavior:**

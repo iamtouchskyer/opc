@@ -322,6 +322,26 @@ export function validateHandshakeData(data, opts = {}) {
     }
   }
 
+  if (data.nodeType === "hotfix" && data.status === "completed") {
+    const h = data.hotfix;
+    if (h == null || typeof h !== "object" || Array.isArray(h)) {
+      errors.push("hotfix node requires hotfix object describing the trivial repair");
+    } else {
+      if (h.scope !== "trivial") {
+        errors.push("hotfix.scope must be 'trivial'");
+      }
+      if (!Array.isArray(h.allowedOperations) || h.allowedOperations.length === 0) {
+        errors.push("hotfix.allowedOperations must list the trivial operation(s) performed");
+      }
+      if (h.structuralChange === true) {
+        errors.push("hotfix.structuralChange must not be true");
+      }
+      if (Array.isArray(h.forbiddenOperations) && h.forbiddenOperations.length > 0) {
+        errors.push("hotfix.forbiddenOperations must be empty");
+      }
+    }
+  }
+
   // ─── Brief node must have build-brief.md + passing lint result ───
   if (data.nodeType === "brief" && data.status === "completed" && !data.skipped && Array.isArray(data.artifacts)) {
     const briefArt = data.artifacts.find(a => a.type === "brief");
@@ -493,13 +513,51 @@ function harnessDirForHandshake(file) {
   return dirname(dirname(dir));
 }
 
-export function cmdValidate(args) {
-  const inputFile = args[0];
-  if (!inputFile) {
-    console.error("Usage: opc-harness validate <handshake.json>");
-    process.exit(1);
+function firstPositionalArg(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("--")) {
+      if (!a.includes("=") && args[i + 1] && !args[i + 1].startsWith("--")) i++;
+      continue;
+    }
+    return a;
   }
-  const file = resolveHandshakeForValidate(inputFile);
+  return null;
+}
+
+function resolveDefaultHandshakeForValidate(args) {
+  const dir = resolveDir(args);
+  const statePath = join(dir, "flow-state.json");
+  if (!existsSync(statePath)) {
+    return { error: "flow-state.json not found" };
+  }
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    return { error: `cannot parse flow-state.json: ${err.message}` };
+  }
+  if (!state.currentNode) {
+    return { error: "flow-state.json has no currentNode" };
+  }
+  return {
+    file: resolveHandshakeForValidate(join(dir, "nodes", state.currentNode, "handshake.json")),
+  };
+}
+
+export function cmdValidate(args) {
+  const inputFile = firstPositionalArg(args);
+  let file;
+  if (!inputFile) {
+    const resolved = resolveDefaultHandshakeForValidate(args);
+    if (resolved.error) {
+      console.log(JSON.stringify({ valid: false, errors: [resolved.error] }));
+      return;
+    }
+    file = resolved.file;
+  } else {
+    file = resolveHandshakeForValidate(inputFile);
+  }
 
   let data;
   try {
