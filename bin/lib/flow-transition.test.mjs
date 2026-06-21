@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { checkStructuredResults } from "./flow-transition.mjs";
 
 const TMPBASE = join(os.homedir(), ".opc", "sessions", `ft-test-${Date.now()}`);
@@ -71,6 +72,10 @@ function setupDir(name, handshakes) {
     }
   }
   return dir;
+}
+
+function sha256(text) {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function writeDiVerdict(dir, nodeId, runId, verdict) {
@@ -231,8 +236,8 @@ describe("checkStructuredResults — Step 1.5", () => {
     assert.ok(reasons.some(r => r.includes("OUT-star-aria")));
   });
 
-  test("checks[] total=0 can be explicitly allowed", () => {
-    const dir = setupDir("t8d-vacuous-allowed", {
+  test("checks[] result-level allowVacuous is ignored", () => {
+    const dir = setupDir("t8d-vacuous-result-allow-ignored", {
       build: {
         artifacts: [{
           type: "test-result",
@@ -243,7 +248,7 @@ describe("checkStructuredResults — Step 1.5", () => {
       "code-review": { artifacts: [] },
     });
     const reasons = checkStructuredResults(dir, makeState(), TEMPLATE, "gate");
-    assert.equal(reasons.some(r => r.includes("vacuous PASS")), false);
+    assert.ok(reasons.some(r => r.includes("vacuous PASS")));
   });
 
   test("test-execute checks without testCommand provenance → FAIL", () => {
@@ -257,22 +262,111 @@ describe("checkStructuredResults — Step 1.5", () => {
       },
     });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
-    assert.ok(reasons.some(r => r.includes("lack OPC testCommand provenance")));
+    assert.ok(reasons.some(r => r.includes("matching OPC testCommand provenance")));
   });
 
-  test("test-execute checks with testCommand provenance pass", () => {
+  test("test-execute checks with matching testCommand provenance pass", () => {
+    const command = "node -e \"process.exit(0)\"";
+    const commandHash = sha256(command);
     const dir = setupDir("t8f-command-provenance", {
+      "test-design": {
+        artifacts: [],
+        testCommand: command,
+      },
       "test-execute": {
-        testEvidenceProvenance: { kind: "opc-test-command", commandHash: "abc123" },
+        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash },
         artifacts: [{
           type: "test-result",
           path: "run_1/test-results.json",
-          _content: { checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }] },
+          _content: {
+            provenance: { kind: "opc-test-command", commandHash },
+            checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+          },
         }],
       },
     });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
-    assert.equal(reasons.some(r => r.includes("lack OPC testCommand provenance")), false);
+    assert.equal(reasons.some(r => r.includes("testCommand provenance")), false);
+  });
+
+  test("test-execute checks with forged result-only provenance → FAIL", () => {
+    const dir = setupDir("t8g-forged-result-provenance", {
+      "test-execute": {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: {
+            provenance: { kind: "opc-test-command", commandHash: "abc123" },
+            checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+          },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("matching OPC testCommand provenance")));
+  });
+
+  test("test-execute test-result without checks still needs command provenance", () => {
+    const dir = setupDir("t8g2-self-authored-zero-tests", {
+      "test-execute": {
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: { test_fail_count: 0, dead_test_count: 0 },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("matching OPC testCommand provenance")));
+  });
+
+  test("test-execute checks with mismatched testCommand hash → FAIL", () => {
+    const command = "node -e \"process.exit(0)\"";
+    const dir = setupDir("t8h-mismatched-command-hash", {
+      "test-design": {
+        artifacts: [],
+        testCommand: command,
+      },
+      "test-execute": {
+        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash: "wrong" },
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: {
+            provenance: { kind: "opc-test-command", commandHash: "wrong" },
+            checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+          },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("matching OPC testCommand provenance")));
+  });
+
+  test("test-design allowVacuousChecks can authorize known empty check", () => {
+    const command = "node -e \"process.exit(0)\"";
+    const commandHash = sha256(command);
+    const dir = setupDir("t8i-test-design-vacuous-policy", {
+      "test-design": {
+        artifacts: [],
+        testCommand: command,
+        allowVacuousChecks: ["OUT-empty-state"],
+      },
+      "test-execute": {
+        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash },
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: {
+            provenance: { kind: "opc-test-command", commandHash },
+            checks: [{ id: "OUT-empty-state", pass: true, detail: { total: 0 } }],
+          },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.equal(reasons.some(r => r.includes("vacuous PASS")), false);
+    assert.equal(reasons.some(r => r.includes("testCommand provenance")), false);
   });
 
   test("artifact type=screenshot → ignored (PASS)", () => {

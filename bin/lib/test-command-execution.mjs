@@ -24,12 +24,13 @@ function commandSpecFrom(data) {
   return {
     testCommand: data.testCommand.trim(),
     prerequisites: Array.isArray(data.prerequisites) ? data.prerequisites : [],
+    allowVacuousChecks: Array.isArray(data.allowVacuousChecks) ? data.allowVacuousChecks : [],
     cwd: typeof data.cwd === "string" && data.cwd ? data.cwd : null,
     timeoutMs: Number.isInteger(data.timeoutMs) ? data.timeoutMs : 120000,
   };
 }
 
-function commandHash(command) {
+export function testCommandHash(command) {
   return createHash("sha256").update(command).digest("hex");
 }
 
@@ -70,7 +71,7 @@ function writeResultFiles(runDir, spec, result, cwd) {
     cwd,
     provenance: {
       kind: "opc-test-command",
-      commandHash: commandHash(spec.testCommand),
+      commandHash: testCommandHash(spec.testCommand),
     },
     exitCode,
     timedOut: Boolean(result.error && result.error.code === "ETIMEDOUT"),
@@ -111,7 +112,7 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
   const testEvidenceProvenance = {
     kind: "opc-test-command",
     sourceNode,
-    commandHash: commandHash(spec.testCommand),
+    commandHash: testCommandHash(spec.testCommand),
   };
   const handshake = {
     nodeId: targetNode,
@@ -128,6 +129,9 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
     testCommand: spec.testCommand,
     prerequisites: spec.prerequisites,
     testEvidenceProvenance,
+    testEvidencePolicy: {
+      allowVacuousChecks: spec.allowVacuousChecks,
+    },
   };
   writeFileSync(join(sessionDir, "nodes", targetNode, "handshake.json"), JSON.stringify(handshake, null, 2) + "\n");
   return { executed: true, verdict, exitCode: summary.exitCode, resultPath: join(runDir, "test-command-result.json") };

@@ -14,9 +14,8 @@ function parseDetail(detail) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-function allowVacuous(data, check) {
-  if (check?.allowVacuous === true) return true;
-  const allowed = data?.allowVacuousChecks;
+function allowVacuous(context, check) {
+  const allowed = context?.allowVacuousChecks;
   return Array.isArray(allowed) && allowed.includes(check?.id);
 }
 
@@ -26,7 +25,7 @@ function checkTotal(check) {
   return typeof detail?.total === "number" ? detail.total : null;
 }
 
-function collectChecksReasons(data) {
+function collectChecksReasons(data, context) {
   if (!Array.isArray(data?.checks)) return [];
   const reasons = [];
   const failed = data.checks.filter(c => c && c.pass === false);
@@ -35,7 +34,7 @@ function collectChecksReasons(data) {
     reasons.push(`${failed.length} structured check(s) failed: ${ids}`);
   }
   const vacuous = data.checks.filter(c =>
-    c && c.pass === true && !allowVacuous(data, c) && checkTotal(c) === 0);
+    c && c.pass === true && !allowVacuous(context, c) && checkTotal(c) === 0);
   if (vacuous.length > 0) {
     const ids = vacuous.slice(0, 5).map(c => c.id || "unnamed").join(", ");
     reasons.push(`${vacuous.length} vacuous PASS check(s) matched total=0: ${ids}`);
@@ -63,23 +62,30 @@ function isTestExecuteNode(nodeId) {
   return /^test[-_]execute$/.test(String(nodeId || ""));
 }
 
-function hasCommandProvenance(data, handshake) {
-  const prov = data?.provenance || data?.testEvidenceProvenance || handshake?.testEvidenceProvenance;
-  return prov?.kind === "opc-test-command" && typeof prov.commandHash === "string";
+function hasCommandProvenance(data, handshake, expectedCommandHash) {
+  const resultProv = data?.provenance || data?.testEvidenceProvenance;
+  const handshakeProv = handshake?.testEvidenceProvenance;
+  if (resultProv?.kind !== "opc-test-command") return false;
+  if (handshakeProv?.kind !== "opc-test-command") return false;
+  if (typeof resultProv.commandHash !== "string") return false;
+  if (typeof handshakeProv.commandHash !== "string") return false;
+  if (resultProv.commandHash !== handshakeProv.commandHash) return false;
+  return typeof expectedCommandHash === "string"
+    && resultProv.commandHash === expectedCommandHash;
 }
 
-function collectProvenanceReasons(data, handshake, nodeId) {
-  if (!isTestExecuteNode(nodeId) || !Array.isArray(data?.checks) || data.checks.length === 0) {
+function collectProvenanceReasons(data, context) {
+  if (!isTestExecuteNode(context.nodeId) || context.artifact?.type !== "test-result") {
     return [];
   }
-  if (hasCommandProvenance(data, handshake)) return [];
-  return ["test-execute checks lack OPC testCommand provenance — self-authored test evidence is weak"];
+  if (hasCommandProvenance(data, context.handshake, context.expectedCommandHash)) return [];
+  return ["test-execute test-result lacks matching OPC testCommand provenance — self-authored test evidence is weak"];
 }
 
 export function collectTestResultReasons(data, context = {}) {
   return [
     ...collectSummaryReasons(data),
-    ...collectChecksReasons(data),
-    ...collectProvenanceReasons(data, context.handshake, context.nodeId),
+    ...collectChecksReasons(data, context),
+    ...collectProvenanceReasons(data, context),
   ];
 }

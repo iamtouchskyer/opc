@@ -19,7 +19,7 @@ import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 import { collectGateCriteriaReasons } from "./gate-criteria.mjs";
 import { collectDiVerdictReasons } from "./di-verdict-gate.mjs";
-import { executeTestCommand } from "./test-command-execution.mjs";
+import { executeTestCommand, loadTestCommandSpec, testCommandHash } from "./test-command-execution.mjs";
 import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
 import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
 import { readCumulativeFindingsAppend, writeCumulativeFindings } from "./cumulative-findings.mjs";
@@ -39,6 +39,17 @@ function mandatoryRoleHint(nodeId) {
     return " For test-design, skeptic-owner reviews test plan completeness, not code quality.";
   }
   return "";
+}
+
+function testEvidenceContext(dir, handshake) {
+  const sourceNode = handshake?.testEvidenceProvenance?.sourceNode;
+  if (!sourceNode) return {};
+  const spec = loadTestCommandSpec(dir, sourceNode);
+  if (!spec) return {};
+  return {
+    expectedCommandHash: testCommandHash(spec.testCommand),
+    allowVacuousChecks: spec.allowVacuousChecks,
+  };
 }
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
@@ -93,10 +104,12 @@ export function checkStructuredResults(dir, state, template, currentNode) {
         structuredFailReasons.push(`artifact ${art.path} unreadable — fail-closed`);
         continue;
       }
+      const evidenceContext = testEvidenceContext(dir, hs);
       structuredFailReasons.push(...collectTestResultReasons(data, {
         handshake: hs,
         nodeId: entry.nodeId,
         artifact: art,
+        ...evidenceContext,
       }));
     }
   }
