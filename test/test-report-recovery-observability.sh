@@ -67,5 +67,13 @@ check "report does not render severity metadata as title" '! grep -q "<h4>\\*\\*
 check "report includes execution fixes section" 'grep -q "Fixes Applied During Execution" report.html'
 check "report includes execution fix text" 'grep -q "Bound report parser" report.html'
 
+SESSION_ROOT="$TMPD/session-root"
+mkdir -p "$SESSION_ROOT/nodes/code-review/run_1"
+printf '{"currentNode":"code-review"}\n' > "$SESSION_ROOT/flow-state.json"
+printf '# Frontend Review\n\n[WARNING] src/docs.js:9 — Session-root eval is visible\n→ Include node eval files in report JSON\nReasoning: Session layouts do not use a nested .harness directory.\nVERDICT: ITERATE FINDINGS[1]\n' > "$SESSION_ROOT/nodes/code-review/run_1/eval-frontend.md"
+REPORT_JSON=$($HARNESS report "$SESSION_ROOT" --mode review --task "session root report" 2>/dev/null)
+check "report command accepts session root dir" 'printf "%s" "$REPORT_JSON" | grep -q "Session-root eval is visible"'
+check "report command labels node eval role" 'printf "%s" "$REPORT_JSON" | grep -q "code-review/frontend"'
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

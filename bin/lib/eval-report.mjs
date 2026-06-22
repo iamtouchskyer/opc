@@ -1,10 +1,14 @@
 // Evaluation reporting commands: report, diff
 // Depends on: eval-parser.mjs, util.mjs
 
-import { readFileSync, readdirSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag } from "./util.mjs";
+
+const ROLE_FILE_RE = /^evaluation-wave-\d+-(?!round\d)(.+)\.md$/;
+const SINGLE_EVAL_RE = /^evaluation-wave-(\d+)\.md$/;
+const NODE_EVAL_RE = /^eval-(.+)\.md$/;
 
 function processEvalFile(filepath, roleName) {
   const text = readFileSync(filepath, "utf8");
@@ -30,6 +34,49 @@ function processEvalFile(filepath, roleName) {
   };
 }
 
+function resolveReportDir(dir) {
+  if (existsSync(join(dir, "flow-state.json"))) return dir;
+  return join(dir, ".harness");
+}
+
+function collectRootEvalEntries(harnessDir) {
+  const files = readdirSync(harnessDir);
+  const roleFiles = files.filter((f) => ROLE_FILE_RE.test(f));
+  if (roleFiles.length > 0) {
+    return roleFiles.map((f) => ({
+      path: join(harnessDir, f),
+      role: f.match(ROLE_FILE_RE)[1],
+    }));
+  }
+  return files.filter((f) => SINGLE_EVAL_RE.test(f)).map((f) => ({
+    path: join(harnessDir, f),
+    role: "evaluator",
+  }));
+}
+
+function collectNodeEvalEntries(harnessDir) {
+  const nodesDir = join(harnessDir, "nodes");
+  if (!existsSync(nodesDir)) return [];
+  const entries = [];
+  for (const nodeId of readdirSync(nodesDir).sort()) {
+    const nodeDir = join(nodesDir, nodeId);
+    if (!statSync(nodeDir).isDirectory()) continue;
+    const dirs = [nodeDir];
+    for (const child of readdirSync(nodeDir).sort()) {
+      const childDir = join(nodeDir, child);
+      if (statSync(childDir).isDirectory()) dirs.push(childDir);
+    }
+    for (const dir of dirs) {
+      for (const file of readdirSync(dir).sort()) {
+        const match = file.match(NODE_EVAL_RE);
+        if (!match) continue;
+        entries.push({ path: join(dir, file), role: `${nodeId}/${match[1]}` });
+      }
+    }
+  }
+  return entries;
+}
+
 export function cmdReport(args) {
   const dir = args[0];
   if (!dir) {
@@ -50,37 +97,23 @@ export function cmdReport(args) {
   const dismissed = parseInt(getFlag(args, "dismissed", "0"), 10);
   const downgraded = parseInt(getFlag(args, "downgraded", "0"), 10);
 
-  const harnessDir = join(dir, ".harness");
-  const ROLE_FILE_RE = /^evaluation-wave-\d+-(?!round\d)(.+)\.md$/;
-  const SINGLE_EVAL_RE = /^evaluation-wave-(\d+)\.md$/;
-  let roleFiles;
+  const harnessDir = resolveReportDir(dir);
+  let evalEntries;
   try {
-    roleFiles = readdirSync(harnessDir).filter((f) => ROLE_FILE_RE.test(f));
+    evalEntries = [
+      ...collectRootEvalEntries(harnessDir),
+      ...collectNodeEvalEntries(harnessDir),
+    ];
   } catch (err) {
     console.error(`Cannot read ${harnessDir}: ${err.message}`);
     process.exit(1);
   }
 
-  let singleEvalFiles = [];
-  if (roleFiles.length === 0) {
-    try {
-      singleEvalFiles = readdirSync(harnessDir).filter((f) => SINGLE_EVAL_RE.test(f));
-    } catch { /* already handled */ }
-  }
-
   const agents = [];
   const summary = { critical: 0, warning: 0, suggestion: 0 };
 
-  for (const f of roleFiles) {
-    const roleMatch = f.match(/^evaluation-wave-\d+-(.+)\.md$/);
-    if (!roleMatch) continue;
-    const { agent, accepted } = processEvalFile(join(harnessDir, f), roleMatch[1]);
-    agents.push(agent);
-    for (const fd of accepted) summary[fd.severity]++;
-  }
-
-  for (const f of singleEvalFiles) {
-    const { agent, accepted } = processEvalFile(join(harnessDir, f), "evaluator");
+  for (const entry of evalEntries) {
+    const { agent, accepted } = processEvalFile(entry.path, entry.role);
     agents.push(agent);
     for (const fd of accepted) summary[fd.severity]++;
   }
