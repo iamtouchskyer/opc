@@ -5,6 +5,7 @@ import { readFileSync, readdirSync, mkdirSync, existsSync, writeFileSync } from 
 import { join, dirname, resolve, basename } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
+import { createHash } from "crypto";
 import { execFileSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { validateHandshakeData } from "./flow-core.mjs";
@@ -73,6 +74,10 @@ function parseJsonLastLine(text) {
   } catch {
     return null;
   }
+}
+
+function sha256(text) {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function entriesSinceLastGate(state, template, currentNode) {
@@ -158,9 +163,11 @@ function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
   for (const art of handshake.artifacts) {
     if (art.type !== "test-result" || !/\.json$/i.test(art.path || "")) continue;
     const artPath = resolve(dirname(hsPath), art.path);
+    let text;
     let data;
     try {
-      data = JSON.parse(readFileSync(artPath, "utf8"));
+      text = readFileSync(artPath, "utf8");
+      data = JSON.parse(text);
     } catch {
       reasons.push(`artifact ${art.path} unreadable — fail-closed`);
       continue;
@@ -169,6 +176,7 @@ function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
       handshake,
       nodeId,
       artifact: art,
+      artifactHash: sha256(text),
       ...evidenceContext,
     }));
   }
@@ -210,9 +218,11 @@ export function checkStructuredResults(dir, state, template, currentNode) {
     for (const art of hs.artifacts) {
       if (art.type !== "report" && art.type !== "test-result") continue;
       const artPath = resolve(dirname(hsPath), art.path);
+      let text;
       let data;
       try {
-        data = JSON.parse(readFileSync(artPath, "utf8"));
+        text = readFileSync(artPath, "utf8");
+        data = JSON.parse(text);
       } catch (e) {
         structuredFailReasons.push(`artifact ${art.path} unreadable — fail-closed`);
         continue;
@@ -222,6 +232,7 @@ export function checkStructuredResults(dir, state, template, currentNode) {
         handshake: hs,
         nodeId: entry.nodeId,
         artifact: art,
+        artifactHash: sha256(text),
         ...evidenceContext,
       }));
     }

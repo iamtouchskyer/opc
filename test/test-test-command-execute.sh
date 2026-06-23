@@ -81,6 +81,7 @@ fi
 
 if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"resultHash":' .harness/nodes/test-execute/handshake.json &&
    grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/run_1/test-command-result.json &&
@@ -89,6 +90,23 @@ if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.js
   PASS=$((PASS + 1))
 else
   echo "  ❌ testCommand evidence missing OPC provenance"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 - <<'PY'
+import json
+path = ".harness/nodes/test-execute/run_1/test-command-result.json"
+data = json.load(open(path))
+data["tampered"] = True
+open(path, "w").write(json.dumps(data, indent=2) + "\n")
+PY
+OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
+ALLOWED=$(json_field "$OUT" "allowed")
+if [ "$ALLOWED" = "False" ] && grep -q "result hash" <<< "$OUT"; then
+  echo "  ✅ modified testCommand result blocks gate"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ modified testCommand result passed gate: $OUT"
   FAIL=$((FAIL + 1))
 fi
 

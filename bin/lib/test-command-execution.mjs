@@ -161,10 +161,11 @@ function writeResultFiles(runDir, spec, result, cwdInfo) {
     stderr,
     test_fail_count: exitCode === 0 ? 0 : 1,
   };
-  writeFileSync(join(runDir, "test-command-result.json"), JSON.stringify(json, null, 2) + "\n");
+  const resultText = JSON.stringify(json, null, 2) + "\n";
+  writeFileSync(join(runDir, "test-command-result.json"), resultText);
   writeFileSync(join(runDir, "test-command-output.txt"),
     [`$ ${spec.testCommand}`, `cwd: ${cwdInfo.cwd}`, `cwdSource: ${cwdInfo.source}`, `exitCode: ${exitCode}`, "", stdout, stderr].join("\n"));
-  return { exitCode, timedOut: json.timedOut };
+  return { exitCode, timedOut: json.timedOut, resultHash: sha256(resultText) };
 }
 
 function runTestCommand(spec, cwd) {
@@ -196,6 +197,7 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
     sourceNode,
     commandHash: testCommandHash(spec.testCommand),
     sourcePlanHash: spec.sourcePlanHash,
+    resultHash: summary.resultHash,
     executionActor: EXECUTION_ACTOR,
   };
   const handshake = {

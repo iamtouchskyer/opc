@@ -62,6 +62,12 @@ function isTestExecuteNode(nodeId) {
   return /^test[-_]execute$/.test(String(nodeId || ""));
 }
 
+function hasResultIntegrity(handshakeProv, context) {
+  return typeof handshakeProv?.resultHash === "string"
+    && typeof context.artifactHash === "string"
+    && handshakeProv.resultHash === context.artifactHash;
+}
+
 function hasCommandProvenance(data, handshake, context) {
   const resultProv = data?.provenance || data?.testEvidenceProvenance;
   const handshakeProv = handshake?.testEvidenceProvenance;
@@ -77,7 +83,8 @@ function hasCommandProvenance(data, handshake, context) {
   if (typeof resultProv.sourcePlanHash !== "string" || !resultProv.sourcePlanHash) return false;
   return typeof context.expectedSourcePlanHash === "string"
     && resultProv.sourcePlanHash === context.expectedSourcePlanHash
-    && handshakeProv.sourcePlanHash === context.expectedSourcePlanHash;
+    && handshakeProv.sourcePlanHash === context.expectedSourcePlanHash
+    && hasResultIntegrity(handshakeProv, context);
 }
 
 function collectProvenanceReasons(data, context) {
@@ -85,7 +92,7 @@ function collectProvenanceReasons(data, context) {
     return [];
   }
   if (hasCommandProvenance(data, context.handshake, context)) return [];
-  return ["test-execute test-result lacks matching OPC testCommand provenance and source test-plan hash — self-authored test evidence is weak"];
+  return ["test-execute test-result lacks matching OPC testCommand provenance, source test-plan hash, and result hash — self-authored or modified test evidence is weak"];
 }
 
 export function collectTestResultReasons(data, context = {}) {
