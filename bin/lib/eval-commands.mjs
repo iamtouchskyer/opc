@@ -119,6 +119,11 @@ export function cmdVerify(args) {
   console.log(JSON.stringify(output, null, 2));
 }
 
+function isAbsenceOrMetaFinding(issue) {
+  return /\b(no|not|missing|absent|never|without|unwired|nothing|isn'?t|aren'?t|unreachable|dead code|not wired|not connected|not run|not executed)\b/i
+    .test(String(issue || ""));
+}
+
 // Note: synthesize assumes findings are bugs/issues (review use case).
 export function cmdSynthesize(args) {
   let _diffFilesCache = null; // cached diff files for changeScopeCoverage
@@ -257,16 +262,10 @@ export function cmdSynthesize(args) {
     // If ALL severity markers failed → protocol violation, eval cannot produce PASS.
     if (parsed.formatErrors && parsed.formatErrors.length > 0) {
       const dropped = parsed.formatErrors.length;
-      if (parsed.findings_count === 0 && dropped > 0) {
-        totals.warning += dropped;
-        thinEvalWarnings.push(
-          `${roleName}: ${dropped} line(s) with severity markers failed to parse — 0 findings extracted (format violation)`
-        );
-      } else if (dropped > 0) {
-        thinEvalWarnings.push(
-          `${roleName}: ${dropped} line(s) with severity markers dropped due to format errors`
-        );
-      }
+      totals.warning += dropped;
+      thinEvalWarnings.push(
+        `${roleName}: ${dropped} line(s) with severity markers dropped due to format errors`
+      );
     }
 
     const blocked = /BLOCKED/i.test(parsed.verdict);
@@ -375,7 +374,7 @@ export function cmdSynthesize(args) {
                 const windowTokens = windowText
                   .replace(/[^a-z0-9_]/g, " ").split(/\s+/)
                   .filter(t => t.length >= 3 && !CODE_STOPWORDS.has(t));
-                if (issueTokens.length >= 2 && windowTokens.length >= 1) {
+                if (!isAbsenceOrMetaFinding(finding.issue) && issueTokens.length >= 2 && windowTokens.length >= 1) {
                   const shared = issueTokens.filter(t => windowTokens.some(s => s.includes(t) || t.includes(s)));
                   if (shared.length === 0) {
                     weakRefCount++;

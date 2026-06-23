@@ -9,7 +9,60 @@ setup_git
 echo "=== Quick flow template tests ==="
 echo ""
 
-# ── 1: init --flow quick creates 3-node flow ──
+write_clean_eval() {
+  local target="$1"
+  local role="$2"
+  {
+    echo "# $role Review"
+    echo "Role: $role"
+    echo "## Scope"
+    for i in $(seq 1 18); do echo "$role scope $i records a concrete review pass across the changed fixture."; done
+    echo "## Evidence"
+    for i in $(seq 1 18); do echo "$role evidence $i: command routing, artifacts, state history, and gate inputs were inspected."; done
+    echo "## Decision"
+    for i in $(seq 1 18); do echo "$role decision $i is PASS after checking the relevant harness contract and provenance path."; done
+    echo "VERDICT: PASS"
+  } > "$target"
+}
+
+write_quick_build() {
+  mkdir -p .harness/nodes/build
+  cat > .harness/nodes/build/handshake.json <<'EOF'
+{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"built","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
+EOF
+  touch .harness/nodes/build/x
+}
+
+write_quick_review() {
+  mkdir -p .harness/nodes/review/run_1
+  write_clean_eval .harness/nodes/review/run_1/eval-skeptic-owner.md "skeptic-owner"
+  write_clean_eval .harness/nodes/review/run_1/eval-quick-reviewer.md "quick-reviewer"
+  cat > .harness/nodes/review/handshake.json <<'EOF'
+{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-quick-reviewer.md"}]}
+EOF
+}
+
+write_quick_test_design() {
+  mkdir -p .harness/nodes/test-design/run_1
+  write_clean_eval .harness/nodes/test-design/run_1/eval-skeptic-owner.md "skeptic-owner"
+  write_clean_eval .harness/nodes/test-design/run_1/eval-quick-tester.md "quick-tester"
+  write_complete_test_plan .harness/nodes/test-design/run_1/test-plan.md
+  cat > .harness/nodes/test-design/handshake.json <<'EOF'
+{"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"tests designed","timestamp":"2026-01-01T00:03:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-quick-tester.md"},{"type":"test-plan","path":"run_1/test-plan.md"}],"testCommand":"printf quick-ok > quick-test.txt"}
+EOF
+}
+
+advance_quick() {
+  write_quick_build
+  $HARNESS transition --from build --to review --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
+  write_quick_review
+  $HARNESS transition --from review --to test-design --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
+  write_quick_test_design
+  $HARNESS transition --from test-design --to test-execute --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
+  $HARNESS transition --from test-execute --to gate --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
+}
+
+# ── 1: init --flow quick creates evidence-backed flow ──
 echo "--- 1: init --flow quick ---"
 $HARNESS init --flow quick --entry build --dir .harness 2>/dev/null
 STATE=$(cat .harness/flow-state.json)
@@ -58,54 +111,27 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── 5: viz --flow quick shows the 3 nodes ──
+# ── 5: viz --flow quick shows evidence-backed nodes ──
 echo "--- 5: viz --flow quick ---"
 VIZ=$($HARNESS viz --flow quick 2>/dev/null)
-if echo "$VIZ" | grep -q "build" && echo "$VIZ" | grep -q "review" && echo "$VIZ" | grep -q "gate"; then
-  echo "  ✅ viz shows build, review, gate"
+if echo "$VIZ" | grep -q "build" &&
+   echo "$VIZ" | grep -q "review" &&
+   echo "$VIZ" | grep -q "test-design" &&
+   echo "$VIZ" | grep -q "test-execute" &&
+   echo "$VIZ" | grep -q "gate"; then
+  echo "  ✅ viz shows build, review, test-design, test-execute, gate"
   PASS=$((PASS + 1))
 else
   echo "  ❌ viz output: $VIZ"
   FAIL=$((FAIL + 1))
 fi
 
-# ── 6: Full path build → review → gate PASS ──
-echo "--- 6: Full path build → review → gate PASS ---"
+# ── 6: Full path build → review → test-design → test-execute → gate PASS ──
+echo "--- 6: Full path build → review → test-design → test-execute → gate PASS ---"
 rm -rf .harness
 $HARNESS init --flow quick --entry build --dir .harness 2>/dev/null
 
-# build → review
-mkdir -p .harness/nodes/build
-cat > .harness/nodes/build/handshake.json <<'EOF'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"built","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
-EOF
-touch .harness/nodes/build/x
-$HARNESS transition --from build --to review --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
-
-# review → gate
-mkdir -p .harness/nodes/review/run_1
-cat > .harness/nodes/review/run_1/eval-analyst.md << 'EVALEOF'
-# Analyst Review
-## Code Quality
-🔵 src/handler.ts:15 — Missing input validation
-Reasoning: User input flows directly without sanitization.
-→ Add zod schema validation.
-## Summary
-VERDICT: FINDINGS[1]
-EVALEOF
-cat > .harness/nodes/review/run_1/eval-checker.md << 'EVALEOF'
-# Checker Review
-## Architecture
-🔵 src/service.ts:10 — Consider extracting helper
-Reasoning: Function is 200+ lines.
-→ Split into focused functions.
-## Summary
-VERDICT: FINDINGS[1]
-EVALEOF
-cat > .harness/nodes/review/handshake.json <<'EOF'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-analyst.md"},{"type":"eval","path":"run_1/eval-checker.md"}]}
-EOF
-$HARNESS transition --from review --to gate --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
+advance_quick
 
 STATE=$(cat .harness/flow-state.json)
 CUR=$(echo "$STATE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('currentNode',''))" 2>/dev/null)
@@ -117,38 +143,36 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── 7: maxLoopsPerEdge=2 enforced ──
-echo "--- 7: maxLoopsPerEdge=2 enforced ---"
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow quick --dir .harness 2>/dev/null)
+FINALIZED=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('finalized', False))" 2>/dev/null)
+if [ "$FINALIZED" = "True" ]; then
+  echo "  ✅ gate PASS finalizes with OPC testCommand evidence"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ expected finalized true, got: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 7: quick gate blocks missing testCommand evidence ──
+echo "--- 7: quick gate blocks missing testCommand evidence ---"
+rm -rf .harness
+$HARNESS init --flow quick --entry gate --dir .harness 2>/dev/null
+OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow quick --dir .harness 2>/dev/null || true)
+ALLOWED=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('allowed', True))" 2>/dev/null)
+if [ "$ALLOWED" = "False" ] && echo "$OUT" | grep -q "required OPC testCommand evidence missing before gate"; then
+  echo "  ✅ missing testCommand evidence blocks quick gate PASS"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ quick gate allowed missing testCommand evidence: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+# ── 8: maxLoopsPerEdge=2 enforced ──
+echo "--- 8: maxLoopsPerEdge=2 enforced ---"
 rm -rf .harness
 $HARNESS init --flow quick --entry build --dir .harness 2>/dev/null
 
 # Loop 1: build → review → gate → FAIL → build
-advance_quick() {
-  mkdir -p .harness/nodes/build
-  cat > .harness/nodes/build/handshake.json <<'BEOF'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
-BEOF
-  touch .harness/nodes/build/x
-  $HARNESS transition --from build --to review --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
-  mkdir -p .harness/nodes/review/run_1
-  cat > .harness/nodes/review/run_1/eval-a.md << 'EEOF'
-# Review A
-🔵 src/x.ts:1 — Minor issue
-Reasoning: Small thing.
-→ Fix it.
-EEOF
-  cat > .harness/nodes/review/run_1/eval-b.md << 'EEOF'
-# Review B
-🔵 src/y.ts:2 — Another issue
-Reasoning: Another thing.
-→ Fix that too.
-EEOF
-  cat > .harness/nodes/review/handshake.json <<'REOF'
-{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
-REOF
-  $HARNESS transition --from review --to gate --verdict PASS --flow quick --dir .harness 2>/dev/null >/dev/null
-}
-
 loopback_quick() {
   mkdir -p .harness/nodes/gate
   cat > .harness/nodes/gate/handshake.json <<'GEOF'

@@ -257,4 +257,35 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# ── 2.3: formatErrors increment warning totals ──
+echo "--- 2.3: formatErrors move synthesize verdict ---"
+rm -rf .h-fe-count
+$HARNESS init --flow review --entry review --dir .h-fe-count 2>/dev/null
+mkdir -p .h-fe-count/nodes/review/run_1
+cat > .h-fe-count/nodes/review/run_1/eval-skeptic-owner.md << 'EVALEOF'
+# Skeptic Owner Review
+
+## Findings
+🟡 This severity marker is intentionally unstructured
+Reasoning: the parser must not silently drop a severity marker.
+→ Rewrite the finding with file:line and an em dash.
+
+## Scope
+EVALEOF
+for i in $(seq 1 55); do echo "Format error regression line $i has varied review context for the parser." >> .h-fe-count/nodes/review/run_1/eval-skeptic-owner.md; done
+cat >> .h-fe-count/nodes/review/run_1/eval-skeptic-owner.md << 'EVALEOF'
+
+VERDICT: FINDINGS[1]
+EVALEOF
+OUT=$($HARNESS synthesize .h-fe-count --node review 2>/dev/null)
+SYNTH_VERDICT=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict'))" 2>/dev/null)
+WARN_TOTAL=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('totals',{}).get('warning',0))" 2>/dev/null)
+if [ "$SYNTH_VERDICT" = "ITERATE" ] && [ "$WARN_TOTAL" -ge 2 ]; then
+  echo "  ✅ formatErrors contribute warning totals and ITERATE"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ expected ITERATE with warning total >=2, got verdict=$SYNTH_VERDICT warning=$WARN_TOTAL"
+  FAIL=$((FAIL + 1))
+fi
+
 print_results

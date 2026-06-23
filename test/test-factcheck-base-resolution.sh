@@ -196,4 +196,32 @@ OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_NG3" 2>/dev/
 assert_field_eq "non-git base does not false-red verdict" "$OUT" "verdict" '"PASS"'
 assert_contains "non-git base still surfaces warning" "$OUT" "verificationWarnings"
 
+# ───────────────────────────────────────────────────────────────
+echo ""
+echo "--- F13: absence/meta finding does NOT trigger weakRef hallucination ---"
+setup_session
+cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md << 'EOF'
+# Skeptic Owner Review
+
+## Contract Evidence
+🔵 real.ts:1 — test runner is not wired to this module
+**Reasoning:** this is an absence claim about execution wiring, not a positive claim about tokens on line 1.
+**Fix:** connect the runner or record the missing wiring in the plan.
+
+## Grounding Notes
+The cited line anchors the module under review.
+The claim is about what is absent from the execution path.
+The review keeps this as a suggestion so it should not hard-fail.
+
+## Additional Review Detail
+EOF
+for i in $(seq 1 45); do echo "Absence meta review line $i records wiring context with varied evidence text." >> .harness/nodes/code-review/run_1/eval-skeptic-owner.md; done
+cat >> .harness/nodes/code-review/run_1/eval-skeptic-owner.md << 'EOF'
+
+VERDICT: PASS FINDINGS[1]
+EOF
+BASE_ABSENCE=$(make_git_base)
+OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_ABSENCE" 2>/dev/null)
+assert_not_contains "absence/meta finding is not marked possible hallucination" "$OUT" "possible hallucination"
+
 print_results

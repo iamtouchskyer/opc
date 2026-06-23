@@ -119,9 +119,11 @@ Gate loopback: FAIL/ITERATE → review (multi-round with prior findings as conte
 |------|------|--------|----------|
 | build | build | [implementer] | implementer-prompt.md |
 | review | review | [selected roles] | role-evaluator-prompt.md |
+| test-design | review | [tester, + user/domain roles] | test-design-protocol.md |
+| test-execute | execute | [orchestrator] | executor-protocol.md |
 | gate | gate | — | gate-protocol.md |
 
-**Scope**: Non-UI, single-file or ≤3 file changes, low risk. If task involves UI/design, multi-module refactoring, or security-related changes → use build-verify instead. Gate loops back to build (no brief node).
+**Scope**: Non-UI, single-file or ≤3 file changes, low risk. If task involves UI/design, multi-module refactoring, or security-related changes → use build-verify instead. Gate loops back to build (no brief node), and quick still requires OPC-generated testCommand evidence before final PASS.
 
 ### full-stack
 

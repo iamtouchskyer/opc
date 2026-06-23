@@ -604,6 +604,28 @@ describe("Step 1.5 bypass enforcement — cmdTransition", () => {
     );
   });
 
+  test("direct gate PASS with upstream synthesize ITERATE → rejected", () => {
+    const dir = createSession("bypass-transition-synthesize");
+    writeFileSync(join(dir, "nodes", "code-review", "run_1", "eval-skeptic-owner.md"), [
+      "# Skeptic Owner Review",
+      "",
+      "[WARNING] package.json:1 — Package metadata needs review",
+      "Reasoning: package metadata is part of the committed source and is being checked.",
+      "→ Keep package metadata aligned with the release contract.",
+      "",
+      "VERDICT: FINDINGS[1]",
+    ].join("\n"));
+    const result = runHarness("transition", [
+      "--from", "gate", "--to", "null", "--verdict", "PASS",
+      "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(result.allowed, false, `should be rejected, got: ${JSON.stringify(result)}`);
+    assert.ok(
+      result.reason?.includes("gate synthesize check failed"),
+      `reason should mention synthesize gate, got: ${result.reason}`
+    );
+  });
+
   test("direct transition FAIL with failing artifacts → allowed (correct verdict)", () => {
     const dir = createSession("bypass-transition-fail", { failingReport: true });
     const result = runHarness("transition", [

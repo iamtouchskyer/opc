@@ -58,6 +58,99 @@ function synthesizeBaseForState(state) {
   return getProjectRoot();
 }
 
+function harnessPath() {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
+}
+
+function parseJsonLastLine(text) {
+  try {
+    return JSON.parse(String(text || "").trim());
+  } catch {
+    // Some commands may include a leading log line before a compact JSON object.
+  }
+  try {
+    return JSON.parse(String(text || "").trim().split("\n").pop());
+  } catch {
+    return null;
+  }
+}
+
+function entriesSinceLastGate(state, template, currentNode) {
+  let lastGateHistIdx = -1;
+  for (let i = state.history.length - 1; i >= 0; i--) {
+    const h = state.history[i];
+    const nt = template.nodeTypes?.[h.nodeId];
+    if (nt === "gate" && h.nodeId !== currentNode) {
+      lastGateHistIdx = i;
+      break;
+    }
+  }
+  return lastGateHistIdx === -1 ? state.history : state.history.slice(lastGateHistIdx + 1);
+}
+
+function hasEvalFiles(dir, nodeId) {
+  const nodeDir = join(dir, "nodes", nodeId);
+  let runs = [];
+  try {
+    runs = readdirSync(nodeDir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+      .sort((a, b) => Number(b.name.slice(4)) - Number(a.name.slice(4)));
+  } catch {
+    return false;
+  }
+  for (const run of runs) {
+    const runDir = join(nodeDir, run.name);
+    try {
+      if (readdirSync(runDir).some(f => /^eval.*\.md$/.test(f) && f !== "eval-extensions.md")) return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function collectGateSynthesizeReasons(dir, state, template, currentNode, verdict) {
+  if (verdict !== "PASS") return [];
+  const reasons = [];
+  const seen = new Set();
+  for (const entry of entriesSinceLastGate(state, template, currentNode)) {
+    const nodeId = entry.nodeId;
+    if (seen.has(nodeId) || template.nodeTypes?.[nodeId] !== "review") continue;
+    if (!hasEvalFiles(dir, nodeId)) continue;
+    seen.add(nodeId);
+    let output;
+    try {
+      output = execFileSync(
+        "node",
+        [harnessPath(), "synthesize", "--node", nodeId, "--dir", dir, "--base", synthesizeBaseForState(state)],
+        { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+      );
+    } catch (err) {
+      reasons.push(`synthesize failed for ${nodeId}: ${err.stderr || err.message}`);
+      continue;
+    }
+    const synth = parseJsonLastLine(output);
+    if (!synth) {
+      reasons.push(`synthesize output for ${nodeId} was not valid JSON`);
+    } else if (synth.verdict && synth.verdict !== "PASS") {
+      reasons.push(`synthesize verdict for ${nodeId} is ${synth.verdict}, not PASS`);
+    }
+  }
+  return reasons;
+}
+
+function hasOpcTestCommandEvidence(handshake) {
+  const prov = handshake?.testEvidenceProvenance;
+  return handshake?.nodeType === "execute"
+    && /^test[-_]execute$/.test(String(handshake?.nodeId || ""))
+    && prov?.kind === "opc-test-command"
+    && prov?.executionActor === "opc-harness:test-command"
+    && typeof prov?.commandHash === "string"
+    && typeof prov?.sourcePlanHash === "string"
+    && Array.isArray(handshake?.artifacts)
+    && handshake.artifacts.some(a => a?.type === "test-result" && /\.json$/i.test(a?.path || ""));
+}
+
 function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
   const reasons = [];
   if (!Array.isArray(handshake?.artifacts)) return reasons;
@@ -94,27 +187,14 @@ export function checkStructuredResults(dir, state, template, currentNode) {
   structuredFailReasons.push(...collectGateCriteriaReasons(dir, state, template, currentNode));
   structuredFailReasons.push(...collectDiVerdictReasons(dir, state, template, currentNode));
   structuredFailReasons.push(...collectExtensionStartupReasons(dir, state, template, currentNode));
-  const histNoGates = state.history.filter(h => {
-    const nt = template.nodeTypes?.[h.nodeId];
-    return nt && nt !== "gate";
-  });
-  let lastGateHistIdx = -1;
-  for (let i = state.history.length - 1; i >= 0; i--) {
-    const h = state.history[i];
-    const nt = template.nodeTypes?.[h.nodeId];
-    if (nt === "gate" && h.nodeId !== currentNode) {
-      lastGateHistIdx = i;
-      break;
-    }
-  }
-  const upstreamNodes = lastGateHistIdx === -1
-    ? histNoGates
-    : state.history.slice(lastGateHistIdx + 1).filter(h => {
-        const nt = template.nodeTypes?.[h.nodeId];
-        return nt && nt !== "gate";
-      });
+  const upstreamNodes = entriesSinceLastGate(state, template, currentNode)
+    .filter(h => {
+      const nt = template.nodeTypes?.[h.nodeId];
+      return nt && nt !== "gate";
+    });
 
   const seen = new Set();
+  let requiredTestCommandEvidenceFound = false;
   for (const entry of upstreamNodes) {
     if (seen.has(entry.nodeId)) continue;
     seen.add(entry.nodeId);
@@ -123,6 +203,9 @@ export function checkStructuredResults(dir, state, template, currentNode) {
     let hs;
     try { hs = JSON.parse(readFileSync(hsPath, "utf8")); } catch { continue; }
     if (!Array.isArray(hs.artifacts)) continue;
+    if (template.requiredTestCommandEvidence && hasOpcTestCommandEvidence(hs)) {
+      requiredTestCommandEvidenceFound = true;
+    }
 
     for (const art of hs.artifacts) {
       if (art.type !== "report" && art.type !== "test-result") continue;
@@ -142,6 +225,9 @@ export function checkStructuredResults(dir, state, template, currentNode) {
         ...evidenceContext,
       }));
     }
+  }
+  if (template.requiredTestCommandEvidence && !requiredTestCommandEvidenceFound) {
+    structuredFailReasons.push("required OPC testCommand evidence missing before gate");
   }
   return structuredFailReasons;
 }
@@ -184,6 +270,15 @@ export async function cmdTransition(args) {
           let st = null;
           try { st = JSON.parse(readFileSync(stPath, "utf8")); } catch { /* handled below */ }
           if (st) {
+            const synthReasons = collectGateSynthesizeReasons(dir, st, resolvedTpl.template, from, verdict);
+            if (synthReasons.length > 0) {
+              console.log(JSON.stringify({
+                allowed: false,
+                reason: `gate synthesize check failed: ${synthReasons.join("; ")}`,
+                synthesizeFailReasons: synthReasons,
+              }));
+              return;
+            }
             const failReasons = checkStructuredResults(dir, st, resolvedTpl.template, from);
             if (failReasons.length > 0) {
               console.log(JSON.stringify({
@@ -554,6 +649,16 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   }
 
   if (isGate) {
+    const synthReasons = collectGateSynthesizeReasons(dir, state, template, from, verdict);
+    if (synthReasons.length > 0) {
+      console.log(JSON.stringify({
+        allowed: false,
+        reason: `gate synthesize check failed: ${synthReasons.join("; ")}`,
+        synthesizeFailReasons: synthReasons,
+      }));
+      return;
+    }
+
     // ── Step 1.5: Structured result check (universal enforcement) ──
     // This runs on EVERY gate transition, regardless of entry path
     // (advance, pass, direct transition). Belt-and-suspenders with cmdAdvance.
@@ -859,16 +964,13 @@ export function cmdAdvance(args) {
 
   const upstreamNode = upstreamEntry.nodeId;
 
-  // Find the harness binary path (same dir as this module)
-  const harnessPath = join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
-
   // Step 1: synthesize
   console.error(`[advance] synthesizing ${upstreamNode}...`);
   let synthOutput;
   try {
     synthOutput = execFileSync(
       "node",
-      [harnessPath, "synthesize", "--node", upstreamNode, "--dir", dir, "--base", synthesizeBaseForState(state)],
+      [harnessPath(), "synthesize", "--node", upstreamNode, "--dir", dir, "--base", synthesizeBaseForState(state)],
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
   } catch (err) {
@@ -881,11 +983,7 @@ export function cmdAdvance(args) {
   }
 
   let synthResult;
-  try {
-    synthResult = JSON.parse(synthOutput.trim().split("\n").pop());
-  } catch {
-    synthResult = {};
-  }
+  synthResult = parseJsonLastLine(synthOutput) || {};
   let verdict = synthResult.verdict || "PASS";
   console.error(`[advance] synthesize verdict: ${verdict}`);
 
@@ -900,7 +998,7 @@ export function cmdAdvance(args) {
   console.error(`[advance] routing ${currentNode} --${verdict}-->...`);
   let routeOutput;
   try {
-    const routeArgs = [harnessPath, "route", "--node", currentNode, "--verdict", verdict, "--flow", state.flowTemplate];
+    const routeArgs = [harnessPath(), "route", "--node", currentNode, "--verdict", verdict, "--flow", state.flowTemplate];
     if (state._flow_file) routeArgs.push("--flow-file", state._flow_file);
     routeArgs.push("--dir", dir);
     routeOutput = execFileSync(

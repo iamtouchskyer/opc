@@ -54,14 +54,17 @@ export const FLOW_TEMPLATES = {
     },
   },
   "quick": {
-    nodes: ["build", "review", "gate"],
+    nodes: ["build", "review", "test-design", "test-execute", "gate"],
     edges: {
-      build:  { PASS: "review" },
-      review: { PASS: "gate", FAIL: "build", ITERATE: "build" },
-      gate:   { PASS: null, FAIL: "build", ITERATE: "build" },
+      build:          { PASS: "review" },
+      review:         { PASS: "test-design", FAIL: "build", ITERATE: "build" },
+      "test-design":  { PASS: "test-execute" },
+      "test-execute": { PASS: "gate", FAIL: "build", ITERATE: "build" },
+      gate:           { PASS: null, FAIL: "build", ITERATE: "build" },
     },
-    limits: { maxLoopsPerEdge: 2, maxTotalSteps: 10, maxNodeReentry: 3 },
-    nodeTypes: { build: "build", review: "review", gate: "gate" },
+    limits: { maxLoopsPerEdge: 2, maxTotalSteps: 15, maxNodeReentry: 3 },
+    nodeTypes: { build: "build", review: "review", "test-design": "review", "test-execute": "execute", gate: "gate" },
+    requiredTestCommandEvidence: true,
   },
   "full-stack": {
     nodes: [
