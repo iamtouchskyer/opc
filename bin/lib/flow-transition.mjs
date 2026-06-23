@@ -48,6 +48,7 @@ function testEvidenceContext(dir, handshake) {
   if (!spec) return {};
   return {
     expectedCommandHash: testCommandHash(spec.testCommand),
+    expectedSourcePlanHash: spec.sourcePlanHash,
     allowVacuousChecks: spec.allowVacuousChecks,
   };
 }

@@ -78,6 +78,8 @@ function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+const TEST_PLAN = "# Test Plan\n\n### TC-TESTER-01\n- **Priority**: P0\n- **Steps**: run command\n";
+
 function writeDiVerdict(dir, nodeId, runId, verdict) {
   const verdictDir = join(dir, "nodes", nodeId, runId, "ext-design-intelligence");
   mkdirSync(verdictDir, { recursive: true });
@@ -268,18 +270,22 @@ describe("checkStructuredResults — Step 1.5", () => {
   test("test-execute checks with matching testCommand provenance pass", () => {
     const command = "node -e \"process.exit(0)\"";
     const commandHash = sha256(command);
+    const sourcePlanHash = sha256(TEST_PLAN);
     const dir = setupDir("t8f-command-provenance", {
       "test-design": {
-        artifacts: [],
+        artifacts: [{ type: "test-plan", path: "run_1/test-plan.md", _content: TEST_PLAN }],
         testCommand: command,
       },
       "test-execute": {
-        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash },
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash,
+          sourcePlanHash, executionActor: "opc-harness:test-command",
+        },
         artifacts: [{
           type: "test-result",
           path: "run_1/test-results.json",
           _content: {
-            provenance: { kind: "opc-test-command", commandHash },
+            provenance: { kind: "opc-test-command", commandHash, sourcePlanHash, executionActor: "opc-harness:test-command" },
             checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
           },
         }],
@@ -287,6 +293,33 @@ describe("checkStructuredResults — Step 1.5", () => {
     });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
     assert.equal(reasons.some(r => r.includes("testCommand provenance")), false);
+  });
+
+  test("test-execute command provenance without source test-plan hash → FAIL", () => {
+    const command = "node -e \"process.exit(0)\"";
+    const commandHash = sha256(command);
+    const dir = setupDir("t8f2-command-without-plan-provenance", {
+      "test-design": {
+        artifacts: [{ type: "test-plan", path: "run_1/test-plan.md", _content: TEST_PLAN }],
+        testCommand: command,
+      },
+      "test-execute": {
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash,
+          executionActor: "opc-harness:test-command",
+        },
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: {
+            provenance: { kind: "opc-test-command", commandHash, executionActor: "opc-harness:test-command" },
+            checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+          },
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("source test-plan hash")));
   });
 
   test("test-execute checks with forged result-only provenance → FAIL", () => {
@@ -322,18 +355,22 @@ describe("checkStructuredResults — Step 1.5", () => {
 
   test("test-execute checks with mismatched testCommand hash → FAIL", () => {
     const command = "node -e \"process.exit(0)\"";
+    const sourcePlanHash = sha256(TEST_PLAN);
     const dir = setupDir("t8h-mismatched-command-hash", {
       "test-design": {
-        artifacts: [],
+        artifacts: [{ type: "test-plan", path: "run_1/test-plan.md", _content: TEST_PLAN }],
         testCommand: command,
       },
       "test-execute": {
-        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash: "wrong" },
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash: "wrong",
+          sourcePlanHash, executionActor: "opc-harness:test-command",
+        },
         artifacts: [{
           type: "test-result",
           path: "run_1/test-results.json",
           _content: {
-            provenance: { kind: "opc-test-command", commandHash: "wrong" },
+            provenance: { kind: "opc-test-command", commandHash: "wrong", sourcePlanHash, executionActor: "opc-harness:test-command" },
             checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
           },
         }],
@@ -346,19 +383,23 @@ describe("checkStructuredResults — Step 1.5", () => {
   test("test-design allowVacuousChecks can authorize known empty check", () => {
     const command = "node -e \"process.exit(0)\"";
     const commandHash = sha256(command);
+    const sourcePlanHash = sha256(TEST_PLAN);
     const dir = setupDir("t8i-test-design-vacuous-policy", {
       "test-design": {
-        artifacts: [],
+        artifacts: [{ type: "test-plan", path: "run_1/test-plan.md", _content: TEST_PLAN }],
         testCommand: command,
         allowVacuousChecks: ["OUT-empty-state"],
       },
       "test-execute": {
-        testEvidenceProvenance: { kind: "opc-test-command", sourceNode: "test-design", commandHash },
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash,
+          sourcePlanHash, executionActor: "opc-harness:test-command",
+        },
         artifacts: [{
           type: "test-result",
           path: "run_1/test-results.json",
           _content: {
-            provenance: { kind: "opc-test-command", commandHash },
+            provenance: { kind: "opc-test-command", commandHash, sourcePlanHash, executionActor: "opc-harness:test-command" },
             checks: [{ id: "OUT-empty-state", pass: true, detail: { total: 0 } }],
           },
         }],

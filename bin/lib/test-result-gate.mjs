@@ -62,7 +62,7 @@ function isTestExecuteNode(nodeId) {
   return /^test[-_]execute$/.test(String(nodeId || ""));
 }
 
-function hasCommandProvenance(data, handshake, expectedCommandHash) {
+function hasCommandProvenance(data, handshake, context) {
   const resultProv = data?.provenance || data?.testEvidenceProvenance;
   const handshakeProv = handshake?.testEvidenceProvenance;
   if (resultProv?.kind !== "opc-test-command") return false;
@@ -70,16 +70,22 @@ function hasCommandProvenance(data, handshake, expectedCommandHash) {
   if (typeof resultProv.commandHash !== "string") return false;
   if (typeof handshakeProv.commandHash !== "string") return false;
   if (resultProv.commandHash !== handshakeProv.commandHash) return false;
-  return typeof expectedCommandHash === "string"
-    && resultProv.commandHash === expectedCommandHash;
+  if (resultProv.executionActor !== "opc-harness:test-command") return false;
+  if (handshakeProv.executionActor !== "opc-harness:test-command") return false;
+  if (typeof context.expectedCommandHash !== "string" || resultProv.commandHash !== context.expectedCommandHash) return false;
+  if (typeof handshakeProv.sourcePlanHash !== "string" || !handshakeProv.sourcePlanHash) return false;
+  if (typeof resultProv.sourcePlanHash !== "string" || !resultProv.sourcePlanHash) return false;
+  return typeof context.expectedSourcePlanHash === "string"
+    && resultProv.sourcePlanHash === context.expectedSourcePlanHash
+    && handshakeProv.sourcePlanHash === context.expectedSourcePlanHash;
 }
 
 function collectProvenanceReasons(data, context) {
   if (!isTestExecuteNode(context.nodeId) || context.artifact?.type !== "test-result") {
     return [];
   }
-  if (hasCommandProvenance(data, context.handshake, context.expectedCommandHash)) return [];
-  return ["test-execute test-result lacks matching OPC testCommand provenance — self-authored test evidence is weak"];
+  if (hasCommandProvenance(data, context.handshake, context)) return [];
+  return ["test-execute test-result lacks matching OPC testCommand provenance and source test-plan hash — self-authored test evidence is weak"];
 }
 
 export function collectTestResultReasons(data, context = {}) {

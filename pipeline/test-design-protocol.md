@@ -125,8 +125,22 @@ VERDICT: TEST-CASES [N] — N test cases designed
 3. **Merge and deduplicate**: Combine test cases across roles. If two roles designed overlapping cases, keep the more specific one
 4. **Auto-inject tier baseline test cases**: If the flow has a quality tier (`flow-state.json → tier`), run `opc-harness tier-baseline --tier {TIER}` and append the output test cases to the merged plan. These are P0 — non-negotiable. Do not deduplicate them away even if a role designed a similar case. The tier cases have standardized IDs (`TC-TIER-01`, `TC-TIER-02`, ...) and must appear verbatim.
 5. Write merged test plan to `$SESSION_DIR/nodes/test-design/run_{RUN}/test-plan.md`
-6. Write handshake.json with all eval files as artifacts
-7. The merged test-plan.md is the primary input for the downstream test-execute node
+6. For mechanical execution, write `$SESSION_DIR/nodes/test-design/test-execution.json`
+   with the exact command the harness should run:
+   ```json
+   {
+     "testCommand": "npm --prefix apps/web test -- --runInBand",
+     "cwd": "/absolute/project-or-package-dir",
+     "timeoutMs": 120000,
+     "prerequisites": ["dependencies installed in cwd"]
+   }
+   ```
+   `cwd` should point at the package/project directory that owns the dependencies
+   (`package.json`, Playwright config, node_modules). If omitted, OPC will try one
+   conservative auto-resolution pass for a unique local JS package, then fall back
+   to the orchestrator cwd.
+7. Write handshake.json with all eval files as artifacts
+8. The merged test-plan.md is the primary input for the downstream test-execute node
 
 ### Handshake
 
@@ -156,3 +170,8 @@ The test-execute node (execute type) reads the merged test-plan.md and:
 4. Reports results with evidence (screenshots, CLI output, API responses)
 
 The executor does NOT design new test cases. If it discovers untested scenarios during execution, it notes them as "discovered gaps" but does not add them to the current run's scope.
+
+When `test-execution.json` exists, the harness runs `testCommand` itself and
+writes `test-command-result.json` plus provenance binding the result to the
+source test plan. Hand-written `test-result` JSON without matching harness
+provenance is weak evidence and must not pass the gate.

@@ -80,11 +80,31 @@ else
 fi
 
 if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
-   grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json; then
+   grep -q '"sourcePlanHash":' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json &&
+   grep -q '"sourcePlanHash":' .harness/nodes/test-execute/run_1/test-command-result.json &&
+   grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/run_1/test-command-result.json; then
   echo "  ✅ testCommand evidence records OPC provenance"
   PASS=$((PASS + 1))
 else
   echo "  ❌ testCommand evidence missing OPC provenance"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry test-design --dir .harness-auto-cwd >/dev/null 2>/dev/null
+mkdir -p app/node_modules/fixture-pkg
+printf '{"name":"app","private":true}\n' > app/package.json
+printf 'module.exports = 42;\n' > app/node_modules/fixture-pkg/index.js
+write_test_design_handshake .harness-auto-cwd "node -e \"require.resolve('fixture-pkg')\""
+$HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness-auto-cwd >/dev/null 2>/dev/null
+EXIT_CODE=$(python3 -c "import json; print(json.load(open('.harness-auto-cwd/nodes/test-execute/run_1/test-command-result.json'))['exitCode'])")
+CWD_SOURCE=$(python3 -c "import json; print(json.load(open('.harness-auto-cwd/nodes/test-execute/run_1/test-command-result.json'))['cwdSource'])")
+if [ "$EXIT_CODE" = "0" ] && [ "$CWD_SOURCE" = "auto-js-project" ]; then
+  echo "  ✅ testCommand auto-resolves unique JS package cwd"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ testCommand cwd auto-resolution failed: exit=$EXIT_CODE cwdSource=$CWD_SOURCE"
   FAIL=$((FAIL + 1))
 fi
 
