@@ -133,6 +133,24 @@ Run npm test.
 Expect unit suite to pass.
 `;
 
+const BULLET_RANGE_ANCHOR_PLAN = `
+${COMPLETE_TEST_PLAN}
+- **TC-UNIT-002**
+  Priority: P0
+  Anchor: package.json:1-1
+  Run npm test.
+  Expect unit suite to pass.
+`;
+
+const BAD_BULLET_RANGE_ANCHOR_PLAN = `
+${COMPLETE_TEST_PLAN}
+- **TC-UNIT-003**
+  Priority: P1
+  Anchor: package.json:1-9999
+  Run npm test.
+  Expect unit suite to pass.
+`;
+
 test.after(() => {
   try { rmSync(TMPBASE, { recursive: true, force: true }); } catch {}
 });
@@ -189,6 +207,17 @@ describe("test-design transition gate", () => {
     const result = transitionWithPlan("test-design-bad-anchor", OUT_OF_RANGE_ANCHOR_PLAN);
     assert.equal(result.allowed, false);
     assert.ok(result.reason.includes("line out of range"));
+  });
+
+  test("allows bullet-form test case with valid range anchor", () => {
+    const result = transitionWithPlan("test-design-bullet-range-anchor", BULLET_RANGE_ANCHOR_PLAN);
+    assert.equal(result.allowed, true, JSON.stringify(result));
+  });
+
+  test("blocks bullet-form test case with out-of-range range anchor", () => {
+    const result = transitionWithPlan("test-design-bad-bullet-range-anchor", BAD_BULLET_RANGE_ANCHOR_PLAN);
+    assert.equal(result.allowed, false);
+    assert.ok(result.reason.includes("range out of range"));
   });
 });
 

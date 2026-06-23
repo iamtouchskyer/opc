@@ -7,7 +7,7 @@ import { createHash } from "crypto";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync, createSessionDir,
+  getFlag, resolveDir, atomicWriteSync, createSessionDir, getProjectRoot,
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
@@ -17,11 +17,13 @@ import {
   getAllBaselineKeys,
   formatTierCoverageHint,
 } from "./tier-baselines.mjs";
-import { checkEvalDistinctness } from "./eval-parser.mjs";
+import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 import { runBriefLint } from "./brief-lint.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
+import { collectTestResultReasons } from "./test-result-gate.mjs";
+import { loadTestCommandSpec, testCommandHash } from "./test-command-execution.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -138,6 +140,7 @@ export async function cmdInit(args) {
     maxNodeReentry: template.limits.maxNodeReentry,
     history: [],
     edgeCounts: {},
+    projectRoot: getProjectRoot(),
     bypassMode: bypassRecord,
     autoMode: autoMode || undefined,
     _written_by: WRITER_SIG,
@@ -603,6 +606,81 @@ export function cmdValidate(args) {
 // ─── seal ──────────────────────────────────────────────────────
 // Auto-scan a node's run directory and generate handshake.json from found artifacts.
 
+function testEvidenceContext(dir, handshake) {
+  const sourceNode = handshake?.testEvidenceProvenance?.sourceNode;
+  if (!sourceNode) return {};
+  const spec = loadTestCommandSpec(dir, sourceNode);
+  if (!spec) return {};
+  return {
+    expectedCommandHash: testCommandHash(spec.testCommand),
+    expectedSourcePlanHash: spec.sourcePlanHash,
+    allowVacuousChecks: spec.allowVacuousChecks,
+  };
+}
+
+function collectFilesRecursive(root, prefix = "") {
+  const out = [];
+  let entries = [];
+  try { entries = readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...collectFilesRecursive(full, rel));
+    } else if (entry.isFile()) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
+function classifyArtifact(relPath, nodeType) {
+  const name = basename(relPath);
+  const lower = name.toLowerCase();
+  if (lower === "build-brief.md") return "brief";
+  if (lower === "test-plan.md") return "test-plan";
+  if (lower === "test-execution.json") return "test-plan";
+  if (/^eval-.*\.md$/i.test(name) || lower === "eval.md") return "eval";
+  if (/^screenshot.*\.(png|jpg|jpeg|gif|webp)$/i.test(name)) return "screenshot";
+  if (/^(command-output|cli-output|test-command-output).*\.(txt|log)$/i.test(name) || /\.log$/i.test(name)) return "cli-output";
+  if ((nodeType === "execute" && /^test-.*\.json$/i.test(name)) || lower === "test-command-result.json") return "test-result";
+  if (/^test-.*\.json$/i.test(name) && /execute/i.test(relPath)) return "test-result";
+  if (/^(.*-)?lint-result\.json$/i.test(name) || /^(.*-)?report\.json$/i.test(name) || /^(.*-)?result\.json$/i.test(name)) return "report";
+  if (/\.(ts|tsx|js|jsx|css|html|mjs|cjs)$/i.test(name)) return "source";
+  if (lower.endsWith(".md") || lower.endsWith(".txt")) return "source";
+  return null;
+}
+
+function normalizeEvalVerdict(raw) {
+  const text = String(raw || "").toUpperCase();
+  if (/\bBLOCKED\b/.test(text)) return "BLOCKED";
+  if (/\bFAIL\b/.test(text)) return "FAIL";
+  if (/\bITERATE\b/.test(text)) return "ITERATE";
+  if (/\b(PASS|APPROVE|LGTM|TEST-CASES)\b/.test(text)) return "PASS";
+  return null;
+}
+
+function inferEvalVerdict(evalArtifacts, nodeDir) {
+  const findings = { critical: 0, warning: 0, suggestion: 0 };
+  const parsedVerdicts = [];
+  for (const a of evalArtifacts) {
+    try {
+      const parsed = parseEvaluation(readFileSync(join(nodeDir, a.path), "utf8"));
+      findings.critical += parsed.critical || 0;
+      findings.warning += parsed.warning || 0;
+      findings.suggestion += parsed.suggestion || 0;
+      const v = normalizeEvalVerdict(parsed.verdict);
+      if (v) parsedVerdicts.push(v);
+    } catch { /* skip unreadable eval; artifact validation catches missing files */ }
+  }
+  let verdict = null;
+  if (parsedVerdicts.includes("BLOCKED")) verdict = "BLOCKED";
+  else if (parsedVerdicts.includes("FAIL") || findings.critical > 0) verdict = "FAIL";
+  else if (parsedVerdicts.includes("ITERATE") || findings.warning > 0) verdict = "ITERATE";
+  else if (parsedVerdicts.includes("PASS") || findings.suggestion > 0) verdict = "PASS";
+  return { verdict, findings };
+}
+
 export function cmdSeal(args) {
   const nodeId = getFlag(args, "node");
   const runOverride = getFlag(args, "run");
@@ -672,38 +750,23 @@ export function cmdSeal(args) {
   const runId = runDir.split("/").pop();
 
   // Scan files and classify artifacts
-  const files = readdirSync(runDir);
+  const files = collectFilesRecursive(runDir).map(f => `${runId}/${f}`);
+  for (const nodeLevel of ["build-brief.md", "test-plan.md", "test-execution.json"]) {
+    if (existsSync(join(nodeDir, nodeLevel))) files.push(nodeLevel);
+  }
   const artifacts = [];
   const warnings = [];
 
-  for (const f of files) {
-    const lower = f.toLowerCase();
-    let type = null;
-    if (/^eval-.*\.md$/i.test(f)) type = "eval";
-    else if (/^screenshot.*\.(png|jpg|jpeg|gif|webp)$/i.test(f)) type = "screenshot";
-    else if (/^(command-output|cli-output).*\.(txt|log)$/i.test(f) || /\.log$/i.test(f)) type = "cli-output";
-    else if (/^test-.*\.json$/i.test(f)) type = "test-result";
-    else if (lower.endsWith(".md")) type = "source";
-    else if (lower.endsWith(".txt")) type = "source";
-    else continue; // skip unknown files
-
-    artifacts.push({ type, path: `${runId}/${f}` });
+  for (const f of files.sort()) {
+    const type = classifyArtifact(f, nodeType);
+    if (!type) continue;
+    artifacts.push({ type, path: f });
   }
 
   // Infer verdict from eval files
-  let verdict = null;
   const evalFiles = artifacts.filter(a => a.type === "eval");
-  if (evalFiles.length > 0) {
-    // Read last eval file, look for VERDICT line
-    const lastEval = evalFiles[evalFiles.length - 1];
-    try {
-      const content = readFileSync(join(nodeDir, lastEval.path), "utf8");
-      const verdictMatch = content.match(/\*\*(?:ITERATE|PASS|FAIL|BLOCKED)\*\*/);
-      if (verdictMatch) {
-        verdict = verdictMatch[0].replace(/\*\*/g, "");
-      }
-    } catch { /* ignore */ }
-  }
+  const inferred = inferEvalVerdict(evalFiles, nodeDir);
+  let verdict = inferred.verdict;
 
   // Review node: warn if < 2 eval files
   if (nodeType === "review" && evalFiles.length < 2) {
@@ -723,25 +786,9 @@ export function cmdSeal(args) {
     findings: null,
   };
 
-  // Count findings from eval content
-  let critical = 0, warning = 0, suggestion = 0;
-  for (const a of evalFiles) {
-    try {
-      const content = readFileSync(join(nodeDir, a.path), "utf8");
-      critical += (content.match(/🔴/g) || []).length;
-      warning += (content.match(/🟡/g) || []).length;
-      suggestion += (content.match(/🔵/g) || []).length;
-    } catch { /* skip */ }
-  }
+  const { critical, warning, suggestion } = inferred.findings;
   if (critical + warning + suggestion > 0) {
     handshake.findings = { critical, warning, suggestion };
-    // Auto-set verdict if not found from text
-    if (!verdict) {
-      if (critical > 0) verdict = "FAIL";
-      else if (warning > 0) verdict = "ITERATE";
-      else verdict = "PASS";
-      handshake.verdict = verdict;
-    }
   }
 
   // Write handshake
@@ -753,6 +800,23 @@ export function cmdSeal(args) {
     checkEvidence: nodeType === "execute",
     baseDir: nodeDir,
   });
+  if (nodeType === "execute") {
+    const evidenceContext = testEvidenceContext(dir, handshake);
+    for (const art of artifacts) {
+      if (art.type !== "test-result" || !/\.json$/i.test(art.path)) continue;
+      try {
+        const data = JSON.parse(readFileSync(join(nodeDir, art.path), "utf8"));
+        errors.push(...collectTestResultReasons(data, {
+          handshake,
+          nodeId,
+          artifact: art,
+          ...evidenceContext,
+        }));
+      } catch {
+        errors.push(`artifact ${art.path} unreadable — fail-closed`);
+      }
+    }
+  }
 
   for (const w of warnings) console.error(`⚠️  ${w}`);
 

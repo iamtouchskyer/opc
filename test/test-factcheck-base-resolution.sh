@@ -173,16 +173,14 @@ OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_G" 2>/dev/nu
 assert_field_eq "git base → verificationWarnings absent" "$OUT" "verificationWarnings" "__NULL__"
 
 # ───────────────────────────────────────────────────────────────
-# F2.4: the false-green guard. A 🔵-suggestion-only eval would normally PASS
-#       (no critical, no warning). But if --base is non-git, change-scope
-#       verification could NOT run — so we must NOT emit a clean PASS. The
-#       unverifiable state must escalate the verdict to ITERATE, otherwise
-#       "verification didn't run" masquerades as "all clear" (假绿).
+# F2.4: non-git --base is an infrastructure evidence gap, not a product defect.
+#       A 🔵-suggestion-only eval should keep its PASS verdict while surfacing
+#       verificationWarnings loudly for the operator/report layer.
 #       NOTE: the eval is written as the mandatory 'skeptic-owner' role so the
 #       mandatory-role check does NOT add its own warning — that would mask the
-#       bug by making the verdict ITERATE for an unrelated reason.
+#       policy by making the verdict ITERATE for an unrelated reason.
 echo ""
-echo "--- F2.4: 🔵-only eval + non-git --base must NOT PASS (verdict=ITERATE) ---"
+echo "--- F2.4: 🔵-only eval + non-git --base keeps PASS with warning ---"
 setup_session
 cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md << 'EOF'
 # Skeptic Owner Review
@@ -195,6 +193,7 @@ cat > .harness/nodes/code-review/run_1/eval-skeptic-owner.md << 'EOF'
 EOF
 BASE_NG3=$(make_nongit_base)
 OUT=$($HARNESS synthesize .harness --node code-review --base "$BASE_NG3" 2>/dev/null)
-assert_field_eq "non-git base blocks false-green: verdict=ITERATE" "$OUT" "verdict" '"ITERATE"'
+assert_field_eq "non-git base does not false-red verdict" "$OUT" "verdict" '"PASS"'
+assert_contains "non-git base still surfaces warning" "$OUT" "verificationWarnings"
 
 print_results

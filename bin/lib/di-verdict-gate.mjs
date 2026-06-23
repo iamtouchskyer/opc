@@ -48,7 +48,10 @@ function verdictReason(entry, verdict) {
     ? verdict.recommendation.toUpperCase()
     : null;
   if (verdict.pass === false || (recommendation && recommendation !== "PASS")) {
-    return `DI verdict failed in ${entry.nodeId}/${entry.runId}: ${verdict.recommendation || "non-PASS"}`;
+    const reasons = Array.isArray(verdict.blockingReasons) && verdict.blockingReasons.length > 0
+      ? ` — ${verdict.blockingReasons.join("; ")}`
+      : "";
+    return `DI verdict failed in ${entry.nodeId}/${entry.runId}: ${verdict.recommendation || "non-PASS"}${reasons}`;
   }
   return null;
 }

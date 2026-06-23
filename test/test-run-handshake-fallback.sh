@@ -81,7 +81,7 @@ else
   bad "validate-chain did not use run fallback: $OUT"
 fi
 
-echo "--- terminal gate consumes run-level structured results ---"
+echo "--- pre-transition gate consumes run-level structured results ---"
 DIR="$PWD/fallback-gate"
 rm -rf "$DIR"
 $HARNESS init --flow build-verify --entry test-execute --dir fallback-gate/.harness --no-extensions >/dev/null 2>/dev/null
@@ -95,15 +95,10 @@ state.currentNode = "test-execute";
 fs.writeFileSync(path, JSON.stringify(state, null, 2) + "\n");
 JS
 OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir fallback-gate/.harness 2>/dev/null)
-if echo "$OUT" | grep -q '"allowed":true'; then
-  OUT=$($HARNESS transition --from gate --to null --verdict PASS --flow build-verify --dir fallback-gate/.harness 2>/dev/null)
-  if echo "$OUT" | grep -q "1 test(s) failed"; then
-    ok "gate blocks failing structured result from run_N/handshake.json"
-  else
-    bad "gate did not consume run-level structured result: $OUT"
-  fi
+if echo "$OUT" | grep -q '"allowed":false' && echo "$OUT" | grep -q "1 test(s) failed"; then
+  ok "test-execute blocks failing structured result from run_N/handshake.json"
 else
-  bad "setup transition to gate failed: $OUT"
+  bad "test-execute did not consume run-level structured result: $OUT"
 fi
 
 echo ""

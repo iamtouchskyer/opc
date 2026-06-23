@@ -8,7 +8,8 @@ set -e
 #   - P0/P1 case Anchor is file:line but    → totals.warning += 1 → verdict ITERATE
 #       the path does not resolve
 #   - P2 case missing Anchor                → NOT flagged
-#   - P0/P1 case with valid file:line       → NOT flagged
+#   - P0/P1 case with valid file:line/range → NOT flagged
+#   - P0/P1 case with non-file anchor        → totals.warning += 1 → verdict ITERATE
 #   - TC-TIER-* cases (mechanically injected baselines, not role-authored build
 #       assertions) are EXEMPT even at P0 with no Anchor
 #
@@ -138,7 +139,7 @@ echo "=== Test-plan Anchor mechanical gate (P1-1) ==="
 
 # ───────────────────────────────────────────────────────────────
 echo ""
-echo "--- A0 (baseline): all P0/P1 cases carry valid file:line anchors → reason has no Anchor issue ---"
+echo "--- A0 (baseline): all P0/P1 cases carry valid file:line anchors → reason has no anchor issue ---"
 setup_plan '### TC-TESTER-01: empty page boundary
 - **Category**: edge-case
 - **Priority**: P0
@@ -151,7 +152,9 @@ setup_plan '### TC-TESTER-01: empty page boundary
 - **Anchor**: `nodes/test-design/run_1/build.ts:3` — slice math
 - **Expected**: returns 10 items for a full page'
 OUT=$($HARNESS synthesize .harness --node test-design 2>/dev/null)
-assert_not_contains "valid anchors → no anchor issue in reason" "$OUT" "Anchor"
+assert_not_contains "valid anchors → no missing anchor issue" "$OUT" "missing Anchor"
+assert_not_contains "valid anchors → no unresolved anchor issue" "$OUT" "Anchor ref unresolved"
+assert_not_contains "valid anchors → no invalid anchor issue" "$OUT" "Anchor invalid format"
 assert_field_eq "valid anchors → verdict PASS" "$OUT" "verdict" '"PASS"'
 
 # ───────────────────────────────────────────────────────────────
@@ -232,16 +235,16 @@ assert_field_eq "TC-TIER P0 no anchor → verdict PASS" "$OUT" "verdict" '"PASS"
 
 # ───────────────────────────────────────────────────────────────
 echo ""
-echo "--- A7 (guard): grep-token Anchor (not file:line) on P0 → accepted structurally ---"
+echo "--- A7: grep-token Anchor (not file:line) on P0 → ITERATE ---"
 setup_plan '### TC-TESTER-01: empty page boundary
 - **Category**: edge-case
 - **Priority**: P0
 - **Anchor**: grep `function paginate` — proves the helper exists
 - **Expected**: returns empty array for page 0'
 OUT=$($HARNESS synthesize .harness --node test-design 2>/dev/null)
-assert_not_contains "grep-token anchor → no unresolved-ref issue" "$OUT" "Anchor ref unresolved"
+assert_field_eq "grep-token anchor → verdict ITERATE" "$OUT" "verdict" '"ITERATE"'
+assert_contains "grep-token anchor → invalid format issue" "$OUT" "Anchor invalid format"
 assert_not_contains "grep-token anchor → no missing-anchor issue" "$OUT" "missing Anchor"
-assert_field_eq "grep-token anchor → verdict PASS" "$OUT" "verdict" '"PASS"'
 
 # ───────────────────────────────────────────────────────────────
 # A8: file exists but the cited LINE is out of range. Existence alone is NOT

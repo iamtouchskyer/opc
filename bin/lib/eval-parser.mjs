@@ -12,6 +12,7 @@ export const SEVERITY_MAP = {
 
 // Emoji: optional brackets. Text: MUST use brackets to avoid false positives.
 export const SEVERITY_RE = /(?:\[?)(🔴|🟡|🔵)(?:\]?)|\[(CRITICAL|WARNING|SUGGESTION)\]/i;
+const FINDING_SEVERITY_RE = /^(?:[-*]\s*)?(?:\*{0,2})?(?:(?:\[?)(🔴|🟡|🔵)(?:\]?)|\[(CRITICAL|WARNING|SUGGESTION)\])/i;
 export const FILE_REF_RE = /[\w./-]+\.\w+:\d+/;
 export const HEDGING_RE = /\bmight\b|\bcould potentially\b|\bconsider\b/i;
 // Aspirational / non-actionable claims — phrases that sound good but commit to nothing
@@ -138,7 +139,7 @@ export function parseEvaluation(text) {
     }
 
     // Severity / finding detection (skip markdown headings, tables, and section labels)
-    const sevMatch = trimmed.match(SEVERITY_RE);
+    const sevMatch = trimmed.match(FINDING_SEVERITY_RE);
     if (sevMatch && !trimmed.startsWith("#") && !trimmed.startsWith("|") && !VERDICT_RE.test(trimmed)) {
       if (/^\*{0,2}(severity|location|status|r2\s+status)\*{0,2}:/i.test(trimmed)) {
         continue;

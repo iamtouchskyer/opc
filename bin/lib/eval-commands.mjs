@@ -7,6 +7,7 @@ import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { getFlag, resolveDir } from "./util.mjs";
 import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
+import { anchorIssues as collectAnchorIssues } from "./test-plan-gate.mjs";
 
 export function cmdVerify(args) {
   const file = args[0];
@@ -332,6 +333,7 @@ export function cmdSynthesize(args) {
     // This is the highest-value layer because it requires findings to reference REAL code.
     let invalidRefCount = 0;
     let weakRefCount = 0;
+    let testDesignAnchorIssueCount = 0;
     if (baseDir && parsed.findings.length > 0) {
       // F9: resolve refs against the project base AND the session dir(s). Evals
       // legitimately cite session artifacts (test-plan.md, brief.md, sibling evals)
@@ -415,11 +417,6 @@ export function cmdSynthesize(args) {
         if (!baseIsGit) {
           verificationWarnings.push(`changeScopeCoverage skipped: --base (${baseDir}) is not a git repository — cannot verify the review covers the change scope`);
           _diffFilesCache = [];
-          // F2 false-green guard: change-scope verification could NOT run, so we
-          // must not emit a clean PASS. Escalate to a warning → verdict ITERATE,
-          // making "verification didn't run" block release rather than masquerade
-          // as "all clear". Runs once (guarded by the _diffFilesCache === null cache).
-          totals.warning += 1;
         } else {
           try {
             // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
@@ -467,6 +464,16 @@ export function cmdSynthesize(args) {
       }
     }
 
+    if (isTestDesignNode) {
+      const anchorRoots = [baseDir, dir, dirname(f.path)].filter(Boolean);
+      const issues = collectAnchorIssues(text.split("\n"), anchorRoots);
+      if (issues.length > 0) {
+        testDesignAnchorIssueCount = issues.length;
+        totals.warning += issues.length;
+        thinEvalWarnings.push(`${roleName}: test-design anchor issue(s): ${issues.join("; ")}`);
+      }
+    }
+
     roles.push({
       role: roleName,
       critical: parsed.critical,
@@ -487,6 +494,7 @@ export function cmdSynthesize(args) {
       aspirationalClaims: parsed.aspirationalClaims || false,
       changeScopeUncovered: changeScopeUncovered || false,
       invalidRefCount,
+      testDesignAnchorIssueCount,
     });
 
     totals.critical += parsed.critical;
@@ -735,87 +743,9 @@ export function cmdSynthesize(args) {
       if (shallow.length > 0) issues.push(`shallow sections: ${shallow.map(s => s.layer).join(", ")}`);
       if (noActionableCommands) issues.push("0 actionable commands in test plan");
 
-      // ── Anchor gate (P1-1 mechanical enforcement) ─────────────
-      // test-design P0/P1 cases must cite a build-artifact Anchor proving the
-      // asserted behavior exists in the built code. Missing Anchor, or a file:line
-      // Anchor whose path does not resolve, escalates verdict PASS → ITERATE.
-      // This turns the test-design-protocol "Anchor (P0/P1 mandatory)" prompt rule
-      // into an enforced verdict — diagnosis alone is not enough.
-      // TC-TIER-* cases are mechanically injected tier baselines (not role-authored
-      // build assertions), so the "anchor proves it's in the built code" rationale
-      // does not apply — they are EXEMPT. Grep-token anchors are accepted on
-      // structural presence only (no semantic check, per scope).
       const anchorRoots = [baseDir, dir].filter(Boolean);
-      const anchorIssues = [];
-      const caseHeadingRe = /^#{2,4}\s+(TC-[\w-]+)/i;
-      const caseBlocks = [];
-      let curCaseId = null;
-      let curCaseStart = -1;
-      for (let i = 0; i < planLines.length; i++) {
-        const hm = planLines[i].match(caseHeadingRe);
-        if (hm) {
-          if (curCaseId) caseBlocks.push({ id: curCaseId, lines: planLines.slice(curCaseStart, i) });
-          curCaseId = hm[1];
-          curCaseStart = i;
-        } else if (curCaseId && /^#{1,2}\s/.test(planLines[i])) {
-          // a higher-level (# or ##) heading closes the current case block
-          caseBlocks.push({ id: curCaseId, lines: planLines.slice(curCaseStart, i) });
-          curCaseId = null;
-        }
-      }
-      if (curCaseId) caseBlocks.push({ id: curCaseId, lines: planLines.slice(curCaseStart) });
-
-      for (const blk of caseBlocks) {
-        if (/^TC-TIER/i.test(blk.id)) continue; // injected baseline → exempt
-        const blockText = blk.lines.join("\n");
-        const prioM = blockText.match(/priority[^\n]*?\b(P[012])\b/i);
-        if (!prioM) continue; // no stated priority → not subject to the anchor rule
-        const priority = prioM[1].toUpperCase();
-        if (priority !== "P0" && priority !== "P1") continue; // P2 exempt
-        const anchorM = blockText.match(/\banchor\b[^\n]*?:\s*(.+)$/im);
-        if (!anchorM) {
-          anchorIssues.push(`${blk.id} (${priority}) missing Anchor`);
-          totals.warning += 1;
-          continue;
-        }
-        // Anchor present. If it looks like file:line, verify the path resolves under
-        // the project base or session dir (reusing the fact-check ref resolution).
-        let anchorVal = anchorM[1].trim().replace(/`/g, "");
-        anchorVal = anchorVal.split(/\s+[—–-]\s+/)[0].trim(); // drop trailing " — note"
-        const flM = anchorVal.match(/^(.+):(\d+)$/);
-        if (flM) {
-          const fpath = flM[1].trim();
-          const fline = parseInt(flM[2], 10);
-          let resolvedPath = null;
-          if (fpath.startsWith("/")) {
-            if (existsSync(fpath)) resolvedPath = fpath;
-          } else {
-            for (const root of anchorRoots) {
-              const cand = join(root, fpath);
-              if (existsSync(cand)) { resolvedPath = cand; break; }
-            }
-          }
-          if (!resolvedPath) {
-            anchorIssues.push(`${blk.id} Anchor ref unresolved: ${fpath}`);
-            totals.warning += 1;
-          } else {
-            // File exists — existence alone is not enough. Validate the cited line
-            // is within bounds, else a phantom test can hang a fabricated line off
-            // a real file. Mirrors the fact-check line-bound check.
-            try {
-              const lineCount = readFileSync(resolvedPath, "utf8").split("\n").length;
-              if (fline < 1 || fline > lineCount) {
-                anchorIssues.push(`${blk.id} Anchor line out of range: ${fpath}:${fline} (file has ${lineCount} lines)`);
-                totals.warning += 1;
-              }
-            } catch {
-              anchorIssues.push(`${blk.id} Anchor ref unresolved: ${fpath}`);
-              totals.warning += 1;
-            }
-          }
-        }
-        // else: grep-token anchor — structural presence is enough at this scope.
-      }
+      const anchorIssues = collectAnchorIssues(planLines, anchorRoots);
+      totals.warning += anchorIssues.length;
       if (anchorIssues.length > 0) issues.push(`anchor: ${anchorIssues.join("; ")}`);
 
       if (issues.length > 0) {

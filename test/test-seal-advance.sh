@@ -88,6 +88,112 @@ check "advance fails on non-gate node" 'echo "$ADV_OUT" | python3 -c "import jso
 check "advance error mentions gate" 'echo "$ADV_OUT" | grep -q "gate"'
 
 echo ""
+echo "=== TEST GROUP 5: seal — brief artifacts satisfy validator ==="
+
+D5="$TMPD/s5"
+mkdir -p "$D5/nodes/brief/run_1"
+echo '{"version":"1.0","flowTemplate":"build-verify","currentNode":"brief","entryNode":"brief","totalSteps":0,"_written_by":"opc-harness","_write_nonce":"abc","_last_modified":"2025-01-01","history":[],"edgeCounts":{}}' > "$D5/flow-state.json"
+cat > "$D5/nodes/brief/build-brief.md" <<'BRIEF'
+## File Plan
+- index.html — main entry, ~200 lines
+- styles.css — all styles, ~150 lines
+
+## Technology Decisions
+- Chart.js v4.4.0 via https://cdn.jsdelivr.net/npm/chart.js@4.4.0
+- Tailwind CSS v3.4.1 via CDN
+
+## Design Tokens (resolved)
+- Primary: #0EA5E9
+- Background: #FFFFFF
+- Text: #1E293B
+
+## Component Inventory
+- Dashboard: 4 cards showing KPI (¥126,560 revenue, 8,846 visits)
+- Button: copy share link control with "Copied!" confirmation
+
+## Constraints
+- Contrast: 4.5:1 body, 3:1 large text
+- Responsive: 992px, 768px, 375px breakpoints
+- Animation: 200ms ease-out transitions
+BRIEF
+echo '{"pass":true}' > "$D5/nodes/brief/run_1/brief-lint-result.json"
+SEAL_BRIEF=$(cd "$D5" && $HARNESS seal --node brief --dir "$D5" 2>/dev/null)
+check "brief seal has no validation errors" 'echo "$SEAL_BRIEF" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"validationErrors\"]==[], d[\"validationErrors\"]"'
+check "brief handshake includes brief artifact" 'python3 - "$D5/nodes/brief/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert any(a["type"]=="brief" for a in d["artifacts"])
+PY'
+check "brief handshake includes report artifact" 'python3 - "$D5/nodes/brief/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert any(a["type"]=="report" for a in d["artifacts"])
+PY'
+
+echo ""
+echo "=== TEST GROUP 6: seal — recursive source and canonical eval parser ==="
+
+D6="$TMPD/s6"
+mkdir -p "$D6/nodes/build/run_1/src" "$D6/nodes/review/run_1"
+echo '{"version":"1.0","flowTemplate":"build-verify","currentNode":"build","entryNode":"build","totalSteps":0,"_written_by":"opc-harness","_write_nonce":"abc","_last_modified":"2025-01-01","history":[],"edgeCounts":{}}' > "$D6/flow-state.json"
+echo 'export const x = 1;' > "$D6/nodes/build/run_1/src/app.ts"
+echo '.copy { color: black; }' > "$D6/nodes/build/run_1/src/app.css"
+SEAL_BUILD=$(cd "$D6" && $HARNESS seal --node build --dir "$D6" 2>/dev/null)
+check "build seal finds recursive source artifacts" 'python3 - "$D6/nodes/build/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+sources=[a for a in d["artifacts"] if a["type"]=="source"]
+assert len(sources)>=2, sources
+PY'
+cat > "$D6/nodes/review/run_1/eval-frontend.md" <<'EOF'
+# Frontend Review
+
+No 🔴 critical findings remain. The prior 🟡 issue was fixed.
+
+VERDICT: PASS FINDINGS[0]
+EOF
+cat > "$D6/nodes/review/run_1/eval-skeptic-owner.md" <<'EOF'
+# Skeptic Owner Review
+
+[CRITICAL] src/app.ts:1 — demo critical finding
+Reasoning: This line is intentionally cited.
+→ Fix: remove the demo issue.
+
+VERDICT: FAIL FINDINGS[1]
+EOF
+SEAL_REVIEW=$(cd "$D6" && $HARNESS seal --node review --dir "$D6" 2>/dev/null)
+check "referential severity prose does not inflate warnings" 'python3 - "$D6/nodes/review/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d["findings"]["warning"] == 0, d["findings"]
+PY'
+check "text severity critical makes seal FAIL" 'python3 - "$D6/nodes/review/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert d["verdict"] == "FAIL", d
+assert d["findings"]["critical"] == 1, d["findings"]
+PY'
+
+echo ""
+echo "=== TEST GROUP 7: seal — test-execution spec is not result evidence ==="
+
+D7="$TMPD/s7"
+mkdir -p "$D7/nodes/test-execute/run_1"
+echo '{"version":"1.0","flowTemplate":"build-verify","currentNode":"test-execute","entryNode":"test-execute","totalSteps":0,"_written_by":"opc-harness","_write_nonce":"abc","_last_modified":"2025-01-01","history":[],"edgeCounts":{}}' > "$D7/flow-state.json"
+cat > "$D7/nodes/test-execute/test-execution.json" <<'JSON'
+{ "testCommand": "echo ok" }
+JSON
+echo "ok" > "$D7/nodes/test-execute/run_1/cli-output.txt"
+SEAL_EXEC=$(cd "$D7" && $HARNESS seal --node test-execute --dir "$D7" 2>/dev/null)
+check "test-execution.json is classified as plan/spec" 'python3 - "$D7/nodes/test-execute/handshake.json" <<PY
+import json,sys
+d=json.load(open(sys.argv[1]))
+assert any(a["type"]=="test-plan" and a["path"]=="test-execution.json" for a in d["artifacts"]), d["artifacts"]
+assert not any(a["type"]=="test-result" and a["path"]=="test-execution.json" for a in d["artifacts"]), d["artifacts"]
+PY'
+check "test-execution spec does not trigger result provenance errors" 'echo "$SEAL_EXEC" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"validationErrors\"]==[], d[\"validationErrors\"]"'
+
+echo ""
 echo "==========================================="
 echo "  Results: $PASS passed, $FAIL failed"
 echo "==========================================="

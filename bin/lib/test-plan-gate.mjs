@@ -49,12 +49,13 @@ function layerCoverage(lines) {
   return { missing, shallow };
 }
 
-function caseBlocks(lines) {
+export function caseBlocks(lines) {
   const blocks = [];
   let cur = null;
   let start = -1;
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^#{2,4}\s+(TC-[\w-]+)/i);
+    const match = lines[i].match(/^#{2,4}\s+(TC-[\w-]+)/i)
+      || lines[i].match(/^\s*[-*]\s+(?:\*\*)?(TC-[\w-]+)\b/i);
     if (match) {
       if (cur) blocks.push({ id: cur, lines: lines.slice(start, i) });
       cur = match[1];
@@ -68,7 +69,27 @@ function caseBlocks(lines) {
   return blocks;
 }
 
-function anchorIssues(lines, roots) {
+function resolveAnchorRef(anchor, roots) {
+  const ref = anchor.split(/\s+[—–-]\s+/)[0].trim().match(/^(.+):(\d+)(?:-(\d+))?$/);
+  if (!ref) return { error: "invalid format" };
+  const file = ref[1].trim();
+  const startLine = Number(ref[2]);
+  const endLine = ref[3] ? Number(ref[3]) : startLine;
+  const resolved = file.startsWith("/")
+    ? (existsSync(file) ? file : null)
+    : roots.map(root => join(root, file)).find(existsSync);
+  if (!resolved) return { error: "unresolved", file };
+  const lineCount = readFileSync(resolved, "utf8").split("\n").length;
+  if (startLine < 1 || startLine > lineCount) {
+    return { error: "line out of range", file, line: startLine, lineCount };
+  }
+  if (endLine < startLine || endLine > lineCount) {
+    return { error: "range out of range", file, line: endLine, lineCount };
+  }
+  return {};
+}
+
+export function anchorIssues(lines, roots) {
   const issues = [];
   for (const block of caseBlocks(lines)) {
     if (/^TC-TIER/i.test(block.id)) continue;
@@ -80,17 +101,15 @@ function anchorIssues(lines, roots) {
       issues.push(`${block.id} (${priority}) missing Anchor`);
       continue;
     }
-    const ref = anchor.split(/\s+[—–-]\s+/)[0].trim().match(/^(.+):(\d+)$/);
-    if (!ref) continue;
-    const resolved = roots.map(root => join(root, ref[1].trim())).find(existsSync);
-    if (!resolved) {
-      issues.push(`${block.id} Anchor ref unresolved: ${ref[1].trim()}`);
-      continue;
-    }
-    const line = Number(ref[2]);
-    const lineCount = readFileSync(resolved, "utf8").split("\n").length;
-    if (line < 1 || line > lineCount) {
-      issues.push(`${block.id} Anchor line out of range: ${ref[1].trim()}:${line}`);
+    const result = resolveAnchorRef(anchor, roots);
+    if (result.error === "invalid format") {
+      issues.push(`${block.id} Anchor invalid format: ${anchor}`);
+    } else if (result.error === "unresolved") {
+      issues.push(`${block.id} Anchor ref unresolved: ${result.file}`);
+    } else if (result.error === "line out of range") {
+      issues.push(`${block.id} Anchor line out of range: ${result.file}:${result.line}`);
+    } else if (result.error === "range out of range") {
+      issues.push(`${block.id} Anchor range out of range: ${result.file}:${result.line}`);
     }
   }
   return issues;

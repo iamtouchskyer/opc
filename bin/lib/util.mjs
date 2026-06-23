@@ -93,7 +93,7 @@ export const IDEMPOTENCY_WINDOW_MS = 5000;
  * 1. Try git root (covers 99% of real usage — subdirs all hash the same)
  * 2. Fallback to realpath(cwd) with trailing slash stripped
  */
-function getProjectRoot(cwd = process.cwd()) {
+export function getProjectRoot(cwd = process.cwd()) {
   try {
     const gitRoot = execSync("git rev-parse --show-toplevel", {
       cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],

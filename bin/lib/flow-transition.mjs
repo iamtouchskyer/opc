@@ -10,7 +10,7 @@ import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-te
 import { validateHandshakeData } from "./flow-core.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync, gcSessions,
+  getFlag, resolveDir, atomicWriteSync, gcSessions, getProjectRoot,
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
@@ -51,6 +51,35 @@ function testEvidenceContext(dir, handshake) {
     expectedSourcePlanHash: spec.sourcePlanHash,
     allowVacuousChecks: spec.allowVacuousChecks,
   };
+}
+
+function synthesizeBaseForState(state) {
+  if (typeof state?.projectRoot === "string" && state.projectRoot) return state.projectRoot;
+  return getProjectRoot();
+}
+
+function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
+  const reasons = [];
+  if (!Array.isArray(handshake?.artifacts)) return reasons;
+  const evidenceContext = testEvidenceContext(dir, handshake);
+  for (const art of handshake.artifacts) {
+    if (art.type !== "test-result" || !/\.json$/i.test(art.path || "")) continue;
+    const artPath = resolve(dirname(hsPath), art.path);
+    let data;
+    try {
+      data = JSON.parse(readFileSync(artPath, "utf8"));
+    } catch {
+      reasons.push(`artifact ${art.path} unreadable — fail-closed`);
+      continue;
+    }
+    reasons.push(...collectTestResultReasons(data, {
+      handshake,
+      nodeId,
+      artifact: art,
+      ...evidenceContext,
+    }));
+  }
+  return reasons;
 }
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
@@ -307,6 +336,15 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
         allowed: false,
         reason: `pre-transition check: handshake.json for '${from}' has errors: ${hsErrors.join("; ")}`,
         handshakeErrors: hsErrors,
+      }));
+      return;
+    }
+    const structuredReasons = collectHandshakeStructuredReasons(dir, from, fromHandshakePath, hsData);
+    if (structuredReasons.length > 0 && verdict !== "FAIL") {
+      console.log(JSON.stringify({
+        allowed: false,
+        reason: `pre-transition structured result check failed: ${structuredReasons.join("; ")} — verdict must be FAIL, not ${verdict}`,
+        structuredFailReasons: structuredReasons,
       }));
       return;
     }
@@ -830,7 +868,7 @@ export function cmdAdvance(args) {
   try {
     synthOutput = execFileSync(
       "node",
-      [harnessPath, "synthesize", "--node", upstreamNode, "--dir", dir],
+      [harnessPath, "synthesize", "--node", upstreamNode, "--dir", dir, "--base", synthesizeBaseForState(state)],
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
   } catch (err) {
