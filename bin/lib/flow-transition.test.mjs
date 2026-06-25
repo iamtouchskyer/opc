@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { checkStructuredResults } from "./flow-transition.mjs";
+import { appendProvenanceEvent } from "./provenance-ledger.mjs";
 
 const TMPBASE = join(os.homedir(), ".opc", "sessions", `ft-test-${Date.now()}`);
 const HARNESS = join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
@@ -80,6 +81,24 @@ function sha256(text) {
 
 function artifactHash(content) {
   return sha256(typeof content === "string" ? content : JSON.stringify(content));
+}
+
+function addTestLedger(dir, { nodeId = "test-execute", runId = "run_1", sourceNode = "test-design", commandHash, sourcePlanHash, resultHash, resultFile = "test-results.json" }) {
+  const ledger = appendProvenanceEvent(dir, {
+    eventType: "test-command-result",
+    nodeId,
+    runId,
+    sourceNode,
+    commandHash,
+    sourcePlanHash,
+    resultHash,
+    resultPath: `nodes/${nodeId}/${runId}/${resultFile}`,
+    exitCode: 0,
+  });
+  const hsPath = join(dir, "nodes", nodeId, "handshake.json");
+  const hs = JSON.parse(readFileSync(hsPath, "utf8"));
+  hs.testEvidenceProvenance.ledger = ledger;
+  writeFileSync(hsPath, JSON.stringify(hs));
 }
 
 const TEST_PLAN = "# Test Plan\n\n### TC-TESTER-01\n- **Priority**: P0\n- **Steps**: run command\n";
@@ -341,8 +360,39 @@ describe("checkStructuredResults — Step 1.5", () => {
         }],
       },
     });
+    addTestLedger(dir, { commandHash, sourcePlanHash, resultHash: artifactHash(result) });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
     assert.equal(reasons.some(r => r.includes("testCommand provenance")), false);
+    assert.equal(reasons.some(r => r.includes("provenance ledger")), false);
+  });
+
+  test("test-execute public-hash provenance without signed ledger → FAIL", () => {
+    const command = "node -e \"process.exit(0)\"";
+    const commandHash = sha256(command);
+    const sourcePlanHash = sha256(TEST_PLAN);
+    const result = {
+      provenance: { kind: "opc-test-command", commandHash, sourcePlanHash, executionActor: "opc-harness:test-command" },
+      checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+    };
+    const dir = setupDir("t8f1-command-provenance-no-ledger", {
+      "test-design": {
+        artifacts: [{ type: "test-plan", path: "run_1/test-plan.md", _content: TEST_PLAN }],
+        testCommand: command,
+      },
+      "test-execute": {
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash,
+          sourcePlanHash, resultHash: artifactHash(result), executionActor: "opc-harness:test-command",
+        },
+        artifacts: [{
+          type: "test-result",
+          path: "run_1/test-results.json",
+          _content: result,
+        }],
+      },
+    });
+    const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
+    assert.ok(reasons.some(r => r.includes("signed provenance ledger")));
   });
 
   test("test-execute command provenance without source test-plan hash → FAIL", () => {
@@ -418,6 +468,7 @@ describe("checkStructuredResults — Step 1.5", () => {
         }],
       },
     });
+    addTestLedger(dir, { commandHash, sourcePlanHash, resultHash: artifactHash(original) });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
     assert.ok(reasons.some(r => r.includes("result hash")));
   });
@@ -489,6 +540,7 @@ describe("checkStructuredResults — Step 1.5", () => {
         }],
       },
     });
+    addTestLedger(dir, { commandHash, sourcePlanHash, resultHash: artifactHash(result) });
     const reasons = checkStructuredResults(dir, makeExecState(), EXEC_TEMPLATE, "gate");
     assert.equal(reasons.some(r => r.includes("vacuous PASS")), false);
     assert.equal(reasons.some(r => r.includes("testCommand provenance")), false);

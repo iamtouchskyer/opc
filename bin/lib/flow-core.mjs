@@ -832,8 +832,10 @@ export function cmdSeal(args) {
         errors.push(...collectTestResultReasons(data, {
           handshake,
           nodeId,
+          runId: handshake.runId,
           artifact: art,
           artifactHash: createHash("sha256").update(text).digest("hex"),
+          sessionDir: dir,
           ...evidenceContext,
         }));
       } catch {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { spawnSync } from "child_process";
 import { createHash } from "crypto";
 import { join, resolve } from "path";
+import { appendProvenanceEvent } from "./provenance-ledger.mjs";
 
 const EXECUTION_ACTOR = "opc-harness:test-command";
 
@@ -192,13 +193,26 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
   const result = runTestCommand(spec, cwdInfo.cwd);
   const summary = writeResultFiles(runDir, spec, result, cwdInfo);
   const verdict = summary.exitCode === 0 ? "PASS" : "FAIL";
+  const commandHash = testCommandHash(spec.testCommand);
+  const ledger = appendProvenanceEvent(sessionDir, {
+    eventType: "test-command-result",
+    nodeId: targetNode,
+    runId,
+    sourceNode,
+    commandHash,
+    sourcePlanHash: spec.sourcePlanHash,
+    resultHash: summary.resultHash,
+    resultPath: `nodes/${targetNode}/${runId}/test-command-result.json`,
+    exitCode: summary.exitCode,
+  });
   const testEvidenceProvenance = {
     kind: "opc-test-command",
     sourceNode,
-    commandHash: testCommandHash(spec.testCommand),
+    commandHash,
     sourcePlanHash: spec.sourcePlanHash,
     resultHash: summary.resultHash,
     executionActor: EXECUTION_ACTOR,
+    ledger,
   };
   const handshake = {
     nodeId: targetNode,

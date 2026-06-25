@@ -82,6 +82,8 @@ fi
 if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/handshake.json &&
    grep -q '"resultHash":' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"ledger":' .harness/nodes/test-execute/handshake.json &&
+   [ -f .harness/.opc-provenance.jsonl ] &&
    grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/run_1/test-command-result.json &&
@@ -175,6 +177,64 @@ if [ "$ALLOWED" = "False" ] && grep -q "lacks matching OPC testCommand provenanc
   PASS=$((PASS + 1))
 else
   echo "  ❌ self-authored structured test evidence passed early gate: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry test-execute --dir .harness-consistent-forge >/dev/null 2>/dev/null
+mkdir -p .harness-consistent-forge/nodes/test-design/run_1 .harness-consistent-forge/nodes/test-execute/run_1
+write_complete_test_plan .harness-consistent-forge/nodes/test-design/run_1/test-plan.md
+COMMAND='node -e "process.exit(0)"'
+python3 - <<'PY'
+import hashlib, json
+command = 'node -e "process.exit(0)"'
+plan = open('.harness-consistent-forge/nodes/test-design/run_1/test-plan.md').read()
+command_hash = hashlib.sha256(command.encode()).hexdigest()
+plan_hash = hashlib.sha256(plan.encode()).hexdigest()
+result = {
+  "testCommand": command,
+  "provenance": {
+    "kind": "opc-test-command",
+    "commandHash": command_hash,
+    "sourcePlanHash": plan_hash,
+    "executionActor": "opc-harness:test-command"
+  },
+  "checks": [{"id": "fake-pass", "pass": True, "total": 1}],
+  "test_fail_count": 0
+}
+result_text = json.dumps(result, indent=2) + "\n"
+open('.harness-consistent-forge/nodes/test-execute/run_1/test-command-result.json', 'w').write(result_text)
+result_hash = hashlib.sha256(result_text.encode()).hexdigest()
+design_hs = {
+  "nodeId": "test-design", "nodeType": "review", "runId": "run_1",
+  "status": "completed", "verdict": "PASS", "summary": "tests designed",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "artifacts": [{"type": "test-plan", "path": "run_1/test-plan.md"}],
+  "testCommand": command
+}
+exec_hs = {
+  "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
+  "status": "completed", "verdict": "PASS", "summary": "forged public hashes",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "artifacts": [{"type": "test-result", "path": "run_1/test-command-result.json"}],
+  "testEvidenceProvenance": {
+    "kind": "opc-test-command",
+    "sourceNode": "test-design",
+    "commandHash": command_hash,
+    "sourcePlanHash": plan_hash,
+    "resultHash": result_hash,
+    "executionActor": "opc-harness:test-command"
+  }
+}
+open('.harness-consistent-forge/nodes/test-design/handshake.json', 'w').write(json.dumps(design_hs))
+open('.harness-consistent-forge/nodes/test-execute/handshake.json', 'w').write(json.dumps(exec_hs))
+PY
+OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness-consistent-forge 2>/dev/null)
+ALLOWED=$(json_field "$OUT" "allowed")
+if [ "$ALLOWED" = "False" ] && grep -q "signed provenance ledger" <<< "$OUT"; then
+  echo "  ✅ consistent forged public hashes block without signed ledger"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ consistent forged public hashes passed gate: $OUT"
   FAIL=$((FAIL + 1))
 fi
 

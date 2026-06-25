@@ -228,8 +228,10 @@ function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
     reasons.push(...collectTestResultReasons(data, {
       handshake,
       nodeId,
+      runId: handshake?.runId,
       artifact: art,
       artifactHash: sha256(text),
+      sessionDir: dir,
       ...evidenceContext,
     }));
   }
@@ -292,8 +294,10 @@ export function checkStructuredResults(dir, state, template, currentNode) {
       structuredFailReasons.push(...collectTestResultReasons(data, {
         handshake: hs,
         nodeId: entry.nodeId,
+        runId: entry.runId,
         artifact: art,
         artifactHash: sha256(text),
+        sessionDir: dir,
         ...evidenceContext,
       }));
     }
