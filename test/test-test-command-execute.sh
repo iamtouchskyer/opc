@@ -93,6 +93,18 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+SEAL_OUT=$($HARNESS seal --node test-execute --dir .harness 2>/dev/null)
+SEAL_ERRORS=$(json_field "$SEAL_OUT" "validationErrors")
+if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"resultHash":' .harness/nodes/test-execute/handshake.json &&
+   [ "$SEAL_ERRORS" = "[]" ]; then
+  echo "  ✅ seal preserves harness testCommand provenance"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ seal clobbered testCommand provenance or reported errors: $SEAL_OUT"
+  FAIL=$((FAIL + 1))
+fi
+
 python3 - <<'PY'
 import json
 path = ".harness/nodes/test-execute/run_1/test-command-result.json"
@@ -131,7 +143,7 @@ write_test_design_handshake .harness-fail "node -e \"process.exit(7)\""
 $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness-fail >/dev/null 2>/dev/null
 OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness-fail 2>/dev/null)
 ALLOWED=$(json_field "$OUT" "allowed")
-if [ "$ALLOWED" = "False" ] && grep -q "test(s) failed" <<< "$OUT"; then
+if [ "$ALLOWED" = "False" ] && { grep -q "test(s) failed" <<< "$OUT" || grep -q "sealed verdict is.*FAIL" <<< "$OUT"; }; then
   echo "  ✅ failed testCommand blocks test-execute → gate through structured result"
   PASS=$((PASS + 1))
 else

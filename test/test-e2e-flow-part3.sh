@@ -180,9 +180,9 @@ echo "=== E2E TEST 8: cycle limit enforcement ==="
 rm -rf .harness
 $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 for round in 1 2 3; do
-  write_warning_eval .harness review "role${round}"
+  write_good_eval .harness review "role${round}"
   write_good_eval .harness review "backup${round}"
-  write_handshake .harness review "Round $round" "ITERATE"
+  write_handshake .harness review "Round $round" "PASS"
   $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
   write_handshake .harness gate "Gate iterates round $round" "ITERATE" gate
   TRANS=$($HARNESS transition --from gate --to review --verdict ITERATE --flow review --dir .harness 2>/dev/null || echo '{"allowed":false}')
@@ -190,9 +190,9 @@ for round in 1 2 3; do
     assert_field_eq "8.${round}: loop $round allowed" "$TRANS" "allowed" 'true'
   fi
 done
-write_warning_eval .harness review "role4"
+write_good_eval .harness review "role4"
 write_good_eval .harness review "backup4"
-write_handshake .harness review "Round 4" "ITERATE"
+write_handshake .harness review "Round 4" "PASS"
 TRANS_4=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null || echo '{"allowed":false}')
 write_handshake .harness gate "Gate round 4" "ITERATE" gate
 TRANS_LOOP=$($HARNESS transition --from gate --to review --verdict ITERATE --flow review --dir .harness 2>/dev/null || echo '{"allowed":false,"reason":"cycle limit"}')

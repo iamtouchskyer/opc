@@ -681,6 +681,25 @@ function inferEvalVerdict(evalArtifacts, nodeDir) {
   return { verdict, findings };
 }
 
+function readJsonFile(path) {
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; }
+}
+
+function preserveHarnessTestEvidence(target, existing) {
+  const prov = existing?.testEvidenceProvenance;
+  if (prov?.kind !== "opc-test-command" || prov?.executionActor !== "opc-harness:test-command") return;
+  for (const key of [
+    "testCommand",
+    "testCommandCwd",
+    "testCommandCwdSource",
+    "prerequisites",
+    "testEvidenceProvenance",
+    "testEvidencePolicy",
+  ]) {
+    if (Object.hasOwn(existing, key)) target[key] = existing[key];
+  }
+}
+
 export function cmdSeal(args) {
   const nodeId = getFlag(args, "node");
   const runOverride = getFlag(args, "run");
@@ -748,6 +767,8 @@ export function cmdSeal(args) {
   }
 
   const runId = runDir.split("/").pop();
+  const handshakePath = join(nodeDir, "handshake.json");
+  const existingHandshake = readJsonFile(handshakePath);
 
   // Scan files and classify artifacts
   const files = collectFilesRecursive(runDir).map(f => `${runId}/${f}`);
@@ -786,13 +807,14 @@ export function cmdSeal(args) {
     findings: null,
   };
 
+  if (nodeType === "execute") preserveHarnessTestEvidence(handshake, existingHandshake);
+
   const { critical, warning, suggestion } = inferred.findings;
   if (critical + warning + suggestion > 0) {
     handshake.findings = { critical, warning, suggestion };
   }
 
   // Write handshake
-  const handshakePath = join(nodeDir, "handshake.json");
   atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2) + "\n");
 
   // Validate
@@ -805,11 +827,13 @@ export function cmdSeal(args) {
     for (const art of artifacts) {
       if (art.type !== "test-result" || !/\.json$/i.test(art.path)) continue;
       try {
-        const data = JSON.parse(readFileSync(join(nodeDir, art.path), "utf8"));
+        const text = readFileSync(join(nodeDir, art.path), "utf8");
+        const data = JSON.parse(text);
         errors.push(...collectTestResultReasons(data, {
           handshake,
           nodeId,
           artifact: art,
+          artifactHash: createHash("sha256").update(text).digest("hex"),
           ...evidenceContext,
         }));
       } catch {

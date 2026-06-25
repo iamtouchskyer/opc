@@ -144,6 +144,39 @@ function collectGateSynthesizeReasons(dir, state, template, currentNode, verdict
   return reasons;
 }
 
+function normalizeHandshakeVerdict(value) {
+  const verdict = String(value || "").toUpperCase();
+  return ["PASS", "FAIL", "ITERATE", "BLOCKED"].includes(verdict) ? verdict : null;
+}
+
+function collectGateHandshakeVerdictReasons(dir, state, template, currentNode, verdict) {
+  if (verdict !== "PASS") return [];
+  const reasons = [];
+  const seen = new Set();
+  for (const entry of entriesSinceLastGate(state, template, currentNode)) {
+    const nodeId = entry.nodeId;
+    const nodeType = template.nodeTypes?.[nodeId];
+    if (seen.has(nodeId) || !nodeType || nodeType === "gate") continue;
+    seen.add(nodeId);
+    const hsPath = nodeHandshakePath(dir, nodeId);
+    if (!existsSync(hsPath)) continue;
+    let handshake;
+    try { handshake = JSON.parse(readFileSync(hsPath, "utf8")); } catch { continue; }
+    const sealedVerdict = normalizeHandshakeVerdict(handshake?.verdict);
+    if (sealedVerdict && sealedVerdict !== "PASS") {
+      reasons.push(`sealed verdict for ${nodeId} is ${sealedVerdict}, not PASS`);
+    }
+  }
+  return reasons;
+}
+
+function collectGateVerdictReasons(dir, state, template, currentNode, verdict) {
+  return [
+    ...collectGateHandshakeVerdictReasons(dir, state, template, currentNode, verdict),
+    ...collectGateSynthesizeReasons(dir, state, template, currentNode, verdict),
+  ];
+}
+
 function hasOpcTestCommandEvidence(handshake) {
   const prov = handshake?.testEvidenceProvenance;
   return handshake?.nodeType === "execute"
@@ -281,7 +314,7 @@ export async function cmdTransition(args) {
           let st = null;
           try { st = JSON.parse(readFileSync(stPath, "utf8")); } catch { /* handled below */ }
           if (st) {
-            const synthReasons = collectGateSynthesizeReasons(dir, st, resolvedTpl.template, from, verdict);
+            const synthReasons = collectGateVerdictReasons(dir, st, resolvedTpl.template, from, verdict);
             if (synthReasons.length > 0) {
               console.log(JSON.stringify({
                 allowed: false,
@@ -433,6 +466,10 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
     });
     if (hsData.status !== "completed") {
       hsErrors.push(`status is '${hsData.status}', expected 'completed'`);
+    }
+    const sealedVerdict = normalizeHandshakeVerdict(hsData.verdict);
+    if (sealedVerdict && sealedVerdict !== verdict) {
+      hsErrors.push(`sealed verdict is '${sealedVerdict}', but requested transition verdict is '${verdict}'`);
     }
     for (const w of hsWarnings) {
       console.error(`\u26a0\ufe0f  ${w}`);
@@ -660,7 +697,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   }
 
   if (isGate) {
-    const synthReasons = collectGateSynthesizeReasons(dir, state, template, from, verdict);
+    const synthReasons = collectGateVerdictReasons(dir, state, template, from, verdict);
     if (synthReasons.length > 0) {
       console.log(JSON.stringify({
         allowed: false,
@@ -1121,6 +1158,25 @@ export function cmdFinalize(args) {
     return;
   }
 
+  const currentNodeType = template.nodeTypes?.[currentNode];
+  const currentIsGate = currentNodeType === "gate" || currentNode === "gate" || currentNode.startsWith("gate-");
+  if (currentIsGate) {
+    const synthReasons = collectGateVerdictReasons(dir, state, template, currentNode, "PASS");
+    const structuredReasons = checkStructuredResults(dir, state, template, currentNode);
+    if (synthReasons.length > 0 || structuredReasons.length > 0) {
+      console.log(JSON.stringify({
+        finalized: false,
+        error: [
+          ...synthReasons.map(r => `gate verdict check failed: ${r}`),
+          ...structuredReasons.map(r => `Step 1.5 structural check failed: ${r}`),
+        ].join("; "),
+        synthesizeFailReasons: synthReasons,
+        structuredFailReasons: structuredReasons,
+      }));
+      return;
+    }
+  }
+
   // --strict: validate ALL nodes have valid handshakes before finalizing
   if (strict) {
     const chainErrors = [];
@@ -1198,6 +1254,17 @@ export function cmdFinalize(args) {
       error: `terminal node handshake status is '${hsData.status}', expected 'completed'`,
     }));
     return;
+  }
+
+  if (currentIsGate) {
+    const terminalVerdict = normalizeHandshakeVerdict(hsData.verdict);
+    if (terminalVerdict && terminalVerdict !== "PASS") {
+      console.log(JSON.stringify({
+        finalized: false,
+        error: `terminal gate verdict is '${terminalVerdict}', expected PASS`,
+      }));
+      return;
+    }
   }
 
   if (state.status === "completed") {

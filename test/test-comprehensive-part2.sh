@@ -35,16 +35,38 @@ check_json() {
   fi
 }
 
+write_clean_eval_file() {
+  local target="$1" role="$2" verdict="${3:-PASS}"
+  {
+    echo "# $role Review"
+    echo "Role: $role"
+    echo "## Scope"
+    for i in $(seq 1 18); do echo "$role scope $i records a concrete review pass across the changed fixture."; done
+    echo "## Evidence"
+    for i in $(seq 1 18); do echo "$role evidence $i: command routing, artifacts, state history, and gate inputs were inspected."; done
+    echo "## Decision"
+    for i in $(seq 1 18); do echo "$role decision $i is $verdict after checking the relevant harness contract and provenance path."; done
+    echo "VERDICT: $verdict FINDINGS[0]"
+  } > "$target"
+}
+
 write_review_hs() {
   local DIR="$1" NODE="$2" VERDICT="${3:-PASS}"
   mkdir -p "$DIR/nodes/$NODE/run_1"
-  printf '# Review A\nPerspective: Security\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval-a.md"
-  printf '# Review B\nPerspective: Performance\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval-b.md"
+  write_clean_eval_file "$DIR/nodes/$NODE/run_1/eval-skeptic-owner.md" "skeptic-owner" "$VERDICT"
+  write_clean_eval_file "$DIR/nodes/$NODE/run_1/eval-comprehensive-peer.md" "comprehensive-peer" "$VERDICT"
+  local artifacts='[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-comprehensive-peer.md"}]'
+  local extra=''
   if [ "$NODE" = "test-design" ]; then
     write_complete_test_plan "$DIR/nodes/$NODE/run_1/test-plan.md"
+    cat > "$DIR/nodes/$NODE/test-execution.json" <<'JSON'
+{"testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture command"]}
+JSON
+    artifacts='[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-comprehensive-peer.md"},{"type":"test-plan","path":"run_1/test-plan.md"},{"type":"test-plan","path":"test-execution.json"}]'
+    extra=',"testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture command"]'
   fi
-  printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":"%s"}\n' \
-    "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERDICT" > "$DIR/nodes/$NODE/handshake.json"
+  printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":%s,"verdict":"%s"%s}\n' \
+    "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$artifacts" "$VERDICT" "$extra" > "$DIR/nodes/$NODE/handshake.json"
 }
 
 write_build_hs() {
@@ -223,7 +245,6 @@ write_review_hs ".harness" "code-review"
 sleep 1; opc transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
 write_review_hs ".harness" "test-design"
 sleep 1; opc transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
-write_exec_hs ".harness" "test-execute"
 sleep 1; opc transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
 R=$(opc finalize --dir .harness)
 check_json "build-verify complete" "d['finalized']==True" "$R"
