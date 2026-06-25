@@ -282,7 +282,7 @@ cat > .h-strict/nodes/gate/handshake.json << 'HS'
 HS
 OUT=$($HARNESS finalize --dir .h-strict --strict)
 assert_field_eq "strict fails" "$OUT" "finalized" "false"
-assert_contains "chain validation" "$OUT" "chain validation"
+assert_contains "missing upstream handshake" "$OUT" "handshake for review is missing"
 
 echo ""
 echo "--- 6.5: Finalize no state ---"

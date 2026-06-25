@@ -33,6 +33,20 @@ write_review_hs() {
     "$node" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$verdict" > "$dir/nodes/$node/handshake.json"
 }
 
+set_gate_state() {
+  python3 - <<'PY'
+import json
+path = ".harness/flow-state.json"
+data = json.load(open(path))
+data["currentNode"] = "gate"
+data["history"] = [
+  {"nodeId": "review", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
+  {"nodeId": "gate", "runId": "run_1", "timestamp": "2026-01-01T00:01:00.000Z"},
+]
+open(path, "w").write(json.dumps(data, indent=2) + "\n")
+PY
+}
+
 echo "=== TEST GROUP 1: --to null delegates to finalize ==="
 
 D1="$TMPD/t1"
@@ -78,20 +92,37 @@ D4="$TMPD/t4"
 mkdir -p "$D4" && cd "$D4"
 $HARNESS init --flow review --entry review --dir .harness > /dev/null 2>&1
 write_review_hs ".harness" "review" "ITERATE" "FINDINGS[1]"
-python3 - <<'PY'
-import json
-path = ".harness/flow-state.json"
-data = json.load(open(path))
-data["currentNode"] = "gate"
-data["history"] = [
-  {"nodeId": "review", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
-  {"nodeId": "gate", "runId": "run_1", "timestamp": "2026-01-01T00:01:00.000Z"},
-]
-open(path, "w").write(json.dumps(data, indent=2) + "\n")
-PY
+set_gate_state
 
 RESULT4=$(cd "$D4" && $HARNESS finalize --dir .harness 2>&1)
 check "finalize rejects gate with upstream ITERATE" 'echo "$RESULT4" | grep -q "sealed verdict for review is ITERATE"'
+
+echo ""
+echo "=== TEST GROUP 6: direct finalize blocks corrupt upstream handshake ==="
+
+D5="$TMPD/t5"
+mkdir -p "$D5" && cd "$D5"
+$HARNESS init --flow review --entry review --dir .harness > /dev/null 2>&1
+write_review_hs ".harness" "review"
+set_gate_state
+printf '{broken json\n' > .harness/nodes/review/handshake.json
+
+RESULT5=$(cd "$D5" && $HARNESS finalize --dir .harness 2>&1)
+check "finalize rejects corrupt upstream handshake" 'echo "$RESULT5" | grep -q "handshake for review is corrupt"'
+
+echo ""
+echo "=== TEST GROUP 7: direct finalize blocks missing upstream handshake ==="
+
+D6="$TMPD/t6"
+mkdir -p "$D6" && cd "$D6"
+$HARNESS init --flow review --entry review --dir .harness > /dev/null 2>&1
+write_review_hs ".harness" "review"
+set_gate_state
+rm -f .harness/nodes/review/handshake.json
+rm -rf .harness/nodes/review/run_1
+
+RESULT6=$(cd "$D6" && $HARNESS finalize --dir .harness 2>&1)
+check "finalize rejects missing upstream handshake" 'echo "$RESULT6" | grep -q "handshake for review is missing"'
 
 echo ""
 echo "==========================================="

@@ -36,6 +36,25 @@ json.dump(data, open(path, "w"), indent=2)
 PY
 }
 
+write_test_execute_report_handshake() {
+  local dir="$1" run_id="$2"
+  python3 - "$dir/nodes/test-execute/handshake.json" "$run_id" <<'PY'
+import json, sys
+path, run_id = sys.argv[1], sys.argv[2]
+data = {
+  "nodeId": "test-execute",
+  "nodeType": "execute",
+  "runId": run_id,
+  "status": "completed",
+  "verdict": "PASS",
+  "summary": "test execution report available",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "artifacts": [{"type": "report", "path": f"{run_id}/report.json"}]
+}
+open(path, "w").write(json.dumps(data))
+PY
+}
+
 echo "Test: gate-criteria.json"
 echo "========================"
 echo ""
@@ -80,6 +99,7 @@ write_state_history .harness-run
 cat > .harness-run/nodes/test-execute/run_1/report.json <<'JSON'
 {"summary":{"average_score":4.2}}
 JSON
+write_test_execute_report_handshake .harness-run run_1
 cat > .harness-run/nodes/test-execute/run_1/gate-criteria.json <<'JSON'
 {"checks":[{"id":"run-score","source":"report.json","path":"$.summary.average_score","operator":">=","threshold":4.0}]}
 JSON
@@ -105,6 +125,7 @@ JSON
 cat > .harness-retry/nodes/test-execute/run_2/report.json <<'JSON'
 {"summary":{"average_score":4.5}}
 JSON
+write_test_execute_report_handshake .harness-retry run_2
 cat > .harness-retry/nodes/test-execute/run_2/gate-criteria.json <<'JSON'
 {"checks":[{"id":"score-new","source":"report.json","path":"$.summary.average_score","operator":">=","threshold":4.0}]}
 JSON

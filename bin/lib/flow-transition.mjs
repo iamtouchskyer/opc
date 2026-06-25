@@ -159,9 +159,17 @@ function collectGateHandshakeVerdictReasons(dir, state, template, currentNode, v
     if (seen.has(nodeId) || !nodeType || nodeType === "gate") continue;
     seen.add(nodeId);
     const hsPath = nodeHandshakePath(dir, nodeId);
-    if (!existsSync(hsPath)) continue;
+    if (!existsSync(hsPath)) {
+      reasons.push(`handshake for ${nodeId} is missing, cannot prove PASS`);
+      continue;
+    }
     let handshake;
-    try { handshake = JSON.parse(readFileSync(hsPath, "utf8")); } catch { continue; }
+    try {
+      handshake = JSON.parse(readFileSync(hsPath, "utf8"));
+    } catch (err) {
+      reasons.push(`handshake for ${nodeId} is corrupt, cannot prove PASS: ${err.message}`);
+      continue;
+    }
     const sealedVerdict = normalizeHandshakeVerdict(handshake?.verdict);
     if (sealedVerdict && sealedVerdict !== "PASS") {
       reasons.push(`sealed verdict for ${nodeId} is ${sealedVerdict}, not PASS`);
@@ -240,9 +248,17 @@ export function checkStructuredResults(dir, state, template, currentNode) {
     if (seen.has(entry.nodeId)) continue;
     seen.add(entry.nodeId);
     const hsPath = nodeHandshakePath(dir, entry.nodeId);
-    if (!existsSync(hsPath)) continue;
+    if (!existsSync(hsPath)) {
+      structuredFailReasons.push(`handshake for ${entry.nodeId} is missing — fail-closed`);
+      continue;
+    }
     let hs;
-    try { hs = JSON.parse(readFileSync(hsPath, "utf8")); } catch { continue; }
+    try {
+      hs = JSON.parse(readFileSync(hsPath, "utf8"));
+    } catch (err) {
+      structuredFailReasons.push(`handshake for ${entry.nodeId} is corrupt — fail-closed: ${err.message}`);
+      continue;
+    }
     if (!Array.isArray(hs.artifacts)) continue;
     if (template.requiredTestCommandEvidence && hasOpcTestCommandEvidence(hs)) {
       requiredTestCommandEvidenceFound = true;

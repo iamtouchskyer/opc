@@ -182,11 +182,11 @@ rm -rf "$D"
 cd /tmp
 
 # ─────────────────────────────────────────────────────────────────
-# REAL-5: Missing upstream handshake skips backlog check
+# REAL-5: Missing upstream handshake fails closed
 # flow-transition.mjs:170-172
 # ─────────────────────────────────────────────────────────────────
 echo ""
-echo "── REAL-5: missing upstream handshake → backlog check skipped"
+echo "── REAL-5: missing upstream handshake → gate fails closed"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
@@ -212,10 +212,10 @@ s['totalSteps']=4
 s['edgeCounts']={}
 json.dump(s,open('flow-state.json','w'),indent=2)
 "
-# PASS from gate — no upstream handshake → backlog check should be silently skipped → transition allowed
+# PASS from gate — no upstream handshake means OPC cannot prove prior node was clean.
 OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
-# Without upstream handshake, no findings.warning to trigger backlog enforcement
-assert_field_eq "$OUT" "['allowed']" "True" "missing upstream handshake → backlog skipped → allowed"
+assert_field_eq "$OUT" "['allowed']" "False" "missing upstream handshake blocks gate transition"
+assert_contains "$OUT" "handshake for test-execute is missing" "missing upstream handshake reported"
 rm -rf "$D"
 cd /tmp
 
