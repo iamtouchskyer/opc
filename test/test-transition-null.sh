@@ -125,6 +125,19 @@ RESULT6=$(cd "$D6" && $HARNESS finalize --dir .harness 2>&1)
 check "finalize rejects missing upstream handshake" 'echo "$RESULT6" | grep -q "handshake for review is missing"'
 
 echo ""
+echo "=== TEST GROUP 8: direct finalize blocks missing review eval artifact ==="
+
+D7="$TMPD/t7"
+mkdir -p "$D7" && cd "$D7"
+$HARNESS init --flow review --entry review --dir .harness > /dev/null 2>&1
+write_review_hs ".harness" "review"
+set_gate_state
+rm -rf .harness/nodes/review/run_1
+
+RESULT7=$(cd "$D7" && $HARNESS finalize --dir .harness 2>&1)
+check "finalize rejects missing review eval artifact" 'echo "$RESULT7" | grep -q "review eval artifact for review unreadable"'
+
+echo ""
 echo "==========================================="
 echo "  Results: $PASS passed, $FAIL failed"
 echo "==========================================="

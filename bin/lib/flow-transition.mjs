@@ -93,25 +93,25 @@ function entriesSinceLastGate(state, template, currentNode) {
   return lastGateHistIdx === -1 ? state.history : state.history.slice(lastGateHistIdx + 1);
 }
 
-function hasEvalFiles(dir, nodeId) {
-  const nodeDir = join(dir, "nodes", nodeId);
-  let runs = [];
-  try {
-    runs = readdirSync(nodeDir, { withFileTypes: true })
-      .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
-      .sort((a, b) => Number(b.name.slice(4)) - Number(a.name.slice(4)));
-  } catch {
-    return false;
+function collectReviewEvalArtifactReasons(hsPath, nodeId, handshake) {
+  const artifacts = Array.isArray(handshake?.artifacts) ? handshake.artifacts : [];
+  const evalArtifacts = artifacts.filter(a => a?.type === "eval" || a?.type === "evaluation");
+  if (evalArtifacts.length === 0) {
+    return [`review node ${nodeId} has no eval artifacts, cannot prove PASS`];
   }
-  for (const run of runs) {
-    const runDir = join(nodeDir, run.name);
+  const reasons = [];
+  for (const art of evalArtifacts) {
+    if (typeof art.path !== "string" || art.path.length === 0) {
+      reasons.push(`review eval artifact for ${nodeId} has no path — fail-closed`);
+      continue;
+    }
     try {
-      if (readdirSync(runDir).some(f => /^eval.*\.md$/.test(f) && f !== "eval-extensions.md")) return true;
-    } catch {
-      return false;
+      readFileSync(resolve(dirname(hsPath), art.path), "utf8");
+    } catch (err) {
+      reasons.push(`review eval artifact for ${nodeId} unreadable: ${art.path} — fail-closed: ${err.message}`);
     }
   }
-  return false;
+  return reasons;
 }
 
 function collectGateSynthesizeReasons(dir, state, template, currentNode, verdict) {
@@ -121,8 +121,20 @@ function collectGateSynthesizeReasons(dir, state, template, currentNode, verdict
   for (const entry of entriesSinceLastGate(state, template, currentNode)) {
     const nodeId = entry.nodeId;
     if (seen.has(nodeId) || template.nodeTypes?.[nodeId] !== "review") continue;
-    if (!hasEvalFiles(dir, nodeId)) continue;
     seen.add(nodeId);
+    const hsPath = nodeHandshakePath(dir, nodeId);
+    if (!existsSync(hsPath)) continue;
+    let handshake;
+    try {
+      handshake = JSON.parse(readFileSync(hsPath, "utf8"));
+    } catch {
+      continue;
+    }
+    const artifactReasons = collectReviewEvalArtifactReasons(hsPath, nodeId, handshake);
+    if (artifactReasons.length > 0) {
+      reasons.push(...artifactReasons);
+      continue;
+    }
     let output;
     try {
       output = execFileSync(

@@ -83,6 +83,51 @@ function artifactHash(content) {
 }
 
 const TEST_PLAN = "# Test Plan\n\n### TC-TESTER-01\n- **Priority**: P0\n- **Steps**: run command\n";
+const COMPLETE_TEST_PLAN = `
+# Test Plan
+
+## Unit smoke
+Run npm test for unit coverage.
+Cover module smoke behavior.
+Assert basic render success.
+
+## Contract edge case
+Validate schema boundaries.
+Cover invalid input.
+Assert error code stability.
+
+## Integration e2e flow
+Run playwright test through the workflow.
+Cover multi-step happy path.
+Assert persisted state.
+
+## UI visual accessibility
+Capture screenshot at desktop and mobile viewport.
+Check responsive layout.
+Run a11y smoke checks.
+
+## Tier baseline polish
+Check typography hierarchy.
+Check navigation affordance.
+Check dark mode baseline.
+`;
+
+function cleanPassEval(title, focus) {
+  const lines = [`# ${title}`, "", "## Scope Review"];
+  for (let i = 1; i <= 18; i++) {
+    lines.push(`${focus} scope item ${i}: reviewed without blocking findings.`);
+  }
+  lines.push("", "## Evidence Review");
+  for (let i = 1; i <= 18; i++) {
+    lines.push(`${focus} evidence item ${i}: handshake and artifact context are consistent.`);
+  }
+  lines.push("", "## Quality Review");
+  for (let i = 1; i <= 18; i++) {
+    lines.push(`${focus} quality item ${i}: no critical or warning issue was found.`);
+  }
+  lines.push("", "## Summary", "LGTM. No findings. Ready for gate PASS.", "VERDICT: PASS FINDINGS[0]", "");
+  return lines.join("\n");
+}
 
 function writeDiVerdict(dir, nodeId, runId, verdict) {
   const verdictDir = join(dir, "nodes", nodeId, runId, "ext-design-intelligence");
@@ -538,17 +583,28 @@ function createSession(name, { artifacts = [], failingReport = false, diVerdict 
   mkdirSync(join(dir, "nodes", "gate"), { recursive: true });
 
   // Write eval files so synthesize produces a verdict
-  writeFileSync(join(dir, "nodes", "test-execute", "run_1", "eval-engineer.md"),
-    "# Engineer Review\n**Verdict: ✅ APPROVE**\nNo issues.\n");
+  for (const nodeId of ["code-review", "test-design"]) {
+    writeFileSync(join(dir, "nodes", nodeId, "run_1", "eval-skeptic-owner.md"),
+      cleanPassEval("Skeptic-Owner Evaluation", nodeId));
+    writeFileSync(join(dir, "nodes", nodeId, "run_1", "eval-peer.md"),
+      cleanPassEval("Peer Evaluation", nodeId));
+  }
+  writeFileSync(join(dir, "nodes", "test-design", "run_1", "test-plan.md"), COMPLETE_TEST_PLAN);
 
   // Write handshakes for upstream nodes
   for (const nodeId of ["build", "code-review", "test-design", "test-execute"]) {
     const hs = {
       nodeId, nodeType: TEMPLATE.nodeTypes[nodeId] || "build", runId: "run_1",
       status: "completed", summary: "done", timestamp: new Date().toISOString(),
-      artifacts: nodeId === "build" ? artifacts : [],
+      artifacts: nodeId === "build" ? artifacts : [
+        { type: "eval", path: "run_1/eval-skeptic-owner.md" },
+        { type: "eval", path: "run_1/eval-peer.md" },
+      ],
       verdict: null,
     };
+    if (nodeId === "test-design") {
+      hs.artifacts.push({ type: "test-plan", path: "run_1/test-plan.md" });
+    }
     writeFileSync(join(dir, "nodes", nodeId, "handshake.json"), JSON.stringify(hs));
     // test-execute needs evidence
     if (nodeId === "test-execute") {
