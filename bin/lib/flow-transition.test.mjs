@@ -366,6 +366,52 @@ describe("checkStructuredResults — Step 1.5", () => {
     assert.equal(reasons.some(r => r.includes("provenance ledger")), false);
   });
 
+  test("test-execute re-run via goto validates against handshake runId, not stale history entry", () => {
+    // Regression: a goto re-run leaves an earlier test-execute entry in history.
+    // The dedup keeps that stale (run_1) entry, but the handshake on disk is the
+    // latest run (run_2). Validation must use the handshake's own runId so the
+    // signed run_2 ledger event is not compared against the stale run_1.
+    const command = "node -e \"process.exit(0)\"";
+    const commandHash = sha256(command);
+    const sourcePlanHash = sha256(TEST_PLAN);
+    const result = {
+      provenance: { kind: "opc-test-command", commandHash, sourcePlanHash, executionActor: "opc-harness:test-command" },
+      checks: [{ id: "OUT-browser-render", pass: true, detail: { total: 1 } }],
+    };
+    const dir = setupDir("t8f-rerun-goto-runid", {
+      "test-design": {
+        artifacts: [{ type: "test-plan", path: "run_2/test-plan.md", _content: TEST_PLAN }],
+        testCommand: command,
+      },
+      "test-execute": {
+        runId: "run_2",
+        testEvidenceProvenance: {
+          kind: "opc-test-command", sourceNode: "test-design", commandHash,
+          sourcePlanHash, resultHash: artifactHash(result), executionActor: "opc-harness:test-command",
+        },
+        artifacts: [{
+          type: "test-result",
+          path: "run_2/test-results.json",
+          _content: result,
+        }],
+      },
+    });
+    addTestLedger(dir, { runId: "run_2", commandHash, sourcePlanHash, resultHash: artifactHash(result) });
+    const rerunState = {
+      flowTemplate: "build-verify",
+      currentNode: "gate",
+      history: [
+        { nodeId: "test-execute", runId: "run_1" },
+        { nodeId: "gate", runId: "run_1" },
+        { nodeId: "test-execute", runId: "run_2" },
+        { nodeId: "gate", runId: "run_2" },
+      ],
+    };
+    const reasons = checkStructuredResults(dir, rerunState, EXEC_TEMPLATE, "gate");
+    assert.equal(reasons.some(r => r.includes("node/run mismatch")), false);
+    assert.equal(reasons.some(r => r.includes("provenance ledger")), false);
+  });
+
   test("test-execute public-hash provenance without signed ledger → FAIL", () => {
     const command = "node -e \"process.exit(0)\"";
     const commandHash = sha256(command);

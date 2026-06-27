@@ -294,7 +294,13 @@ export function checkStructuredResults(dir, state, template, currentNode) {
       structuredFailReasons.push(...collectTestResultReasons(data, {
         handshake: hs,
         nodeId: entry.nodeId,
-        runId: entry.runId,
+        // The handshake read at hsPath is always the node's LATEST run. When a
+        // node was re-run (e.g. via goto), history holds an earlier entry for
+        // the same nodeId; the dedup above keeps that stale entry, so
+        // entry.runId can lag the handshake on disk. Validate the signed
+        // provenance against the handshake's own runId, which matches the
+        // artifact and ledger event actually present.
+        runId: hs.runId || entry.runId,
         artifact: art,
         artifactHash: sha256(text),
         sessionDir: dir,
