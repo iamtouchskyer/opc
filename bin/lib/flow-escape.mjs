@@ -352,6 +352,7 @@ export function cmdLs(args) {
         currentNode: state.currentNode,
         entryNode: state.entryNode || null,
         status: state.status || "in_progress",
+        projectRoot: state.projectRoot || null,
         totalSteps: state.totalSteps,
         lastModified: st.mtime.toISOString(),
       });

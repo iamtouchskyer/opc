@@ -9,11 +9,34 @@ set -euo pipefail
 OPC_HARNESS="${OPC_HARNESS:-$HOME/.claude/skills/opc/bin/opc-harness.mjs}"
 [ -f "$OPC_HARNESS" ] || exit 0
 
+# Read the PostCompact event payload from stdin (Claude Code provides cwd here).
+INPUT="$(cat 2>/dev/null || true)"
+CWD="$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
+
+# Resume only flows that were touched recently. A flow that has not been
+# advanced in this window is treated as abandoned, not "interrupted by
+# compaction" — resuming it injects an unrelated stale task. Override with
+# OPC_RESUME_MAX_AGE_HOURS (0 disables the age gate).
+MAX_AGE_HOURS="${OPC_RESUME_MAX_AGE_HOURS:-12}"
+
 # Find in-progress flows
 FLOW_JSON=$(node "$OPC_HARNESS" ls 2>/dev/null) || exit 0
 
-LATEST=$(echo "$FLOW_JSON" | jq -r '
-  [.flows[] | select(.status == "in_progress")]
+# Select the most recent in-progress flow that (a) belongs to the current
+# working directory when known, and (b) is fresh enough to be a real resume.
+NOW="$(date +%s)"
+LATEST=$(echo "$FLOW_JSON" | jq -r \
+  --arg cwd "$CWD" \
+  --argjson now "$NOW" \
+  --argjson maxage "$MAX_AGE_HOURS" '
+  [.flows[]
+    | select(.status == "in_progress")
+    | select($cwd == "" or .projectRoot == null or .projectRoot == $cwd)
+    | select(
+        $maxage == 0
+        or (($now - (.lastModified | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) < ($maxage * 3600))
+      )
+  ]
   | sort_by(.lastModified) | last // empty
   | @json
 ' 2>/dev/null)
