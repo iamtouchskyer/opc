@@ -346,6 +346,13 @@ export function cmdLs(args) {
     try {
       const state = JSON.parse(readFileSync(sp, "utf8"));
       const st = statSync(sp);
+      // lastAdvanced = time of the last *real* transition (history tail
+      // timestamp). Unlike file mtime, this is only written by an actual
+      // node advance, so it is not polluted by unrelated writes. Liveness
+      // checks should prefer it; lastModified stays for compatibility.
+      const lastAdvanced = Array.isArray(state.history) && state.history.length
+        ? (state.history.at(-1)?.timestamp ?? null)
+        : null;
       results.push({
         dir,
         flow: state.flowTemplate,
@@ -355,6 +362,7 @@ export function cmdLs(args) {
         projectRoot: state.projectRoot || null,
         totalSteps: state.totalSteps,
         lastModified: st.mtime.toISOString(),
+        lastAdvanced,
       });
     } catch { /* corrupt — skip */ }
   }
