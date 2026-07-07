@@ -7,6 +7,7 @@ import { execFileSync } from "child_process";
 import { parsePlan, hashContent, getGitHeadHash, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG, TERMINAL_LOOP_STATUSES } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { resolveCallerIdentity, checkOwnership, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
 import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 
 // ─── complete-tick ──────────────────────────────────────────────
@@ -58,6 +59,28 @@ export function cmdCompleteTick(args) {
   }
   const errors = [];
   const warnings = [];
+
+  // ── Session-ownership gate ───────────────────────────────────
+  // The compaction double-drive bug slips in here: a resumed agent that jumps
+  // straight to complete-tick bypasses next-tick's in_progress guard. Refuse
+  // when a different, still-live Claude session owns the loop.
+  const caller = resolveCallerIdentity();
+  const foWarn = ownershipEnforcementWarning(caller);
+  if (foWarn) warnings.push(foWarn);
+  const ownership = checkOwnership(state, caller, { force: args.includes("--force-takeover") });
+  if (ownership.decision === "BLOCKED") {
+    console.log(JSON.stringify({
+      completed: false,
+      errors: [`not the loop owner — ${ownership.reason}`],
+      owner_conflict: true,
+      hint: "this loop is being driven by another Claude session. If that session is gone, re-run with --force-takeover to reclaim.",
+    }));
+    return;
+  }
+  if (ownership.decision === "TAKEOVER") {
+    state._owner = makeOwner(caller, state._owner && state._owner.token);
+    warnings.push(`reclaimed loop ownership — ${ownership.reason}`);
+  }
 
   // Rule 7: terminated pipeline
   if (TERMINAL_LOOP_STATUSES.has(state.status)) {

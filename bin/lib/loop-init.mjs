@@ -10,6 +10,7 @@ import {
 } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { runLint } from "./criteria-lint.mjs";
+import { resolveCallerIdentity, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
 
 // ─── init-loop ──────────────────────────────────────────────────
 
@@ -248,6 +249,14 @@ export function cmdInitLoop(args) {
     .update(Date.now().toString() + Math.random().toString())
     .digest("hex").slice(0, 16);
 
+  // Session-ownership stamp: bind this loop to the Claude session that started
+  // it. Drive commands (next-tick/complete-tick) refuse to run from a different
+  // live session, preventing the compaction double-drive bug.
+  const owner = makeOwner(resolveCallerIdentity());
+  state._owner = owner;
+  const foWarn = ownershipEnforcementWarning(owner);
+  if (foWarn) initWarnings.push(foWarn);
+
   const hasHooks = detectPreCommitHooks(projectDir);
   const testScripts = detectTestScript(projectDir);
   state._external_validators = {
@@ -270,6 +279,8 @@ export function cmdInitLoop(args) {
     units: units.map(u => `${u.id}: ${u.type}`),
     first_unit: units[0].id,
     total_units: units.length,
+    owner_token: owner.token,
+    owner_claude_pid: owner.claude_pid,
     external_validators: validatorList.length > 0 ? validatorList : ["none detected — quality relies on in-process checks only"],
     warnings: initWarnings.length > 0 ? initWarnings : undefined,
   }));

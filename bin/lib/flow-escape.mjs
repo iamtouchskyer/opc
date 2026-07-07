@@ -13,6 +13,7 @@ import {
   WRITER_SIG,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { resolveCallerIdentity, checkOwnership } from "./driver-owner.mjs";
 
 // ── Shared state loader ──
 
@@ -334,15 +335,34 @@ export function cmdGoto(args) {
 export function cmdLs(args) {
   const baseDir = getFlag(args, "base", ".");
   const recursive = args.includes("--recursive");
+  const showAll = args.includes("--all");
   const results = [];
 
   // De-duplicate candidates by resolved path
   const seen = new Set();
 
+  // Caller identity is resolved once — loops owned by another live Claude
+  // session are hidden (a loop is bound to exactly one session). Pass --all
+  // to bypass the filter (e.g. for debugging / operator overview).
+  const caller = resolveCallerIdentity();
+
+  function isForeignLoop(dir) {
+    if (showAll) return false;
+    const lp = join(dir, "loop-state.json");
+    if (!existsSync(lp)) return false; // not a loop — never hidden
+    try {
+      const loopState = JSON.parse(readFileSync(lp, "utf8"));
+      return checkOwnership(loopState, caller).decision === "BLOCKED";
+    } catch {
+      return false; // corrupt — surface it rather than hide
+    }
+  }
+
   function addCandidate(dir) {
     const sp = join(dir, "flow-state.json");
     if (seen.has(dir) || !existsSync(sp)) return;
     seen.add(dir);
+    if (isForeignLoop(dir)) return; // owned by another live session — hide
     try {
       const state = JSON.parse(readFileSync(sp, "utf8"));
       const st = statSync(sp);

@@ -204,15 +204,31 @@ recurring: true
 durable: true          (MANDATORY for autonomous runs — survives process restart)
 ```
 
-Then immediately execute the first tick (don't wait for cron).
+Then immediately execute the first tick (don't wait for cron). Like every tick,
+the first tick begins by calling `opc-harness next-tick` — even fresh from init,
+next-tick is what claims the unit (marks it in_progress) and confirms this
+session owns the loop before any work starts.
 
 ### Step 4 — Tick Execution
 
 Each tick follows this sequence:
 
 ```
-1. Read loop-state.json → get next_unit
-2. Read plan.md → get unit details and acceptance criteria
+1. CLAIM THE TICK FIRST — run `opc-harness next-tick`. This is the ownership +
+   concurrency gate, and it MUST run before ANY work. It acquires the lock,
+   verifies this session owns the loop, marks the tick in_progress, and returns
+   the unit to work on. Interpret the result:
+     - ready:false + owner_conflict:true → STOP. A different live Claude session
+       owns this loop. Do NOT read the unit, do NOT work, do NOT call
+       complete-tick. Exit the tick silently.
+     - ready:false + terminate:true      → pipeline done/terminated → CronDelete, exit.
+     - ready:false + drain_required:true → run the backlog drain (Step 7a), then
+       call next-tick again.
+     - ready:false (other: in_progress / lock held) → a tick is mid-flight or
+       there is transient contention → skip this cron fire.
+     - ready:true → the tick is now claimed (status=in_progress); next_unit,
+       unit_type, context_hints, and handler are in the payload. Proceed.
+2. Read plan.md → get the unit's verify:/eval: lines and acceptance criteria.
 3. Skill check (pre-work): scan your session context for installed skills
    designed for pre-task preparation (memory recall, context loading, etc.).
    If any are found, invoke them now — before starting the unit.
@@ -236,8 +252,23 @@ Each tick follows this sequence:
 10. Skill check (post-work): scan your session context for installed skills
     designed for post-task capture (knowledge retro, learning capture, etc.).
     If any are found, invoke them now — before writing loop-state.
-11. Write updated loop-state.json (see format below)
+11. FINISH THE TICK — run `opc-harness complete-tick --unit <next_unit>
+    --artifacts <paths> --description "<summary>"`. This validates evidence and
+    advances the cursor to the next unit. Do NOT call next-tick again here — the
+    NEXT cron fire's step 1 advances the cursor and re-checks ownership before
+    any further work runs.
 ```
+
+**Why next-tick leads every tick (do not "optimize" this back).** The ownership
+and concurrency gates live inside `next-tick` and `complete-tick`. If work runs
+*before* the first gated call, a foreign session (e.g. a durable cron reloaded in
+a second process after compaction) will read `next_unit` straight from
+loop-state.json, do a full tick of duplicate work, and only get BLOCKED at
+`complete-tick` — after the damage. Putting `next-tick` first means the gate
+fires with zero work done: a non-owner is refused immediately. The single
+trailing `complete-tick` finishes and advances; the next cron fire's leading
+`next-tick` picks up the new unit. One claim in, one finish out, no gap where an
+un-gated tick can run.
 
 ### Step 5 — Verification Gate (per tick)
 
@@ -358,18 +389,28 @@ The cron job should schedule this prompt (adapt paths to project):
 Read $SESSION_DIR/loop-state.json and $SESSION_DIR/plan.md.
 Read $SESSION_DIR/acceptance-criteria.md for the definition of done.
 Re-read the full loop-protocol.md and SKILL.md protocols — do NOT rely on memory from previous ticks.
-Find the current unit's verify: and eval: lines in plan.md — these tell you HOW to verify this specific unit.
-Key rules to re-verify each tick:
-  - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
-  - Implement/fix units MUST produce a git commit
-  - UI units MUST include a screenshot artifact
-  - Use the unit's verify: line to run the correct verification command
-  - Use opc-harness complete-tick with actual artifact paths (never skip)
-  - On blocked/failed, include --description explaining why
-  - Pre-work: if any installed skills handle pre-task recall/preparation, invoke them before starting
-  - Post-work: if any installed skills handle post-task retro/capture, invoke them after completing
-Execute the current next_unit. After completion, call opc-harness complete-tick, then opc-harness next-tick.
-If next-tick returns terminate:true, call CronDelete to stop the loop.
+
+Tick ordering (CRITICAL — the gate must fire BEFORE any work):
+  1. FIRST run: opc-harness next-tick. This is the ownership + concurrency gate; it also
+     claims the tick (marks it in_progress) and returns the unit to work on. Branch on the result:
+       - owner_conflict:true  → STOP. A different live Claude session owns this loop.
+         Do NOT do any work, do NOT call complete-tick. Exit silently.
+       - terminate:true       → call CronDelete to stop the loop, then exit.
+       - drain_required:true  → run the backlog drain (Step 7a), then run next-tick again.
+       - ready:false (other)  → a tick is in progress or the lock is held → skip this cron fire.
+       - ready:true           → proceed; work on the returned next_unit.
+  2. Find the claimed unit's verify: and eval: lines in plan.md — these tell you HOW to verify it.
+  3. Execute the unit. Key rules to re-verify each tick:
+       - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
+       - Implement/fix units MUST produce a git commit
+       - UI units MUST include a screenshot artifact
+       - Use the unit's verify: line to run the correct verification command
+       - On blocked/failed, include --description explaining why
+       - Pre-work: if any installed skills handle pre-task recall/preparation, invoke them before starting
+       - Post-work: if any installed skills handle post-task retro/capture, invoke them after completing
+  4. Finish: opc-harness complete-tick --unit <next_unit> --artifacts <actual paths> --description "<summary>".
+     This advances the cursor. Do NOT call next-tick again here — the next cron fire's step 1 advances
+     the cursor and re-checks ownership before any further work runs.
 ```
 
 ## Review Units — Mandatory Independence

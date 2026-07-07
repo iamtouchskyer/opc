@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { parsePlan, hashContent, checkScopeCoverage } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { resolveCallerIdentity, checkOwnership, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -126,6 +127,30 @@ export function cmdNextTick(args) {
     return;
   }
   const warnings = [];
+
+  // ── Session-ownership gate ───────────────────────────────────
+  // Refuse to advance a loop owned by a different, still-live Claude session.
+  const caller = resolveCallerIdentity();
+  const foWarn = ownershipEnforcementWarning(caller);
+  if (foWarn) warnings.push(foWarn);
+  const ownership = checkOwnership(state, caller, { force: args.includes("--force-takeover") });
+  if (ownership.decision === "BLOCKED") {
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: false,
+      reason: `not the loop owner — ${ownership.reason}`,
+      owner_conflict: true,
+      hint: "this loop is being driven by another Claude session. If that session is gone, re-run with --force-takeover to reclaim.",
+    }));
+    return;
+  }
+  if (ownership.decision === "TAKEOVER") {
+    state._owner = makeOwner(caller, state._owner && state._owner.token);
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    warnings.push(`reclaimed loop ownership — ${ownership.reason}`);
+  }
 
   // Auto-restore flow template from _flow_file if persisted
   if (state._flow_file) {
@@ -548,9 +573,9 @@ function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, pla
     `## Instructions`,
     `1. Read the plan file to understand the full scope`,
     `2. Read the checkpoint above to understand where we left off`,
-    `3. Execute unit ${state.next_unit} using /opc with the ${contextHints.recommended_flow} flow`,
+    `3. This unit (${state.next_unit}) is already claimed (next-tick marked it in_progress) — execute it now using /opc with the ${contextHints.recommended_flow} flow`,
     `4. After completion, run: opc-harness complete-tick --unit ${state.next_unit} --artifacts <paths> --description "<summary>" --delta "<technical decisions made>"`,
-    `5. Then run: opc-harness next-tick to get the next unit`,
+    `5. Do NOT run next-tick here. The NEXT tick begins by running opc-harness next-tick FIRST — it claims the next unit and re-checks ownership before any work.`,
   );
 
   return parts.filter(l => l != null).join("\n");
