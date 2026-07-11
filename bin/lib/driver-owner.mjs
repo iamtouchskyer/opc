@@ -109,6 +109,13 @@ export function findClaudeAncestorPid() {
 
 // ── Caller identity ─────────────────────────────────────────────
 export function resolveCallerIdentity() {
+  // Kill switch: OPC_DISABLE_OWNERSHIP=1 → pretend caller has no Claude ancestor
+  // (legacy behavior). Use for test harnesses, batch scripts, and hosts where
+  // `ps` walks the parent chain to an unrelated Claude process (race / multi-
+  // session hosts). checkOwnership() also short-circuits on the same env var.
+  if (process.env.OPC_DISABLE_OWNERSHIP === "1") {
+    return { claude_pid: null, claude_started_at: null, host: hostname() };
+  }
   const claude_pid = findClaudeAncestorPid();
   return {
     claude_pid,
@@ -164,6 +171,13 @@ export function makeOwner(caller, token = generateOwnerToken()) {
 //              callers should re-stamp _owner via makeOwner() and persist.
 export function checkOwnership(state, caller, opts = {}) {
   const owner = state && state._owner;
+
+  // Kill switch: OPC_DISABLE_OWNERSHIP=1 → legacy behavior (allow all). Use for
+  // test harnesses, batch scripts, and environments where `ps` walks the parent
+  // chain to a different, unrelated Claude process (race / multi-session hosts).
+  if (process.env.OPC_DISABLE_OWNERSHIP === "1") {
+    return { decision: "OWNER", reason: "ownership check disabled via OPC_DISABLE_OWNERSHIP=1" };
+  }
 
   // Legacy loop (pre-ownership) — no stamp to enforce.
   if (!owner || owner.claude_pid == null) {
