@@ -9,6 +9,7 @@ import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal } from "./l
 import { cmdTransition, cmdValidateChain, cmdFinalize, cmdAdvance } from "./lib/flow-transition.mjs";
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact, cmdNodePreflight } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
+import { cmdModelRoute } from "./lib/model-routing.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
 import { cmdGc } from "./lib/util.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
@@ -62,6 +63,7 @@ switch (command) {
   case "extension-artifact":    await cmdExtensionArtifact(args); break;
   case "node-preflight":        await cmdNodePreflight(args);     break;
   case "config":                await cmdConfigResolve(args);    break;
+  case "model-route":           cmdModelRoute(args);             break;
   case "runbook":               cmdRunbook(args);                break;
   case "clean":                 cmdClean(args);                  break;
   case "gc":                    cmdGc(args);                     break;
@@ -111,6 +113,8 @@ switch (command) {
     console.log();
     console.log("Config commands:");
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
+    console.log("  model-route --node <id> --node-type <type> [--role <name>] [--dir <project>] [--allow-premium]");
+    console.log("                                                     Resolve explicit model for one subagent dispatch");
     console.log();
     console.log("Runbook commands:");
     console.log("  runbook list [--dir <p>]                           List all runbooks");

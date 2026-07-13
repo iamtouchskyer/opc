@@ -87,6 +87,32 @@ The system is built on a zero-trust axiom: **every critical output must have an 
 - **L2 — Design Agent Flow**: Multi-agent coordination — separation of concerns, flow topology (parallel review / sequential build), context isolation (file-based handoff, fresh agents, no session reuse).
 - **L3 — Deterministic Enforcement**: The only layer that doesn't need LLM compliance — mechanical ops (severity counting, verdict rules, oscillation diff) and hardened verification (file-finding evidence checks, hedging scans, ref validation).
 
+#### Model-aware dispatch
+
+OPC preserves its full multi-agent topology while avoiding accidental premium-model fan-out. Before every Agent call, `opc-harness model-route` resolves an explicit host-native model from layered configuration:
+
+| Tier | Claude Code default | Typical work |
+|---|---|---|
+| economy | `haiku` | test design, user/UX observers |
+| standard | `sonnet` | discussion, implementation, semantic review |
+| premium | `inherit` | explicit escalation only |
+
+`inherit` and `opus` require explicit premium approval. Claude Code's `CLAUDE_CODE_SUBAGENT_MODEL` environment override is detected and reported. Other hosts can replace the tier values with their own model IDs:
+
+```json
+{
+  "agentRouting": {
+    "models": {
+      "economy": "your-fast-model-id",
+      "standard": "your-value-model-id",
+      "premium": "your-premium-model-id"
+    }
+  }
+}
+```
+
+See [`pipeline/model-routing.md`](pipeline/model-routing.md) for node/role overrides and the resolver contract.
+
 ### Quick Start
 
 #### Install
@@ -353,6 +379,20 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 - **L1 —— 塑造单个 agent**：在 token 生成过程中干预——人格设定、反模式表、强制输出结构、范围锚定、质量门禁。
 - **L2 —— 设计 agent 流**：多 agent 协同——关注点分离、流拓扑（并行 review / 串行 build）、上下文隔离（基于文件的交接、全新 agent、不复用 session）。
 - **L3 —— 确定性强制**：唯一不需要 LLM 配合的一层——机械操作（严重度计数、裁决规则、震荡 diff）和加固验证（找文件证据检查、模糊措辞扫描、引用校验）。
+
+#### 模型感知派发
+
+OPC 保留完整的多 agent 拓扑，同时避免顶级模型被意外放大到所有子 agent。每次调用 Agent 前，`opc-harness model-route` 都会从分层配置中解析一个明确的宿主原生模型：
+
+| 层级 | Claude Code 默认值 | 典型工作 |
+|---|---|---|
+| economy | `haiku` | 测试设计、用户/UX observer |
+| standard | `sonnet` | 讨论、实现、语义审查 |
+| premium | `inherit` | 仅显式升级 |
+
+`inherit` 和 `opus` 需要显式批准。Claude Code 的 `CLAUDE_CODE_SUBAGENT_MODEL` 环境变量覆盖会被检测并展示。其他宿主可以在 `agentRouting.models` 中替换成自己的模型 ID，而无需修改 OPC 的 flow。
+
+完整的节点/角色覆盖规则见 [`pipeline/model-routing.md`](pipeline/model-routing.md)。
 
 ### 快速开始
 
