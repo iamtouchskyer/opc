@@ -1,7 +1,8 @@
 ---
 name: opc
-version: 0.10.2
-description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Every path ends with evaluation. /opc <task>, /opc -i <task>, /opc <role> [role...]"
+description: "OPC — native-first, token-aware digraph task pipeline. Codex-native subagents use role-appropriate Codex model routing by default; external CLI adapters are opt-in for explicitly requested third-party platforms. Use for /opc tasks, interactive runs, autonomous loops, and independent multi-role reviews."
+metadata:
+  version: "0.12.0"
 ---
 
 # OPC — One Person Company
@@ -10,11 +11,32 @@ One principle: **the agent that does the work never evaluates it.**
 
 A full team in a single skill. The digraph engine handles any task — building code, reviewing code, analyzing problems, brainstorming designs. It infers which flow and entry point to use from the task itself, and every path ends with independent evaluation.
 
+## Mandatory Native Economy Bootstrap
+
+Before task inference or any Agent/subagent call, read `./pipeline/token-budget-policy.md` and resolve layered config with `opc-harness config resolve`.
+
+The default `economy` policy is native Codex orchestration:
+
+- Reuse the current Codex host's native Agent lifecycle for creation, follow-up, status, waiting, interruption, and result collection.
+- Route by task shape using Codex's documented model strengths. Prefer Terra for read-heavy exploration and bounded routine work; prefer GPT-5.6 for ambiguous semantic implementation, architecture, security, and high-stakes review.
+- When the host does not expose a model selector, leave the model unpinned and let Codex balance intelligence, speed, and price. An unpinned native child is valid in Economy; it is not an external or model-verified benchmark sample.
+- Use built-in `explorer` for read-only reconnaissance and `worker` for implementation when those agent types are available. Otherwise send a bounded role contract through the host's native subagent API.
+- Preserve independent evaluation: the Agent that implements must never verify or review its own work.
+- Preserve deterministic gates, isolated worktrees for overlapping or risky edits, Git truth, acceptance criteria, and bounded final review.
+- External CLI Adapters are disabled by default. Use Claude Code, MiniMax, OpenCode, or another external Harness only when the user explicitly requests that third-party platform. Never auto-fallback to external MiniMax M3.
+- Flow topology, role count, discussion rounds, and UX observer count remain unchanged. Economy changes model allocation and context size, not quality gates.
+
+Before each dispatch, show a compact routing line:
+
+```text
+💰 Policy: economy | Control plane: Codex native | Model route: role profile / host auto | External adapters: disabled | Final review: 1 bounded pass
+```
+
 ## Invocation
 
 **Harness path:** The `opc-harness` binary lives at `bin/opc-harness.mjs` relative to this skill's install directory. Resolve it once at session start:
 ```bash
-OPC_HARNESS="$HOME/.claude/skills/opc/bin/opc-harness.mjs"
+OPC_HARNESS="$HOME/.codex/skills/opc/bin/opc-harness.mjs"
 ```
 All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a shell variable and reuse it throughout the session.
 
@@ -297,7 +319,7 @@ Ask targeted questions derived from selected roles — what does each role need 
 
 ### Project Context
 
-Subagents don't inherit CLAUDE.md or project instructions automatically. When dispatching any subagent, **forward relevant project context**: dev workflow rules, precommit checks, coding conventions, test commands. Include this in every subagent prompt.
+Subagents do not automatically inherit every project instruction. When dispatching any subagent, **forward relevant project context** from `AGENTS.md` (and `CLAUDE.md` when present): dev workflow rules, precommit checks, coding conventions, and test commands. Include this in every subagent prompt.
 
 ### Superpowers Integration
 
@@ -343,9 +365,9 @@ The orchestrator searches for role definitions in this order (later sources over
 
    Read the `tags:` front matter from each `roles/<name>.md`. Keep only roles whose tags include at least one matching stage tag.
 
-2. **Select from filtered pool** — pick 2-5 roles with distinct angles. Read each candidate's "When to Include" section to decide relevance.
+2. **Select from filtered pool** — pick 2-5 roles with distinct angles. Read each candidate's "When to Include" section to decide relevance, then assign a native Codex route using `token-budget-policy.md`.
 
-- **Mandatory roles always included** — roles with `mandatory: true` in front matter are auto-included in every review node. The orchestrator cannot remove them. Currently: `skeptic-owner`.
+- **Mandatory roles always included** — roles with `mandatory: true` remain separate native evaluations. The orchestrator cannot remove them. Currently: `skeptic-owner`.
 - Each dispatched agent must have a DISTINCT angle. If two would produce 80%+ overlapping output, pick one.
 - Not every task needs every role. A CSS fix doesn't need Security.
 - **Devil's Advocate auto-inclusion:** When a discussion node reaches Round 2 with near-unanimous agreement (all agents converge on the same approach), the orchestrator SHOULD include devil-advocate in a subsequent review pass. Consensus is a signal to challenge, not to proceed. For irreversible decisions (data deletion, public API contracts, destructive migrations), devil-advocate is MANDATORY.
@@ -356,8 +378,8 @@ The orchestrator searches for role definitions in this order (later sources over
 Show role selection:
 ```
 📋 Agents:
-- frontend — <specific scope>
-- security — <specific scope>
+- frontend — Codex native / Terra-preferred — <specific scope>
+- security — Codex native / GPT-5.6-preferred — <specific scope>
 ...
 
 Launching {N} agents...
@@ -396,7 +418,7 @@ The orchestrator uses **cursor-based execution** — `flow-state.json.currentNod
 
 Follow `./pipeline/discussion-protocol.md`.
 
-1. Dispatch agents for 3 rounds. **Round 1: parallel** (agents are independent — no reason to serialize). Round 2: serial with context injection (each agent sees Round 1 outputs, writes diffs only). Round 3: facilitator convergence.
+1. Dispatch the original three-round discussion through native Codex subagents. **Round 1: parallel** (agents are independent — no reason to serialize). Round 2: serial with context injection (each agent sees Round 1 outputs, writes diffs only). Round 3: facilitator convergence. Route evidence gathering to Terra-preferred agents and ambiguous convergence to GPT-5.6-preferred agents; use host auto-routing when profiles are unavailable.
 2. **Orchestrator writes handshake.json** after collecting all artifacts (agents don't write it).
 3. Discussion nodes produce no verdict — the decision artifact feeds downstream.
 
@@ -404,7 +426,7 @@ Follow `./pipeline/discussion-protocol.md`.
 
 Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 
-1. Dispatch implementer subagent.
+1. Dispatch a native Codex implementer subagent. Prefer Terra for bounded routine work and GPT-5.6 for ambiguous semantic, cross-cutting, or high-risk work; use host auto-routing when the model cannot be selected explicitly.
 2. **Single agent** → agent writes its own handshake.json.
 3. **Multiple agents** (parallel, with `isolation: "worktree"`) → orchestrator merges artifacts and writes handshake.json.
 4. With superpowers: invoke `superpowers:subagent-driven-development`.
@@ -414,7 +436,7 @@ Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 Follow `./pipeline/role-evaluator-prompt.md`.
 
 1. Select roles per Role Selection rules.
-2. Dispatch evaluators — parallel if no dependencies, serial with context injection if dependencies exist.
+2. Dispatch fresh native Codex evaluators — parallel if no dependencies, serial with context injection if dependencies exist. Prefer Terra for checklist/test-inventory passes and GPT-5.6 for semantic, architecture, and security review.
 3. Each agent writes `eval-{role}.md` to `$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/`.
 4. **Orchestrator writes handshake.json** after all agents return, merging all eval files into artifacts[].
 5. Before dispatching, build context brief using `./pipeline/context-brief.md` (for review/analysis tasks).
@@ -646,7 +668,7 @@ If hooks are not installed, the fallback behavior is: flow-state.json persists o
 
 **Legacy detection:** If `.harness/` in project root has `wave-*` files but no `flow-state.json` → refuse to run. Print migration instructions.
 
-**Fresh context per agent.** Always spawn new subagents. Files carry state; agents bring fresh capacity.
+**Fresh context per dispatched role.** Use native Codex subagents by default. Files carry state; agents bring fresh capacity. Do not start an external CLI process merely to obtain a fresh context.
 
 ---
 

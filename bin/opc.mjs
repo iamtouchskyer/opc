@@ -8,7 +8,19 @@ import { spawnSync } from "child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILL_NAME = "opc";
-const skillsDir = join(homedir(), ".claude", "skills", SKILL_NAME);
+const hostIndex = process.argv.indexOf("--host");
+const requestedHost = hostIndex >= 0 ? process.argv[hostIndex + 1] : process.env.OPC_HOST;
+const host = (requestedHost || "codex").toLowerCase();
+const HOSTS = {
+  codex: { directory: ".codex", label: "Codex" },
+  claude: { directory: ".claude", label: "Claude Code" },
+};
+if (!Object.hasOwn(HOSTS, host)) {
+  console.error(`✗ Unsupported host '${host}'. Use --host codex or --host claude.`);
+  process.exit(2);
+}
+const hostConfig = HOSTS[host];
+const skillsDir = join(homedir(), hostConfig.directory, "skills", SKILL_NAME);
 
 const srcDir = join(__dirname, "..");
 
@@ -44,7 +56,7 @@ switch (command) {
       const src = realpathSync(srcDir);
       if (target === src) {
         console.log(`✓ OPC v${pkg.version} already linked at ${skillsDir}`);
-        console.log(`  Use /opc in Claude Code to get started.`);
+        console.log(`  Use /opc in ${hostConfig.label} to get started.`);
         break;
       }
     }
@@ -63,12 +75,18 @@ switch (command) {
       cpSync(src, join(skillsDir, entry), { recursive: true, force: true });
     }
     console.log(`✓ OPC v${pkg.version} installed to ${skillsDir}`);
-    console.log(`  Use /opc in Claude Code to get started.`);
-    console.log(`  Run 'opc install-hooks' to enable compression resilience.`);
+    console.log(`  Use /opc in ${hostConfig.label} to get started.`);
+    if (host === "claude") {
+      console.log(`  Run 'opc install-hooks --host claude' to enable Claude Code compression resilience.`);
+    }
     break;
   }
 
   case "install-hooks": {
+    if (host !== "claude") {
+      console.error("✗ install-hooks is a Claude Code compatibility command. Codex owns its native context lifecycle; use --host claude only for a Claude installation.");
+      process.exit(2);
+    }
     const settingsPath = join(homedir(), ".claude", "settings.json");
     let settings = {};
     if (existsSync(settingsPath)) {
@@ -190,12 +208,12 @@ switch (command) {
     console.log(`OPC v${pkg.version} — One Person Company`);
     console.log();
     console.log("Usage:");
-    console.log("  opc install         Install skill files to ~/.claude/skills/opc/");
-    console.log("  opc install-hooks   Register PreCompact/PostCompact hooks for compression resilience");
-    console.log("  opc uninstall       Remove skill files (preserves custom roles)");
+    console.log("  opc install [--host codex|claude]       Install skill files (default: Codex)");
+    console.log("  opc install-hooks --host claude         Register Claude PreCompact/PostCompact hooks");
+    console.log("  opc uninstall [--host codex|claude]     Remove skill files (preserves custom roles)");
     console.log("  opc version         Show version");
     console.log();
-    console.log("Once installed, use /opc in Claude Code.");
+    console.log("Once installed, use /opc in Codex (or the selected compatibility host).");
     break;
   }
 }

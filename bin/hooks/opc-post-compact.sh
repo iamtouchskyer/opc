@@ -6,7 +6,8 @@
 # Trigger:  Claude Code PostCompact event (manual or auto)
 set -euo pipefail
 
-OPC_HARNESS="${OPC_HARNESS:-$HOME/.claude/skills/opc/bin/opc-harness.mjs}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OPC_HARNESS="${OPC_HARNESS:-$SCRIPT_DIR/../opc-harness.mjs}"
 [ -f "$OPC_HARNESS" ] || exit 0
 
 # Read the PostCompact event payload from stdin (Claude Code provides cwd here).

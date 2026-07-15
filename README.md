@@ -1,6 +1,6 @@
 # OPC — One Person Company
 
-> A full team in a single Claude Code skill. You're the CEO — OPC is everyone else.
+> A full team in a single Codex skill. You're the CEO — OPC is everyone else.
 
 16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
@@ -76,6 +76,10 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 
 4. **Cycle limits** — max 3 loops per edge, 5 re-entries per node, 20-30 total steps depending on flow. Oscillation detection catches A↔B loops.
 
+#### Native Economy Model Routing
+
+Economy uses Codex-native subagents, not external CLI workers. `opc-harness agent-route` resolves a preference before dispatch: Terra for read-heavy exploration and bounded routine work; GPT-5.6 for semantic ambiguity, architecture, security, and high-risk review; host auto-routing when the Agent API exposes no selector. Claude, MiniMax, OpenCode, and other external Adapters require an explicit third-party request and are never automatic fallbacks.
+
 #### Quality Architecture
 
 ![Zero-Trust Quality Architecture](docs/assets/design_philosophy.png)
@@ -92,16 +96,18 @@ The system is built on a zero-trust axiom: **every critical output must have an 
 #### Install
 
 ```bash
-npm install -g @touchskyer/opc
+git clone https://github.com/WdBlink/opc.git
+cd opc
+node bin/opc.mjs install
 ```
 
-Skill files are automatically copied to `~/.claude/skills/opc/`.
+Skill files are copied to `~/.codex/skills/opc/`. Claude Code compatibility remains available through `node bin/opc.mjs install --host claude`.
 
-##### Manual install (no npm)
+##### Manual copy
 
 ```bash
-git clone https://github.com/iamtouchskyer/opc.git
-cp -r opc ~/.claude/skills/opc
+mkdir -p ~/.codex/skills
+cp -r opc ~/.codex/skills/opc
 ```
 
 #### Use it
@@ -188,7 +194,7 @@ code**, not the brief's ideal, or it will assert behavior the build never implem
 ### Extensions
 
 OPC has a capability-routed extension surface. Extensions live in
-`~/.claude/skills/opc-extension/<name>/` — each with `ext.json` (capability
+`~/.codex/skills/opc-extension/<name>/` — each with `ext.json` (capability
 declarations) + `hook.mjs` exporting any of `promptAppend` / `verdictAppend`
 / `executeRun` / `artifactEmit` hooks. No fork, no rebuild. Hooks are
 sandboxed via per-extension timeouts + circuit breakers, so a broken
@@ -343,6 +349,10 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 
 4. **循环上限** —— 每条边最多 3 次循环，每个节点最多 5 次重入，按 flow 总步数 20-30。震荡检测捕获 A↔B 循环。
 
+#### 原生 Economy 模型路由
+
+Economy 默认使用 Codex 原生子 Agent，而不是外部 CLI Worker。每次分派前由 `opc-harness agent-route` 给出偏好：读密集探索和边界清晰的常规工作优先 Terra；语义歧义、架构、安全和高风险评审使用 GPT-5.6；当前 Agent API 没有选择器时交给 Codex 宿主自动路由。Claude、MiniMax、OpenCode 等外部 Adapter 只有在用户明确指定第三方平台时才启用，永远不会自动 fallback。
+
 #### 质量架构
 
 ![零信任质量架构](docs/assets/design_philosophy.png)
@@ -359,16 +369,18 @@ Task → Flow Selection → Node Execution → Gate Verdict → Route Next
 #### 安装
 
 ```bash
-npm install -g @touchskyer/opc
+git clone https://github.com/WdBlink/opc.git
+cd opc
+node bin/opc.mjs install
 ```
 
-Skill 文件会自动复制到 `~/.claude/skills/opc/`。
+Skill 文件会复制到 `~/.codex/skills/opc/`。Claude Code 兼容安装可使用 `node bin/opc.mjs install --host claude`。
 
-##### 手动安装（不用 npm）
+##### 手动复制
 
 ```bash
-git clone https://github.com/iamtouchskyer/opc.git
-cp -r opc ~/.claude/skills/opc
+mkdir -p ~/.codex/skills
+cp -r opc ~/.codex/skills/opc
 ```
 
 #### 使用
@@ -445,7 +457,7 @@ cp -r opc ~/.claude/skills/opc
 
 ### 扩展
 
-OPC 有一个能力路由（capability-routed）的扩展面。扩展位于 `~/.claude/skills/opc-extension/<name>/`——每个带一个 `ext.json`（能力声明）+ 一个 `hook.mjs`，导出 `promptAppend` / `verdictAppend` / `executeRun` / `artifactEmit` 中的任意 hook。不用 fork、不用重新构建。Hook 通过每扩展超时 + 熔断器沙箱化，所以一个坏掉的第三方扩展无法拖垮 harness。
+OPC 有一个能力路由（capability-routed）的扩展面。扩展位于 `~/.codex/skills/opc-extension/<name>/`——每个带一个 `ext.json`（能力声明）+ 一个 `hook.mjs`，导出 `promptAppend` / `verdictAppend` / `executeRun` / `artifactEmit` 中的任意 hook。不用 fork、不用重新构建。Hook 通过每扩展超时 + 熔断器沙箱化，所以一个坏掉的第三方扩展无法拖垮 harness。
 
 `ext.json.version` 在 `init` 时记录到 `flow-state.json → extensionVersions`，所以协议报告能区分"扩展已加载"和"未知版本"。运行时能力行为仍以 `hook.mjs` 的可执行 hook 元数据为准。
 

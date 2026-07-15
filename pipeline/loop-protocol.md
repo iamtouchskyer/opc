@@ -401,7 +401,7 @@ Tick ordering (CRITICAL — the gate must fire BEFORE any work):
        - ready:true           → proceed; work on the returned next_unit.
   2. Find the claimed unit's verify: and eval: lines in plan.md — these tell you HOW to verify it.
   3. Execute the unit. Key rules to re-verify each tick:
-       - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
+       - Review units MUST dispatch ≥2 independent native Codex subagents (never self-review)
        - Implement/fix units MUST produce a git commit
        - UI units MUST include a screenshot artifact
        - Use the unit's verify: line to run the correct verification command
@@ -415,9 +415,9 @@ Tick ordering (CRITICAL — the gate must fire BEFORE any work):
 
 ## Review Units — Mandatory Independence
 
-Review units MUST use independent subagents (Agent tool). The orchestrator:
+Review units MUST use independent native Codex subagents. The orchestrator:
 
-1. Dispatches 2-5 reviewer agents in parallel via Agent tool
+1. Dispatches 2-5 reviewer agents in parallel through the native Codex control plane, following token-budget-policy.md
 2. Each agent gets: file list, acceptance criteria, project context
 3. Each agent produces eval-{role}.md with 🔴/🟡/🔵 findings
 4. Orchestrator collects evals and writes handshake
@@ -445,7 +445,7 @@ LLM subagent reviews are same-model cosplay. True independent validation comes f
 |---|---|---|
 | implement/build | pre-commit hooks + test suite | git HEAD must change (hard error) |
 | implement-ui | above + Playwright screenshot | screenshot artifact required (hard error) |
-| review | LLM subagents + lint/typecheck findings | ≥2 distinct eval files (hard error) |
+| review | Native Codex subagents + lint/typecheck findings | ≥2 distinct eval files (hard error) |
 | fix | pre-commit hooks + test suite | git HEAD must change + eval hashes intact |
 | e2e-verify | Playwright / webapp-testing | screenshot + test-result artifact |
 

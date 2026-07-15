@@ -128,7 +128,7 @@ If no previous run exists, this is a first run — skip delta, use absolute gate
 
 ### Step 3 — Observer Dispatch
 
-Dispatch **3 parallel subagents** using the Agent tool, each receiving:
+Dispatch **3 parallel native Codex subagents**, Terra-preferred because this is read-heavy structured observation, each receiving:
 
 - **Base prompt:** `role-evaluator-prompt.md` with the role `.md` content (including Observation Mode section)
 - **Observation appendix:** full content of `ux-observer-protocol.md`
@@ -138,7 +138,7 @@ Dispatch **3 parallel subagents** using the Agent tool, each receiving:
 - **Baseline snapshot** (if exists): previous run's red flags and trust signals for delta reporting
 - **Acceptance criteria:** `$SESSION_DIR/acceptance-criteria.md`
 
-The three observers run **in parallel**. They MUST NOT see each other's outputs. Parallel dispatch is non-negotiable.
+The three observers run **in parallel**. They MUST NOT see each other's outputs. Parallel dispatch is non-negotiable. If no native model profile is selectable, use Codex host auto-routing; do not start an external MiniMax or Claude process.
 
 ### Step 4 — Observer Report Collection
 

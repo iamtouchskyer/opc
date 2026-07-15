@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.12.0 — Native-first economy rollback (2026-07-15)
+
+### Changed
+
+- Restored Codex-native subagents as the default Economy control plane.
+- Added role-aware Codex model routing: Terra for read-heavy exploration and bounded routine work; GPT-5.6 for ambiguous semantic work, architecture, security, and high-stakes review; host auto-routing when the current Agent API exposes no selector.
+- External Claude, MiniMax, OpenCode, and other CLI Adapters are now explicit third-party opt-ins only. Economy never auto-falls back to external MiniMax M3.
+- Preserved flow topology, independent evaluation, deterministic gates, Git truth, and bounded final review while removing the zero-native-child rule introduced by the unpublished local v0.11 policy.
+- Added regression tests that fail if external-M3 defaults or native-child prohibitions return.
+
+### Migration
+
+Replace v0.11-style `dispatchPolicy` overrides with the native-first example in `pipeline/token-budget-policy.md`. In particular, remove `nativeChildBudget: 0`, `externalBackend: token-firewall-team`, and the Claude/MiniMax cheap-route fields unless they belong to an explicit third-party run.
+
 ## v0.8 — Run 5: F-items closeout + Runbook mechanism (2026-04-20)
 
 Two-track release. **Track A** clears the seven friction items (F1–F7)

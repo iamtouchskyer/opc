@@ -2,7 +2,7 @@
 
 **Orchestrator instructions (do not include in the subagent prompt):**
 
-Read this section, fill in the `{placeholders}` in the subagent prompt below, then pass everything from the `---` separator onward as the `prompt` parameter to the Agent tool with `subagent_type: "general-purpose"`. Strip this header section — the subagent should only see what's below the line.
+Read `token-budget-policy.md`, fill in the `{placeholders}`, then pass everything from the `---` separator onward to a fresh native Codex role evaluator. Prefer Terra for read-heavy, structured checks and GPT-5.6 for semantic, architecture, security, or high-stakes judgment. If no selector is exposed, use Codex auto-routing. Strip this header section — the evaluator should only see what's below the line.
 
 For each role evaluator, paste the full content of the role's `.md` file into the Identity/Expertise and Anti-Patterns placeholders.
 

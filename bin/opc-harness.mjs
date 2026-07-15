@@ -22,6 +22,7 @@ import { cmdBriefLint } from "./lib/brief-lint.mjs";
 import { cmdRunbook } from "./lib/runbook-commands.mjs";
 import { cmdClean } from "./lib/clean.mjs";
 import { cmdAudit } from "./lib/audit.mjs";
+import { cmdAgentRoute } from "./lib/agent-routing.mjs";
 
 const command = process.argv[2];
 const args = process.argv.slice(3);
@@ -66,6 +67,7 @@ switch (command) {
   case "clean":                 cmdClean(args);                  break;
   case "gc":                    cmdGc(args);                     break;
   case "audit":                 cmdAudit(args);                  break;
+  case "agent-route":           cmdAgentRoute(args);             break;
   default:
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
@@ -111,6 +113,8 @@ switch (command) {
     console.log();
     console.log("Config commands:");
     console.log("  config resolve [--dir <p>]                         Print merged OPC config w/ _source map");
+    console.log("  agent-route --node <id> --node-type <type> [--role <name>] [--task-shape <shape>] [--dir <p>]");
+    console.log("                                                     Resolve Codex-native model preference");
     console.log();
     console.log("Runbook commands:");
     console.log("  runbook list [--dir <p>]                           List all runbooks");
