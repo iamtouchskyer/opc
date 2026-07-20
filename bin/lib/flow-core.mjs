@@ -4,6 +4,7 @@
 import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
+import { execSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
@@ -80,6 +81,64 @@ export function cmdRoute(args) {
 
 // ─── init ───────────────────────────────────────────────────────
 
+// Resolve the current git HEAD sha for a working tree, or null if not a repo.
+function gitHeadSha(cwd) {
+  try {
+    return execSync("git rev-parse HEAD", {
+      cwd, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch { return null; }
+}
+
+// ─── record-commit ──────────────────────────────────────────────
+// Record a commit the flow produced into flow-state.producedCommits. The gate's
+// changeScope layer diffs exactly these commits, so a delivered change is
+// coverage-checked while a session-local / no-commit flow is left alone.
+// Usage: opc-harness record-commit [--sha <sha>] [--dir <session>]
+export function cmdRecordCommit(args) {
+  const dir = resolveDir(args);
+  const statePath = join(dir, "flow-state.json");
+  if (!existsSync(statePath)) {
+    console.log(JSON.stringify({ recorded: false, error: "flow-state.json not found" }));
+    return;
+  }
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (err) {
+    console.log(JSON.stringify({ recorded: false, error: `corrupt flow-state.json: ${err.message}` }));
+    return;
+  }
+
+  const root = (typeof state.projectRoot === "string" && state.projectRoot) ? state.projectRoot : getProjectRoot();
+  let sha = getFlag(args, "sha", null);
+  if (!sha) {
+    sha = gitHeadSha(root);
+    if (!sha) {
+      console.log(JSON.stringify({ recorded: false, error: "cannot resolve HEAD — not a git repository" }));
+      return;
+    }
+  }
+
+  // Fail closed: only record a real, resolvable commit.
+  let full;
+  try {
+    full = execSync(`git rev-parse --verify ${sha}^{commit}`, {
+      cwd: root, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    console.log(JSON.stringify({ recorded: false, error: `not a valid commit: ${sha}` }));
+    return;
+  }
+
+  if (!Array.isArray(state.producedCommits)) state.producedCommits = [];
+  const already = state.producedCommits.includes(full);
+  if (!already) state.producedCommits.push(full);
+  state._last_modified = new Date().toISOString();
+  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  console.log(JSON.stringify({ recorded: true, sha: full, already, producedCommits: state.producedCommits }));
+}
+
 export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
@@ -141,6 +200,10 @@ export async function cmdInit(args) {
     history: [],
     edgeCounts: {},
     projectRoot: getProjectRoot(),
+    // Git floor at flow start + commits the flow produces. changeScope diffs
+    // producedCommits (recorded via `record-commit`), never a blind HEAD~1.
+    baseSha: gitHeadSha(getProjectRoot()),
+    producedCommits: [],
     bypassMode: bypassRecord,
     autoMode: autoMode || undefined,
     _written_by: WRITER_SIG,

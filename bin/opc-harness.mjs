@@ -5,7 +5,7 @@
 
 import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.mjs";
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
-import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal } from "./lib/flow-core.mjs";
+import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal, cmdRecordCommit } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize, cmdAdvance } from "./lib/flow-transition.mjs";
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact, cmdNodePreflight } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
@@ -33,6 +33,7 @@ switch (command) {
   case "diff":         cmdDiff(args);          break;
   case "route":        cmdRoute(args);         break;
   case "init":         await cmdInit(args);      break;
+  case "record-commit": cmdRecordCommit(args);   break;
   case "validate":     cmdValidate(args);      break;
   case "transition":   await cmdTransition(args);    break;
   case "validate-chain": cmdValidateChain(args); break;

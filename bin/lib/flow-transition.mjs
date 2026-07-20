@@ -59,6 +59,14 @@ function synthesizeBaseForState(state) {
   return getProjectRoot();
 }
 
+// Scope the gate's changeScope layer to the commits this flow actually produced.
+// Always emit the flag (empty when nothing was recorded) so finalize/advance get
+// the flow-scoped behavior instead of a blind HEAD~1 diff. Empty → skip cleanly.
+function changeCommitsArgs(state) {
+  const commits = Array.isArray(state?.producedCommits) ? state.producedCommits : [];
+  return ["--change-commits", commits.join(",")];
+}
+
 function harnessPath() {
   return join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
 }
@@ -139,7 +147,7 @@ function collectGateSynthesizeReasons(dir, state, template, currentNode, verdict
     try {
       output = execFileSync(
         "node",
-        [harnessPath(), "synthesize", "--node", nodeId, "--dir", dir, "--base", synthesizeBaseForState(state)],
+        [harnessPath(), "synthesize", "--node", nodeId, "--dir", dir, "--base", synthesizeBaseForState(state), ...changeCommitsArgs(state)],
         { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
       );
     } catch (err) {
@@ -1056,7 +1064,7 @@ export function cmdAdvance(args) {
   try {
     synthOutput = execFileSync(
       "node",
-      [harnessPath(), "synthesize", "--node", upstreamNode, "--dir", dir, "--base", synthesizeBaseForState(state)],
+      [harnessPath(), "synthesize", "--node", upstreamNode, "--dir", dir, "--base", synthesizeBaseForState(state), ...changeCommitsArgs(state)],
       { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
     );
   } catch (err) {

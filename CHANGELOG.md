@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.10.6 — changeScope scoped to produced commits (2026-07-19)
+
+Fixes a structural false-positive in the terminal gate. `finalize`/`advance`
+force `--base <projectRoot>` on their internal `synthesize`, activating the
+`changeScopeCoverage` layer. That layer used a blind `git diff HEAD~1`, which
+flipped the verdict to ITERATE whenever (a) the flow reviewed a session-local
+artifact that was never committed, or (b) HEAD advanced via unrelated parallel
+commits — in both cases the review's real scope was invisible to `HEAD~1`.
+
+### Fixed
+
+- **changeScopeCoverage now scopes to the commits the flow actually produced.**
+  `changeScopeDiffFiles(baseDir, changeCommits)` (exported from
+  `eval-commands.mjs`) diffs exactly `--change-commits`. Empty set → skip
+  cleanly (no false-positive); non-empty set → gate still enforces the ≥30%
+  coverage rule; flag absent → legacy `HEAD~1` fallback preserved for direct
+  manual `synthesize --base` calls.
+- `finalize`/`advance` thread `flow-state.producedCommits` into synthesize via
+  `--change-commits` (empty when nothing was recorded, which disables the
+  false-positive without disabling the gate).
+
+### Added
+
+- **`opc-harness record-commit [--sha <sha>]`** — records a produced commit
+  into `flow-state.producedCommits` (defaults to HEAD; dedups; fail-closed on
+  invalid sha or missing `flow-state.json`).
+- `init` now seeds `baseSha` (git floor) and an empty `producedCommits`.
+- `bin/lib/eval-changescope.test.mjs` — 17 tests: `changeScopeDiffFiles` unit
+  coverage + a synthesize litmus pair proving the fix disables the
+  false-positive without disabling the gate + `record-commit` + init seeding.
+
 ## v0.8 — Run 5: F-items closeout + Runbook mechanism (2026-04-20)
 
 Two-track release. **Track A** clears the seven friction items (F1–F7)

@@ -19,7 +19,18 @@ The synthesize command stacks 11 defense layers per role (thinEval, noCodeRefs, 
 
 **thinEval substance exemption:** Evals under 50 lines are exempt from thinEval if every finding has reasoning + fix + file ref.
 
-**--base ref validation:** Pass `--base <project-root>` to validate file:line references against the filesystem. Fabricated refs count as 2 layers in the compound gate. When `--base` is provided and git history is available, the changeScopeCoverage layer checks that the eval mentions ≥30% of changed files. Note: `changeScopeCoverage` and `invalidRefCount` only activate when `--base` is provided and git is available — they are conditional layers.
+**--base ref validation:** Pass `--base <project-root>` to validate file:line references against the filesystem. Fabricated refs count as 2 layers in the compound gate. When `--base` is provided and git history is available, the changeScopeCoverage layer checks that the eval mentions ≥30% of the changed files. Note: `changeScopeCoverage` and `invalidRefCount` only activate when `--base` is provided and git is available — they are conditional layers.
+
+**changeScopeCoverage scope (`--change-commits`):** The set of "changed files" is scoped to the commits the flow actually **produced**, not a blind `git diff HEAD~1`. `finalize`/`advance` pass `--change-commits <csv>` from `flow-state.producedCommits` (recorded via `opc-harness record-commit`, see below). Behavior:
+- **Empty set** (`--change-commits` present but empty, i.e. the flow committed nothing yet — e.g. it reviewed a session-local artifact): changeScopeCoverage **skips cleanly**. This removes the structural false-positive where a blind `HEAD~1` diff mis-attributed unrelated parallel commits or could not see an uncommitted artifact.
+- **Non-empty set**: the layer diffs exactly those commits' files and still enforces the ≥30% coverage rule — the gate keeps biting on a genuine coverage gap.
+- **Flag absent** (`--change-commits` not passed at all): legacy `git diff HEAD~1` fallback is preserved for direct manual `synthesize --base` calls.
+
+**Recording produced commits:** After the orchestrator commits delivered code, it MUST record the commit so the gate can scope coverage to it:
+```bash
+opc-harness record-commit [--sha <sha>]   # defaults to HEAD of the project root
+```
+This appends the (dedup'd, full-length) sha to `flow-state.producedCommits`. Fail-closed: an invalid sha or missing `flow-state.json` is a hard error, not a silent skip.
 
 **Evaluator guidance (feedback loop):** When D2 triggers, the output includes `evaluatorGuidance` — a per-role object with `triggeredLayers` (which checks failed) and `hints` (actionable fix instructions). On ITERATE, the orchestrator SHOULD inject this guidance into the R2 evaluator prompt so the evaluator knows exactly what to fix.
 

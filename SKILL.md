@@ -408,6 +408,7 @@ Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 2. **Single agent** → agent writes its own handshake.json.
 3. **Multiple agents** (parallel, with `isolation: "worktree"`) → orchestrator merges artifacts and writes handshake.json.
 4. With superpowers: invoke `superpowers:subagent-driven-development`.
+5. **After committing delivered code**, run `opc-harness record-commit --sha <sha>` (or bare, defaulting to HEAD) so the terminal gate's changeScopeCoverage layer scopes to what this flow produced instead of a blind `HEAD~1` diff. Skip only if the build committed nothing.
 
 ### Node Type: review
 
@@ -582,7 +583,8 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `init` | `--flow <tpl> [--entry <node>] [--dir <p>]` | Initialize flow state. Creates `flow-state.json` and node directories. |
+| `init` | `--flow <tpl> [--entry <node>] [--dir <p>]` | Initialize flow state. Creates `flow-state.json` and node directories. Seeds `baseSha` (git floor) and empty `producedCommits`. |
+| `record-commit` | `[--sha <sha>] [--dir <p>]` | Record a commit the flow produced into `flow-state.producedCommits`. Defaults to HEAD; dedups; fail-closed on invalid sha. The gate's changeScopeCoverage layer scopes to these commits. |
 | `route` | `--node <id> --verdict <V> --flow <tpl>` | Get next node from graph edges. Returns `{next, allowed}`. |
 | `transition` | `--from <n> --to <n> --verdict <V> --flow <tpl> --dir <p>` | Execute state transition. Validates edge, checks limits, writes gate handshake, enforces backlog. |
 | `validate` | `<handshake.json>` | Validate handshake schema (required fields, evidence check for execute nodes). |
