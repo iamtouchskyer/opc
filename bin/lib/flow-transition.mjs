@@ -15,6 +15,7 @@ import {
   WRITER_SIG, IDEMPOTENCY_WINDOW_MS,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { AUTO_MODE_REMINDER, createStopMarker } from "./runaway-guard.mjs";
 import { resolveBypass, loadExtensions, firePromptAppend, fireVerdictAppend, survivingExtensions, saveRegistryCache } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadOpcConfig, readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
@@ -455,6 +456,56 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
     };
   }
 
+  const edgeKey = `${from}\u2192${to}`;
+  const isAutoRepairAttempt = state.autoMode === true
+    && (verdict === "FAIL" || verdict === "ITERATE");
+  let autoRepairCount = 0;
+
+  if (isAutoRepairAttempt) {
+    const counts = state.autoRepairCounts;
+    if (counts !== undefined && (!counts || typeof counts !== "object" || Array.isArray(counts))) {
+      console.log(JSON.stringify({
+        allowed: false,
+        requiresHuman: true,
+        reason: "autoRepairCounts is invalid",
+      }));
+      return;
+    }
+
+    const rawCount = counts?.[edgeKey];
+    if (rawCount !== undefined && (!Number.isInteger(rawCount) || rawCount < 0)) {
+      console.log(JSON.stringify({
+        allowed: false,
+        requiresHuman: true,
+        reason: `auto repair count is invalid for '${edgeKey}'`,
+      }));
+      return;
+    }
+    autoRepairCount = rawCount ?? 0;
+
+    if (autoRepairCount >= 1) {
+      try {
+        createStopMarker(dir, state, {
+          reason: "repair-edge-budget",
+          edgeKey,
+        });
+      } catch (error) {
+        console.log(JSON.stringify({
+          allowed: false,
+          requiresHuman: true,
+          reason: `auto repair budget reached for '${edgeKey}', but stop marker creation failed: ${error.message}`,
+        }));
+        return;
+      }
+      console.log(JSON.stringify({
+        allowed: false,
+        requiresHuman: true,
+        reason: `auto repair budget reached for '${edgeKey}'`,
+      }));
+      return;
+    }
+  }
+
   const limits = {
     maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
     maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
@@ -466,7 +517,6 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
     return;
   }
 
-  const edgeKey = `${from}\u2192${to}`;
   const edgeCount = state.edgeCounts[edgeKey] || 0;
   if (edgeCount >= limits.maxLoopsPerEdge) {
     console.log(JSON.stringify({ allowed: false, reason: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for edge '${edgeKey}'` }));
@@ -786,6 +836,10 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   state.currentNode = to;
   state.totalSteps++;
   state.edgeCounts[edgeKey] = edgeCount + 1;
+  if (isAutoRepairAttempt) {
+    state.autoRepairCounts ??= {};
+    state.autoRepairCounts[edgeKey] = autoRepairCount + 1;
+  }
   state._written_by = WRITER_SIG;
   state._last_modified = new Date().toISOString();
 
@@ -813,7 +867,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   }
   console.error("");
 
-  const autoReminder = state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined;
+  const autoReminder = state.autoMode ? AUTO_MODE_REMINDER : undefined;
 
   // ── Extension context for next node ────────────────────────────
   // Fire promptAppend so the orchestrator gets extension context without
@@ -1129,7 +1183,7 @@ export function cmdAdvance(args) {
   const toArg = next === null ? "null" : next;
   console.error(`[advance] transitioning ${currentNode} → ${toArg}...`);
   try {
-    const transArgs = [harnessPath, "transition", "--from", currentNode, "--to", toArg, "--verdict", verdict, "--flow", state.flowTemplate];
+    const transArgs = [harnessPath(), "transition", "--from", currentNode, "--to", toArg, "--verdict", verdict, "--flow", state.flowTemplate];
     if (state._flow_file) transArgs.push("--flow-file", state._flow_file);
     transArgs.push("--dir", dir);
     const transOutput = execFileSync(
@@ -1139,6 +1193,19 @@ export function cmdAdvance(args) {
     );
     let transResult;
     try { transResult = JSON.parse(transOutput.trim().split("\n").pop()); } catch { transResult = {}; }
+
+    if (transResult.allowed === false) {
+      console.log(JSON.stringify({
+        advanced: false,
+        verdict,
+        upstream: upstreamNode,
+        next,
+        transition: transResult,
+        ...(transResult.requiresHuman ? { requiresHuman: true } : {}),
+        reason: transResult.reason || "transition denied",
+      }));
+      return;
+    }
 
     console.log(JSON.stringify({
       advanced: true,

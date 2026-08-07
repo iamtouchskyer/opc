@@ -2,13 +2,14 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { checkStructuredResults } from "./flow-transition.mjs";
+import { budgetPaths, resolveCurrentRun } from "./runaway-guard.mjs";
 import { appendProvenanceEvent } from "./provenance-ledger.mjs";
 
 const TMPBASE = join(os.homedir(), ".opc", "sessions", `ft-test-${Date.now()}`);
@@ -672,7 +673,13 @@ describe("checkStructuredResults — Step 1.5", () => {
 // ─── Integration: bypass path enforcement via harness CLI ─────────────
 
 /** Create a full session dir that cmdTransition/cmdPass will accept. */
-function createSession(name, { artifacts = [], failingReport = false, diVerdict = null } = {}) {
+function createSession(name, {
+  artifacts = [],
+  failingReport = false,
+  diVerdict = null,
+  autoMode = false,
+  autoRepairCounts,
+} = {}) {
   const dir = join(TMPBASE, name);
   mkdirSync(join(dir, "nodes", "build", "run_1"), { recursive: true });
   mkdirSync(join(dir, "nodes", "code-review", "run_1"), { recursive: true });
@@ -744,6 +751,10 @@ function createSession(name, { artifacts = [], failingReport = false, diVerdict 
       { nodeId: "test-execute", runId: "run_1", timestamp: new Date().toISOString() },
       { nodeId: "gate", runId: "run_1", timestamp: new Date().toISOString() },
     ],
+    flowStartedAt: new Date().toISOString(),
+    autoMode: autoMode || undefined,
+    ...(autoRepairCounts === undefined ? {} : { autoRepairCounts }),
+    _claudeSessionId: autoMode ? `session-${name}` : undefined,
     _written_by: "opc-harness",
     _write_nonce: `test-${Date.now()}`,
     _last_modified: new Date().toISOString(),
@@ -847,5 +858,212 @@ describe("Step 1.5 bypass enforcement — cmdPass", () => {
     // cmdPass either returns {error: ...} or delegates to transition which returns {allowed: false}
     const rejected = result.allowed === false || result.error != null;
     assert.ok(rejected, `should be rejected, got: ${JSON.stringify(result)}`);
+  });
+});
+
+function readState(dir) {
+  return JSON.parse(readFileSync(join(dir, "flow-state.json"), "utf8"));
+}
+
+function runGateRepair(dir) {
+  return runHarness("transition", [
+    "--from", "gate", "--to", "brief", "--verdict", "FAIL",
+    "--flow", "build-verify", "--dir", dir,
+  ]);
+}
+
+describe("exact auto repair-edge budget", () => {
+  test("first successful auto repair consumes the exact edge", () => {
+    const dir = createSession("repair-first", { autoMode: true });
+    const result = runGateRepair(dir);
+
+    assert.equal(result.allowed, true, JSON.stringify(result));
+    assert.equal(readState(dir).autoRepairCounts["gate→brief"], 1);
+  });
+
+  test("second exact repair trips durably before graph limits or transition side effects", () => {
+    const dir = createSession("repair-second", {
+      autoMode: true,
+      autoRepairCounts: { "gate→brief": 1 },
+    });
+    const state = readState(dir);
+    state.maxTotalSteps = state.totalSteps;
+    writeFileSync(join(dir, "flow-state.json"), JSON.stringify(state, null, 2));
+    const before = readFileSync(join(dir, "flow-state.json"), "utf8");
+
+    const result = runGateRepair(dir);
+
+    assert.equal(result.allowed, false);
+    assert.equal(result.requiresHuman, true);
+    assert.match(result.reason, /auto repair budget reached.*gate→brief/);
+    assert.equal(readFileSync(join(dir, "flow-state.json"), "utf8"), before);
+    assert.equal(existsSync(join(dir, "nodes", "brief")), false);
+
+    const run = resolveCurrentRun(state);
+    const paths = budgetPaths(dir, "gate", run.runKey);
+    assert.deepEqual(JSON.parse(readFileSync(paths.stop, "utf8")), {
+      sessionId: "session-repair-second",
+      nodeId: "gate",
+      runKey: run.runKey,
+      reason: "repair-edge-budget",
+      edgeKey: "gate→brief",
+      createdAt: JSON.parse(readFileSync(paths.stop, "utf8")).createdAt,
+    });
+  });
+
+  test("different exact repair edges remain independent", () => {
+    const dir = createSession("repair-independent", {
+      autoMode: true,
+      autoRepairCounts: { "code-review→build": 1 },
+    });
+
+    const result = runGateRepair(dir);
+
+    assert.equal(result.allowed, true, JSON.stringify(result));
+    assert.deepEqual(readState(dir).autoRepairCounts, {
+      "code-review→build": 1,
+      "gate→brief": 1,
+    });
+  });
+
+  test("interactive transitions ignore auto repair counts", () => {
+    const dir = createSession("repair-interactive", {
+      autoRepairCounts: { "gate→brief": 1 },
+    });
+
+    const result = runGateRepair(dir);
+
+    assert.equal(result.allowed, true, JSON.stringify(result));
+    assert.equal(readState(dir).autoRepairCounts["gate→brief"], 1);
+  });
+
+  test("failed graph validation does not consume a repair", () => {
+    const dir = createSession("repair-validation", { autoMode: true });
+    const state = readState(dir);
+    state.maxNodeReentry = 0;
+    writeFileSync(join(dir, "flow-state.json"), JSON.stringify(state, null, 2));
+
+    const result = runGateRepair(dir);
+
+    assert.equal(result.allowed, false);
+    assert.match(result.reason, /maxNodeReentry/);
+    assert.equal(readState(dir).autoRepairCounts, undefined);
+  });
+
+  test("malformed repair counters and marker I/O failure fail closed", () => {
+    for (const [index, autoRepairCounts] of [null, "invalid", []].entries()) {
+      const malformedDir = createSession(`repair-malformed-${index}`, {
+        autoMode: true,
+        autoRepairCounts,
+      });
+      const malformed = runGateRepair(malformedDir);
+      assert.equal(malformed.allowed, false);
+      assert.equal(malformed.requiresHuman, true);
+      assert.match(malformed.reason, /autoRepairCounts is invalid/);
+    }
+
+    for (const [index, count] of [1.5, -1].entries()) {
+      const malformedDir = createSession(`repair-count-${index}`, {
+        autoMode: true,
+        autoRepairCounts: { "gate→brief": count },
+      });
+      const malformed = runGateRepair(malformedDir);
+      assert.equal(malformed.allowed, false);
+      assert.equal(malformed.requiresHuman, true);
+      assert.match(malformed.reason, /auto repair count is invalid/);
+    }
+
+    const blockedDir = createSession("repair-marker-failure", {
+      autoMode: true,
+      autoRepairCounts: { "gate→brief": 1 },
+    });
+    writeFileSync(join(blockedDir, "node-budget"), "not-a-directory");
+    const before = readFileSync(join(blockedDir, "flow-state.json"), "utf8");
+    const blocked = runGateRepair(blockedDir);
+    assert.equal(blocked.allowed, false);
+    assert.equal(blocked.requiresHuman, true);
+    assert.match(blocked.reason, /stop marker creation failed/);
+    assert.equal(readFileSync(join(blockedDir, "flow-state.json"), "utf8"), before);
+  });
+
+  test("auto PASS does not consume repair budget", () => {
+    const dir = createSession("repair-pass", {
+      autoMode: true,
+      autoRepairCounts: { "gate→brief": 0 },
+    });
+    const result = runHarness("transition", [
+      "--from", "gate", "--to", "null", "--verdict", "PASS",
+      "--flow", "build-verify", "--dir", dir,
+    ]);
+
+    assert.equal(result.finalized, true, JSON.stringify(result));
+    assert.deepEqual(readState(dir).autoRepairCounts, { "gate→brief": 0 });
+  });
+});
+
+function createAdvanceRepairSession(name) {
+  const dir = join(TMPBASE, name);
+  const reviewRun = join(dir, "nodes", "review", "run_1");
+  mkdirSync(reviewRun, { recursive: true });
+  mkdirSync(join(dir, "nodes", "gate"), { recursive: true });
+  writeFileSync(join(reviewRun, "eval-skeptic-owner.md"), [
+    "# Skeptic Owner Review",
+    "",
+    "[WARNING] package.json:1 — metadata needs another review",
+    "Reasoning: the current metadata is incomplete.",
+    "→ Repair the metadata before delivery.",
+    "",
+    "VERDICT: FINDINGS[1]",
+  ].join("\n"));
+  writeFileSync(join(reviewRun, "eval-peer.md"), cleanPassEval("Peer Evaluation", "review"));
+  writeFileSync(join(dir, "nodes", "review", "handshake.json"), JSON.stringify({
+    nodeId: "review",
+    nodeType: "review",
+    runId: "run_1",
+    status: "completed",
+    verdict: "ITERATE",
+    summary: "needs repair",
+    timestamp: new Date().toISOString(),
+    artifacts: [
+      { type: "eval", path: "run_1/eval-skeptic-owner.md" },
+      { type: "eval", path: "run_1/eval-peer.md" },
+    ],
+  }));
+  const now = new Date().toISOString();
+  writeFileSync(join(dir, "flow-state.json"), JSON.stringify({
+    version: "1.0",
+    flowTemplate: "review",
+    currentNode: "gate",
+    entryNode: "review",
+    totalSteps: 1,
+    maxTotalSteps: 10,
+    maxLoopsPerEdge: 3,
+    maxNodeReentry: 5,
+    edgeCounts: { "review→gate": 1 },
+    history: [
+      { nodeId: "review", runId: "run_1", timestamp: now },
+      { nodeId: "gate", runId: "run_1", timestamp: now },
+    ],
+    flowStartedAt: now,
+    autoMode: true,
+    autoRepairCounts: { "gate→review": 1 },
+    _claudeSessionId: `session-${name}`,
+    _written_by: "opc-harness",
+    _write_nonce: `test-${Date.now()}`,
+    _last_modified: now,
+  }, null, 2));
+  return dir;
+}
+
+describe("advance repair denial propagation", () => {
+  test("reports advanced=false when the nested transition requires a human", () => {
+    const dir = createAdvanceRepairSession("repair-advance");
+
+    const result = runHarness("advance", ["--dir", dir]);
+
+    assert.equal(result.advanced, false, JSON.stringify(result));
+    assert.equal(result.requiresHuman, true);
+    assert.equal(result.transition.allowed, false);
+    assert.match(result.reason, /auto repair budget reached.*gate→review/);
   });
 });

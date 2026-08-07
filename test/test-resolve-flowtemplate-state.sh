@@ -172,7 +172,25 @@ fi
 # `--auto` init still produces the reminder field on a route call.
 echo "--- 9: autoMode init → route emits reminder ---"
 rm -rf .auto-harness
-$HARNESS init --flow build-verify --entry brief --dir .auto-harness --auto >/dev/null 2>&1
+AUTO_HOME="$TMPDIR/auto-home"
+AUTO_HOOK="$AUTO_HOME/.claude/skills/opc/bin/hooks/opc-pre-tool-budget.mjs"
+mkdir -p "$(dirname "$AUTO_HOOK")"
+printf '#!/usr/bin/env node\n' > "$AUTO_HOOK"
+mkdir -p "$AUTO_HOME/.claude"
+cat > "$AUTO_HOME/.claude/settings.json" <<EOF
+{
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "node \"$AUTO_HOOK\"",
+        "timeout": 10
+      }]
+    }]
+  }
+}
+EOF
+HOME="$AUTO_HOME" $HARNESS init --flow build-verify --entry brief --dir .auto-harness --auto --claude-session-id test-resolve-flowtemplate >/dev/null 2>&1
 OUT=$($HARNESS route --node brief --verdict PASS --dir .auto-harness 2>/dev/null)
 if echo "$OUT" | grep -q "auto mode"; then
   echo "  ✅ reminder present under autoMode: $OUT"

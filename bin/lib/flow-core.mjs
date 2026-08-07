@@ -1,14 +1,24 @@
 // Flow core commands: route, init, validate, validateHandshakeData, validate-context
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker), util.mjs
 
-import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from "fs";
 import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
+import { homedir } from "os";
 import { execSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync, createSessionDir, getProjectRoot,
+  getFlag, resolveDir, atomicWriteSync, createSessionDir, getProjectRoot, getSessionsBaseDir,
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
@@ -25,6 +35,13 @@ import { parseBypassArgs } from "./bypass-args.mjs";
 import { readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 import { collectTestResultReasons } from "./test-result-gate.mjs";
 import { loadTestCommandSpec, testCommandHash } from "./test-command-execution.mjs";
+import {
+  AUTO_MODE_REMINDER,
+  readSessionRegistry,
+  registryPath,
+  writeSessionRegistry,
+} from "./runaway-guard.mjs";
+import { lockFile } from "./file-lock.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -73,7 +90,7 @@ export function cmdRoute(args) {
   // Read autoMode from the state loaded above
   let autoReminder;
   if (state && state.autoMode) {
-    autoReminder = "auto mode — do not pause, do not ask user, keep executing";
+    autoReminder = AUTO_MODE_REMINDER;
   }
 
   console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
@@ -139,16 +156,93 @@ export function cmdRecordCommit(args) {
   console.log(JSON.stringify({ recorded: true, sha: full, already, producedCommits: state.producedCommits }));
 }
 
+function validatePreToolHook(home) {
+  const hookPath = join(home, ".claude", "skills", "opc", "bin", "hooks", "opc-pre-tool-budget.mjs");
+  if (!existsSync(hookPath)) {
+    return `PreToolUse hook script is missing: ${hookPath}. Run 'opc install' and 'opc install-hooks'.`;
+  }
+
+  const settingsPath = join(home, ".claude", "settings.json");
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch (error) {
+    return `PreToolUse hook is not installed: cannot read ${settingsPath}: ${error.message}`;
+  }
+  const entries = settings?.hooks?.PreToolUse;
+  const expectedCommand = `node "${hookPath}"`;
+  const installed = Array.isArray(entries) && entries.some(entry =>
+    (entry?.matcher == null || entry.matcher === "") &&
+    entry?.hooks?.some(hook =>
+      hook?.type === "command" && hook.async !== true && hook.command === expectedCommand
+    )
+  );
+  return installed ? null : `PreToolUse hook is not installed in ${settingsPath}. Run 'opc install-hooks'.`;
+}
+
+function activeRegistryConflict(sessionId, home) {
+  let registry;
+  try {
+    registry = readSessionRegistry(sessionId, home);
+  } catch (error) {
+    return `cannot verify existing session registry: ${error.message}`;
+  }
+  if (!registry) return null;
+
+  let state;
+  try {
+    state = JSON.parse(readFileSync(join(registry.sessionDir, "flow-state.json"), "utf8"));
+  } catch (error) {
+    return `cannot verify existing registered flow: ${error.message}`;
+  }
+  if (state?.status === "completed" || state?.status === "stopped") return null;
+  if (state?.autoMode === true && state?._claudeSessionId === sessionId) {
+    return `Claude session '${sessionId}' is already bound to an active auto flow at ${registry.sessionDir}`;
+  }
+  return `existing session registry for '${sessionId}' is not safely replaceable`;
+}
+
+function restoreLatestAfterFailedInit(latestLink, failedDir, previousTarget) {
+  if (!latestLink) return;
+  try {
+    const currentTarget = readlinkSync(latestLink);
+    if (resolve(dirname(latestLink), currentTarget) !== resolve(failedDir)) return;
+    if (previousTarget === null) {
+      rmSync(latestLink, { force: true });
+      return;
+    }
+    const tempLink = `${latestLink}.rollback.${process.pid}`;
+    rmSync(tempLink, { force: true });
+    symlinkSync(previousTarget, tempLink);
+    renameSync(tempLink, latestLink);
+  } catch {
+    // Best effort: registry failure remains the primary error.
+  }
+}
+
 export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
   const autoMode = args.includes("--auto");
+  const claudeSessionId = getFlag(args, "claude-session-id");
   const hasExplicitDir = args.includes("--dir");
-  const dir = hasExplicitDir ? resolveDir(args) : createSessionDir();
 
   if (tier && !VALID_TIERS.has(tier)) {
     console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
     return;
+  }
+
+  if (autoMode) {
+    if (!claudeSessionId) {
+      console.log(JSON.stringify({ created: false, error: "init --auto requires non-empty --claude-session-id" }));
+      return;
+    }
+    const home = homedir();
+    const hookError = validatePreToolHook(home);
+    if (hookError) {
+      console.log(JSON.stringify({ created: false, error: hookError }));
+      return;
+    }
   }
 
   const resolved = resolveFlowTemplate(args);
@@ -164,14 +258,49 @@ export async function cmdInit(args) {
     return;
   }
 
+  let registryLock = null;
+  if (autoMode) {
+    const home = homedir();
+    const path = registryPath(claudeSessionId, home);
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      registryLock = lockFile(path, { command: "init-auto" });
+    } catch (error) {
+      console.log(JSON.stringify({ created: false, error: `cannot prepare session registry: ${error.message}` }));
+      return;
+    }
+    if (!registryLock.acquired) {
+      console.log(JSON.stringify({ created: false, error: "cannot acquire session registry lock" }));
+      return;
+    }
+    const conflict = activeRegistryConflict(claudeSessionId, home);
+    if (conflict) {
+      registryLock.release();
+      console.log(JSON.stringify({ created: false, error: conflict }));
+      return;
+    }
+  }
+
+  const explicitDir = hasExplicitDir ? resolveDir(args) : null;
+  const removeDirOnRegistryFailure = !hasExplicitDir || !existsSync(explicitDir);
+  const latestLink = hasExplicitDir ? null : join(getSessionsBaseDir(), "latest");
+  let previousLatestTarget = null;
+  if (latestLink) {
+    try { previousLatestTarget = readlinkSync(latestLink); } catch { /* no previous session */ }
+  }
+  const dir = explicitDir || createSessionDir();
+  const nodesPath = join(dir, "nodes");
+  const nodesExistedBefore = existsSync(nodesPath);
   const statePath = join(dir, "flow-state.json");
   const force = args.includes("--force");
   if (existsSync(statePath) && !force) {
+    registryLock?.release();
     console.log(JSON.stringify({ created: false, error: "flow-state.json already exists (use --force to overwrite)" }));
     return;
   }
+  const priorStateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : null;
 
-  mkdirSync(join(dir, "nodes"), { recursive: true });
+  mkdirSync(nodesPath, { recursive: true });
 
   // ─── Resolve bypass state BEFORE writing flow-state.json ────────
   // Record it on flow-state so validate-chain and other downstream
@@ -187,6 +316,8 @@ export async function cmdInit(args) {
         ? { mode: "disable-all", source: bypassDecision.source }
         : { mode: "whitelist", source: bypassDecision.source, names: bypassDecision.names || [] };
 
+  const projectRoot = getProjectRoot();
+  const flowStartedAt = new Date().toISOString();
   const state = {
     version: "1.0",
     flowTemplate: flow,
@@ -199,15 +330,20 @@ export async function cmdInit(args) {
     maxNodeReentry: template.limits.maxNodeReentry,
     history: [],
     edgeCounts: {},
-    projectRoot: getProjectRoot(),
+    projectRoot,
     // Git floor at flow start + commits the flow produces. changeScope diffs
     // producedCommits (recorded via `record-commit`), never a blind HEAD~1.
-    baseSha: gitHeadSha(getProjectRoot()),
+    baseSha: gitHeadSha(projectRoot),
     producedCommits: [],
     bypassMode: bypassRecord,
     autoMode: autoMode || undefined,
+    ...(autoMode ? {
+      _claudeSessionId: claudeSessionId,
+      flowStartedAt,
+      autoRepairCounts: {},
+    } : {}),
     _written_by: WRITER_SIG,
-    _last_modified: new Date().toISOString(),
+    _last_modified: flowStartedAt,
     _flow_file: template._source_file || undefined,
     _write_nonce: createHash("sha256")
       .update(Date.now().toString() + Math.random().toString())
@@ -215,6 +351,30 @@ export async function cmdInit(args) {
   };
 
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+
+  if (autoMode) {
+    try {
+      writeSessionRegistry({
+        sessionId: claudeSessionId,
+        sessionDir: resolve(dir),
+        projectRoot,
+        registeredAt: flowStartedAt,
+      }, homedir());
+    } catch (error) {
+      if (removeDirOnRegistryFailure) {
+        rmSync(dir, { recursive: true, force: true });
+        restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+      } else {
+        if (priorStateText === null) rmSync(statePath, { force: true });
+        else atomicWriteSync(statePath, priorStateText);
+        if (!nodesExistedBefore) rmSync(nodesPath, { recursive: true, force: true });
+      }
+      registryLock.release();
+      console.log(JSON.stringify({ created: false, error: `cannot write session registry: ${error.message}` }));
+      return;
+    }
+    registryLock.release();
+  }
 
   // ─── Persist .ext-registry.json (which extensions this flow will use) ────
   // This is also the observable surface for the benchmark bypass: running

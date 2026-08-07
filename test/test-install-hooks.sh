@@ -39,20 +39,26 @@ NO_JQ_PATH="$TMP/no-jq-path"
 mkdir -p "$HOME_NO_JQ" "$NO_JQ_PATH"
 HOME="$HOME_NO_JQ" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install > /dev/null
 
-set +e
 OUT=$(HOME="$HOME_NO_JQ" PATH="$NO_JQ_PATH" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install-hooks 2>&1)
-STATUS=$?
-set -e
+assert_contains "$OUT" "PreToolUse" "PreToolUse guard installs without jq"
+assert_contains "$OUT" "jq not found" "missing jq only skips compaction hooks"
 
-if [ "$STATUS" -ne 0 ]; then ok "install-hooks fails when jq is absent"; else fail "install-hooks should fail without jq"; fi
-assert_contains "$OUT" "requires 'jq'" "missing jq error is explicit"
-if [ ! -f "$HOME_NO_JQ/.claude/settings.json" ]; then ok "settings not written after failed prereq"; else fail "settings should not be written when prereq fails"; fi
+NO_JQ_SETTINGS="$HOME_NO_JQ/.claude/settings.json"
+NO_JQ_HOOKS=$(python3 - "$NO_JQ_SETTINGS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("\n".join(d.get("hooks", {}).keys()))
+PY
+)
+assert_contains "$NO_JQ_HOOKS" "PreToolUse" "no-jq settings contain PreToolUse"
+assert_not_contains "$NO_JQ_HOOKS" "PreCompact" "no-jq settings omit PreCompact"
+assert_not_contains "$NO_JQ_HOOKS" "PostCompact" "no-jq settings omit PostCompact"
 
 HOME_OK="$TMP/home-ok"
 mkdir -p "$HOME_OK"
 HOME="$HOME_OK" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install > /dev/null
 OUT_OK=$(HOME="$HOME_OK" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install-hooks 2>&1)
-assert_contains "$OUT_OK" "Verified: hook scripts present and jq available" "successful install verifies hook prereqs"
+assert_contains "$OUT_OK" "PreCompact" "jq-enabled install registers compaction hooks"
 
 SETTINGS="$HOME_OK/.claude/settings.json"
 COMMANDS=$(python3 - "$SETTINGS" <<'PY'

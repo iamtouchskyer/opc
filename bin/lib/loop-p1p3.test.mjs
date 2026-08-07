@@ -395,13 +395,16 @@ describe("P3: stall detection does NOT fire when last tick succeeded", () => {
           { unit: "F1.1", tick: 2, status: "blocked" },
           { unit: "F1.1", tick: 3, status: "completed" },
         ],
+        autoMode: true,
       };
       writeFileSync(join(tmp, "loop-state.json"), JSON.stringify(state));
 
       const result = runHarness(["next-tick", "--dir", tmp], { cwd: tmp });
       // Should NOT stall — last tick succeeded
-      assert.equal(result.terminate, undefined || false);
+      assert.equal(result.terminate, false);
       assert.equal(result.ready, true);
+      assert.match(result.reminder, /configured loop limits remain/);
+      assert.doesNotMatch(result.reminder, /keep executing/);
     } finally {
       rmSync(tmp, { recursive: true });
     }

@@ -251,7 +251,7 @@ bash test/run-all.sh
 - [Claude Code](https://claude.ai/code) (CLI, desktop app, or IDE extension)
 - Node.js >= 18
 - Core runtime has no npm dependencies, no MCP server, no build step
-- Optional: `jq` for `opc install-hooks` context-compaction hooks
+- `opc install-hooks` always installs the Node-based auto-flow guard; optional `jq` additionally enables context-compaction hooks
 
 ### Works better with memex (optional)
 
@@ -500,7 +500,7 @@ bash test/run-all.sh
 - [Claude Code](https://claude.ai/code)（CLI、桌面应用或 IDE 扩展）
 - Node.js >= 18
 - 核心运行时无 npm 依赖、无 MCP server、无构建步骤
-- 可选：`jq`，用于 `opc install-hooks` 的上下文压缩 hook
+- `opc install-hooks` 始终安装 Node 实现的 auto-flow guard；可选的 `jq` 额外启用上下文压缩 hook
 
 ### 搭配 memex 更好（可选）
 

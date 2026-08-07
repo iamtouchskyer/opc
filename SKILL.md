@@ -167,11 +167,14 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 2. If `.harness/` has `wave-*` files but no `flow-state.json` → **legacy v0.4.x format detected**. Print: "Detected v0.4.x .harness/ format. Please delete .harness/ and re-run, or manually migrate." Do not proceed.
 3. Otherwise → fresh start.
 
-After flow selection, initialize:
+After flow selection, initialize with the matching interaction mode:
 
 ```bash
-opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE}
+opc-harness init --auto --claude-session-id "${CLAUDE_SESSION_ID}" --flow {TEMPLATE} --entry {ENTRY_NODE}
+opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} # interactive (`/opc -i`) only
 ```
+
+Auto init requires the installed OPC `PreToolUse` hook. Interactive init does not create a Claude session registry and is not subject to the node or repair-edge circuit breaker.
 
 Init auto-creates `~/.opc/sessions/{project-hash}/{session-id}/` and updates the `latest` symlink. **All subsequent harness commands automatically resolve to the latest session dir** — you do NOT need to pass `--dir` or capture the output. Just run commands normally:
 
@@ -367,12 +370,9 @@ Launching {N} agents...
 
 ## Node Execution
 
-**Auto mode = no pause.** In auto mode, the orchestrator MUST NOT pause to ask "should I continue?", "this will take a while", or "want to stop here?". The only acceptable reasons to stop are:
-- Escape hatch triggered (cycle limit hit, stall detected, blocked transition)
-- Tool failure after retry
-- Context critically low (write state to disk, tell user to re-invoke)
+**Auto mode is bounded.** Continue without confirmation only while node and repair-edge budgets remain. Normal graph limits and validation failures still apply.
 
-Anything else = keep executing. The user chose auto mode precisely because they don't want interruptions. If the pipeline has 14 nodes, run all 14 nodes. Do not ask permission at node 4.
+When the circuit breaker trips, stop and report immediately. Do not retry or attempt recovery from the current Claude session. Recovery requires the user to run an existing `opc-harness stop`, `goto`, `skip`, or `pass` command from an external terminal.
 
 The orchestrator uses **cursor-based execution** — `flow-state.json.currentNode` is the single pointer. No topological sort.
 
@@ -637,12 +637,12 @@ The `transition` command enforces:
 
 **Agent spawn failures:** Retry once. If it fails again, surface to user.
 
-**Context compaction resilience:** OPC provides PreCompact/PostCompact hooks that automatically snapshot state and inject resume context after compaction. Run `opc install-hooks` to register them. These optional shell hooks require `jq`. When auto-compact fires:
+**Context compaction resilience:** `opc install-hooks` always registers the Node-based `PreToolUse` guard required by auto flows. When `jq` is available, it also registers optional PreCompact/PostCompact shell hooks that snapshot state and inject resume context after compaction. When auto-compact fires:
 1. **PreCompact** writes a resume brief to `$SESSION_DIR/resume-brief.md`
 2. **PostCompact** injects the brief as `additionalContext` into the new context
 3. The orchestrator sees the injection and resumes the flow automatically
 
-If hooks are not installed, the fallback behavior is: flow-state.json persists on disk, but the orchestrator must be manually re-invoked via `/opc` (which runs `opc-harness ls` to discover active flows).
+If the optional compaction hooks are unavailable, flow-state.json still persists on disk, but the orchestrator must be manually re-invoked via `/opc` (which runs `opc-harness ls` to discover active flows).
 
 **State recovery:** On resume, run `opc-harness validate-chain`. If inconsistent → surface to user, do not auto-repair.
 

@@ -429,7 +429,7 @@ export function cmdNextTick(args) {
       context_hints: contextHints,
       recommended_flow: contextHints.recommended_flow,
       resumePrompt,
-      reminder: state.autoMode ? "auto mode — do not pause, do not ask user, keep executing" : undefined,
+      reminder: state.autoMode ? "auto mode — continue without confirmation only while configured loop limits remain; stop and report immediately when a limit trips" : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
     }));
     return;
