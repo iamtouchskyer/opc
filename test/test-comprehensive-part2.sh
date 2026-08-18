@@ -1,11 +1,33 @@
 #!/bin/bash
 set -e
-OPC_BIN="$(dirname "$(dirname "$(realpath "$0")")")/bin/opc-harness.mjs"
+SCRIPT_PATH="$(realpath "$0")"
+OPC_BIN="$(dirname "$(dirname "$SCRIPT_PATH")")/bin/opc-harness.mjs"
 
-source "$(dirname "$0")/test-helpers.sh"
+source "$(dirname "$SCRIPT_PATH")/test-helpers.sh"
 setup_tmpdir
 opc() { node "$OPC_BIN" "$@"; }
 TESTBASE="/tmp/opc-comprehensive-test2-$$"
+FLOW_FIXTURE="$HOME/.claude/flows/_opc_test_schema.json"
+cleanup() {
+  rm -rf "$TESTBASE" "$TMPDIR"
+  rm -f "$FLOW_FIXTURE"
+}
+trap cleanup EXIT
+
+if [ "${OPC_TEST_CLEANUP_PROBE:-0}" = "1" ]; then
+  mkdir -p "$(dirname "$FLOW_FIXTURE")"
+  printf '%s\n' '{"probe":true}' > "$FLOW_FIXTURE"
+  exit 23
+fi
+
+cleanup_probe() {
+  if OPC_TEST_CLEANUP_PROBE=1 "$SCRIPT_PATH" >/dev/null 2>&1; then
+    return 1
+  else
+    [ "$?" -eq 23 ] && [ ! -e "$FLOW_FIXTURE" ]
+  fi
+}
+
 mkdir -p "$TESTBASE"
 TOTAL=0
 
@@ -59,14 +81,15 @@ write_review_hs() {
   local extra=''
   if [ "$NODE" = "test-design" ]; then
     write_complete_test_plan "$DIR/nodes/$NODE/run_1/test-plan.md"
-    cat > "$DIR/nodes/$NODE/test-execution.json" <<'JSON'
-{"testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture command"]}
+    cat > "$DIR/nodes/$NODE/run_1/test-execution.json" <<'JSON'
+{"nodeId":"test-design","runId":"run_1","testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture command"]}
 JSON
-    artifacts='[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-comprehensive-peer.md"},{"type":"test-plan","path":"run_1/test-plan.md"},{"type":"test-plan","path":"test-execution.json"}]'
+    artifacts='[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-comprehensive-peer.md"},{"type":"test-plan","path":"run_1/test-plan.md"},{"type":"test-plan","path":"run_1/test-execution.json"}]'
     extra=',"testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture command"]'
   fi
   printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":%s,"verdict":"%s"%s}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$artifacts" "$VERDICT" "$extra" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 write_build_hs() {
@@ -75,6 +98,7 @@ write_build_hs() {
   echo "output" > "$DIR/nodes/$NODE/run_1/output.md"
   printf '{"nodeId":"%s","nodeType":"build","runId":"run_1","status":"completed","summary":"Built","timestamp":"%s","artifacts":[{"type":"source","path":"run_1/output.md"}],"verdict":null}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 write_exec_hs() {
@@ -83,6 +107,7 @@ write_exec_hs() {
   echo "test output" > "$DIR/nodes/$NODE/run_1/output.txt"
   printf '{"nodeId":"%s","nodeType":"execute","runId":"run_1","status":"completed","summary":"Executed","timestamp":"%s","artifacts":[{"type":"cli-output","path":"run_1/output.txt"}],"verdict":null}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -100,11 +125,11 @@ check_json "goto jumps to target" "d['goto']=='test-execute'" "$R"
 R=$(opc goto nonexistent --dir .harness)
 check_json "goto non-existent fails" "'not a node' in d.get('error','')" "$R"
 
-# goto maxLoopsPerEdge (self-loop build→build hits edge limit=3 before nodeReentry=5)
-# After prior goto test-execute, first goto build = test-execute→build, then build→build starts
-for i in 1 2 3 4; do opc goto build --dir .harness > /dev/null 2>&1; done
+# Manual goto traffic is not semantic repair; repeated reentry is bounded by maxNodeReentry.
+# After prior goto test-execute, first goto build = test-execute→build, then build→build starts.
+for i in 1 2 3 4 5; do opc goto build --dir .harness > /dev/null 2>&1; done
 R=$(opc goto build --dir .harness)
-check_json "maxLoopsPerEdge enforced" "'maxLoopsPerEdge' in d.get('error','')" "$R"
+check_json "maxNodeReentry enforced" "'maxNodeReentry' in d.get('error','')" "$R"
 
 # stop
 T5S="$TESTBASE/u5-stop"
@@ -119,6 +144,18 @@ T5P="$TESTBASE/u5-pass"
 mkdir -p "$T5P" && cd "$T5P"
 opc init --flow full-stack --entry discuss --dir .harness 2>/dev/null
 opc goto gate-test --dir .harness > /dev/null 2>&1
+write_exec_hs .harness test-execute
+python3 -c "
+import json
+p='.harness/flow-state.json'
+s=json.load(open(p))
+gate=s['history'][-1]
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  gate,
+]
+json.dump(s, open(p,'w'), indent=2)
+"
 R=$(opc pass --dir .harness 2>/dev/null)
 check_json "pass advances gate" "d.get('next')=='acceptance'" "$R"
 
@@ -173,8 +210,9 @@ check_json "resume from saved state" "d['allowed']==True" "$R"
 echo ""
 echo "━━━ U8: contextSchema Validation ━━━"
 
-mkdir -p ~/.claude/flows
-cat > ~/.claude/flows/_opc_test_schema.json << 'EOF'
+check "global flow fixture cleaned after abnormal exit" cleanup_probe
+mkdir -p "$(dirname "$FLOW_FIXTURE")"
+cat > "$FLOW_FIXTURE" << 'EOF'
 {"nodes":["build","gate"],"edges":{"build":{"PASS":"gate"},"gate":{"PASS":null}},"limits":{"maxLoopsPerEdge":3,"maxTotalSteps":10,"maxNodeReentry":5},"nodeTypes":{"build":"build","gate":"gate"},"contextSchema":{"build":{"required":["task"],"rules":{"task":"non-empty-string"}}}}
 EOF
 T8="$TESTBASE/u8"
@@ -192,7 +230,7 @@ echo '{"task":""}' > .harness/flow-context.json
 R=$(opc validate-context --flow _opc_test_schema --node build --dir .harness)
 check_json "empty string fails non-empty-string" "d['valid']==False" "$R"
 
-rm -f ~/.claude/flows/_opc_test_schema.json
+rm -f "$FLOW_FIXTURE"
 
 # ─────────────────────────────────────────────────────────────────
 echo ""
@@ -200,7 +238,10 @@ echo "━━━ U9: Loop Protocol ━━━"
 
 T9="$TESTBASE/u9"
 mkdir -p "$T9" && cd "$T9"
-git init -q && git commit --allow-empty -m "init" -q
+git init -q
+git config user.email "test@test.com"
+git config user.name "Test"
+git commit --allow-empty -m "init" -q
 
 cat > plan.md << 'EOF'
 - T1.1: implement — Build feature
@@ -245,15 +286,17 @@ write_review_hs ".harness" "code-review"
 sleep 1; opc transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
 write_review_hs ".harness" "test-design"
 sleep 1; opc transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
+write_exec_hs ".harness" "test-execute"
 sleep 1; opc transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null > /dev/null
 R=$(opc finalize --dir .harness)
 check_json "build-verify complete" "d['finalized']==True" "$R"
 
-# legacy-linear routing
-R=$(opc route --node evaluate --verdict FAIL --flow legacy-linear)
+# legacy-linear routing uses an empty harness so build-verify state cannot substitute its graph.
+LEGACY_HARNESS="$T10/legacy-harness"
+mkdir -p "$LEGACY_HARNESS"
+R=$(opc route --node evaluate --verdict FAIL --flow legacy-linear --dir "$LEGACY_HARNESS")
 check_json "legacy-linear FAIL → build" "d['next']=='build'" "$R"
-R=$(opc route --node deliver --verdict PASS --flow legacy-linear)
+R=$(opc route --node deliver --verdict PASS --flow legacy-linear --dir "$LEGACY_HARNESS")
 check_json "legacy-linear terminal" "d['next']==None" "$R"
 
-rm -rf "$TESTBASE"
 print_results

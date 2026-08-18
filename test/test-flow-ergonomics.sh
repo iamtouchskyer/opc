@@ -71,6 +71,7 @@ cat > "$SESSION/nodes/review/run_1/handshake.json" <<'JSON'
   ]
 }
 JSON
+$HARNESS seal --node review --dir "$SESSION" >/dev/null 2>/dev/null
 OUT=$($HARNESS validate 2>/dev/null)
 check_json "validate without path uses latest current handshake" "d['valid']==True" "$OUT"
 $HARNESS transition --from review --to gate --verdict PASS --flow review >/dev/null 2>/dev/null
@@ -96,14 +97,46 @@ cat > .harness/nodes/test-execute/handshake.json <<'JSON'
   "artifacts": [{ "type": "cli-output", "path": "run_1/output.txt" }]
 }
 JSON
+sync_run_handshakes ".harness"
 OUT=$($HARNESS transition --from test-execute --to hotfix --verdict ITERATE --flow build-verify --dir .harness 2>/dev/null)
 check_json "test-execute ITERATE routes to hotfix" "d['allowed']==True and d['next']=='hotfix'" "$OUT"
 
 mkdir -p .harness/nodes/hotfix/run_1
-mkdir -p .harness/nodes/test-design
-cat > .harness/nodes/test-design/test-execution.json <<'JSON'
-{ "testCommand": "printf retest > hotfix-retest.txt", "timeoutMs": 10000 }
+mkdir -p .harness/nodes/test-design/run_1
+cat > .harness/nodes/test-design/run_1/test-plan.md <<'PLAN'
+# Test Plan
+
+Run the hotfix retest command.
+PLAN
+cat > .harness/nodes/test-design/run_1/test-execution.json <<'JSON'
+{ "runId": "run_1", "testCommand": "printf retest > hotfix-retest.txt", "timeoutMs": 10000 }
 JSON
+cat > .harness/nodes/test-design/run_1/handshake.json <<'JSON'
+{
+  "nodeId": "test-design",
+  "nodeType": "review",
+  "runId": "run_1",
+  "status": "completed",
+  "verdict": "PASS",
+  "summary": "Retest command selected.",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "artifacts": [{ "type": "test-plan", "path": "run_1/test-plan.md" }]
+}
+JSON
+sync_run_handshakes ".harness"
+python3 - <<'PY'
+import json
+p = ".harness/flow-state.json"
+s = json.load(open(p))
+s["history"] = [
+  {"nodeId": "test-design", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
+  {"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:01.000Z"},
+  {"nodeId": "hotfix", "runId": "run_1", "timestamp": "2026-01-01T00:00:02.000Z"},
+]
+s["currentNode"] = "hotfix"
+s["totalSteps"] = 3
+json.dump(s, open(p, "w"), indent=2)
+PY
 printf 'Added aria-label only.\n' > .harness/nodes/hotfix/run_1/hotfix-report.md
 cat > .harness/nodes/hotfix/handshake.json <<'JSON'
 {
@@ -123,6 +156,7 @@ cat > .harness/nodes/hotfix/handshake.json <<'JSON'
   }
 }
 JSON
+sync_run_handshakes ".harness"
 OUT=$($HARNESS transition --from hotfix --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
 check_json "hotfix PASS routes back to test-execute evidence node" "d['allowed']==True and d['next']=='test-execute' and d['testCommandExecution']['executed']==True" "$OUT"
 
@@ -144,6 +178,7 @@ cat > .harness/nodes/hotfix/handshake.json <<'JSON'
   }
 }
 JSON
+sync_run_handshakes ".harness"
 OUT=$($HARNESS validate .harness/nodes/hotfix/handshake.json 2>/dev/null)
 check_json "structural hotfix handshake is rejected" "d['valid']==False and any('hotfix.scope' in e for e in d['errors'])" "$OUT"
 

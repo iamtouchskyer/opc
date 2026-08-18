@@ -204,6 +204,7 @@ describe("auto init registry contract", () => {
     assert.equal(state.autoMode, undefined);
     assert.equal(state._claudeSessionId, undefined);
     assert.equal(state.autoRepairCounts, undefined);
+    assert.equal(new Date(state.flowStartedAt).toISOString(), state.flowStartedAt);
     assert.equal(readSessionRegistry("unused", fixture.home), null);
   });
 
@@ -828,6 +829,64 @@ describe("external recovery", () => {
       ], fixture);
       assert.equal(init.json.created, true, JSON.stringify(init.json));
 
+      if (recovery.name === "pass") {
+        const runDir = join(dir, "nodes", "acceptance", "run_1");
+        mkdirSync(runDir, { recursive: true });
+        const evalLines = [
+          "# Skeptic Owner Review",
+          "Role: skeptic-owner",
+          "",
+          "## Scope",
+          ...Array.from({ length: 18 }, (_, i) => `Acceptance scope check ${i + 1} verified the recovery fixture without introducing a finding.`),
+          "",
+          "## Evidence",
+          ...Array.from({ length: 18 }, (_, i) => `Acceptance evidence ${i + 1}: state, registry, and stopped-run markers remain inspectable after recovery.`),
+          "",
+          "## Decision",
+          ...Array.from({ length: 18 }, (_, i) => `Acceptance decision ${i + 1}: LGTM for this recovery contract with no blocking issue.`),
+          "",
+          "VERDICT: LGTM",
+        ];
+        const pmEvalLines = [
+          "# PM Review",
+          "Role: pm",
+          "",
+          "## Scope",
+          ...Array.from({ length: 18 }, (_, i) => `PM acceptance scope check ${i + 1} confirms recovery remains within the pre-release flow contract.`),
+          "",
+          "## Evidence",
+          ...Array.from({ length: 18 }, (_, i) => `PM evidence ${i + 1}: recovery preserves prior stop marker and keeps acceptance evidence available.`),
+          "",
+          "## Decision",
+          ...Array.from({ length: 18 }, (_, i) => `PM decision ${i + 1}: LGTM for this recovery contract with no product blocker.`),
+          "",
+          "VERDICT: LGTM",
+        ];
+        writeFileSync(join(runDir, "eval-skeptic-owner.md"), evalLines.join("\n") + "\n");
+        writeFileSync(join(runDir, "eval-pm.md"), pmEvalLines.join("\n") + "\n");
+        writeFileSync(join(runDir, "handshake.json"), JSON.stringify({
+          nodeId: "acceptance",
+          nodeType: "review",
+          runId: "run_1",
+          status: "completed",
+          verdict: "PASS",
+          summary: "Acceptance complete",
+          timestamp: "2024-01-01T00:00:00.000Z",
+          artifacts: [
+            { type: "eval", path: "eval-skeptic-owner.md" },
+            { type: "eval", path: "eval-pm.md" },
+          ],
+        }, null, 2));
+        const statePath = join(dir, "flow-state.json");
+        const seededState = JSON.parse(readFileSync(statePath, "utf8"));
+        seededState.history = [
+          { nodeId: "acceptance", runId: "run_1", timestamp: "2024-01-01T00:00:00.000Z" },
+          { nodeId: "gate-acceptance", runId: "run_1", timestamp: "2024-01-01T00:01:00.000Z" },
+        ];
+        seededState.totalSteps = 2;
+        writeFileSync(statePath, JSON.stringify(seededState, null, 2));
+      }
+
       const state = JSON.parse(readFileSync(join(dir, "flow-state.json"), "utf8"));
       const stopped = createStopMarker(dir, state, { reason: "tool-call-budget" });
       assert.equal(claimToolSlot(stopped.paths, { toolUseId: "before-recovery" }), 1);
@@ -836,6 +895,9 @@ describe("external recovery", () => {
       const recovered = run(harness, [...recovery.args, "--dir", dir], fixture);
       assert.equal(recovered.status, 0, recovered.stderr);
       assert.equal(recovered.json?.error, undefined, JSON.stringify(recovered.json));
+      if (recovery.name === "pass") {
+        assert.equal(recovered.json?.allowed, true, JSON.stringify(recovered.json));
+      }
       assert.deepEqual(
         evaluatePreToolUse(hookInput(fixture, sessionId, "after-recovery"), { home: fixture.home }),
         { allowed: true },

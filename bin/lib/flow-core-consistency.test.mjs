@@ -2,6 +2,9 @@
 
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { validateHandshakeData, RULE_VALIDATORS, cmdRoute } from "./flow-core.mjs";
 import { validHandshake } from "./flow-core.test-helpers.mjs";
 
@@ -200,13 +203,16 @@ describe("RULE_VALIDATORS", () => {
 });
 
 describe("cmdRoute", () => {
-  let logOutput, errOutput, exitCode;
+  let logOutput, errOutput, exitCode, routeDir;
   let origLog, origErr, origExit;
 
   beforeEach(() => {
     logOutput = [];
     errOutput = [];
     exitCode = null;
+    const base = join(homedir(), ".opc", "sessions");
+    mkdirSync(base, { recursive: true });
+    routeDir = mkdtempSync(join(base, "opc-route-empty-"));
     origLog = console.log;
     origErr = console.error;
     origExit = process.exit;
@@ -219,6 +225,7 @@ describe("cmdRoute", () => {
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
+    rmSync(routeDir, { recursive: true, force: true });
   });
 
   test("missing --node → exits 1", () => {
@@ -232,21 +239,36 @@ describe("cmdRoute", () => {
   });
 
   test("node not in flow → valid=false", () => {
-    cmdRoute(["--node", "nonexistent", "--verdict", "PASS", "--flow", "review"]);
+    cmdRoute(["--node", "nonexistent", "--verdict", "PASS", "--flow", "review", "--dir", routeDir]);
     const out = JSON.parse(logOutput[0]);
     assert.equal(out.valid, false);
     assert.ok(out.error.includes("not in flow"));
   });
 
   test("valid route → valid=true with next node", () => {
-    cmdRoute(["--node", "review", "--verdict", "PASS", "--flow", "review"]);
+    cmdRoute(["--node", "review", "--verdict", "PASS", "--flow", "review", "--dir", routeDir]);
     const out = JSON.parse(logOutput[0]);
     assert.equal(out.valid, true);
     assert.equal(out.next, "gate");
   });
 
+  test("existing falsey non-object flow state fails closed", () => {
+    const base = join(homedir(), ".opc", "sessions");
+    mkdirSync(base, { recursive: true });
+    const dir = mkdtempSync(join(base, "opc-route-state-"));
+    try {
+      writeFileSync(join(dir, "flow-state.json"), "0");
+      cmdRoute(["--node", "review", "--verdict", "PASS", "--flow", "review", "--dir", dir]);
+      const out = JSON.parse(logOutput[0]);
+      assert.equal(out.valid, false);
+      assert.match(out.error, /flow-state\.json.*object/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("no edge for verdict → valid=false", () => {
-    cmdRoute(["--node", "review", "--verdict", "BLOCKED", "--flow", "review"]);
+    cmdRoute(["--node", "review", "--verdict", "BLOCKED", "--flow", "review", "--dir", routeDir]);
     const out = JSON.parse(logOutput[0]);
     assert.equal(out.valid, false);
     assert.ok(out.error.includes("no edge for verdict"));

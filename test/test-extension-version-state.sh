@@ -12,6 +12,7 @@ bad() { echo "  ❌ $1"; FAIL=$((FAIL+1)); }
 DIR="$REPO_DIR/.tmp-extension-version-state-$$"
 EXT_DIR="$DIR/exts"
 rm -rf "$DIR"
+trap 'rm -rf "$DIR"' EXIT
 mkdir -p "$EXT_DIR/versioned-ext"
 
 cat > "$EXT_DIR/versioned-ext/ext.json" <<'JSON'
@@ -28,7 +29,10 @@ cat > "$EXT_DIR/versioned-ext/hook.mjs" <<'JS'
 export const meta = { provides: ["design-system-injection@1"] };
 JS
 
-OPC_EXTENSIONS_DIR="$EXT_DIR" "$HARNESS" init --flow build-verify --entry brief --dir "$DIR/.harness" >/dev/null
+(
+  cd "$REPO_DIR"
+  OPC_EXTENSIONS_DIR="$EXT_DIR" "$HARNESS" init --flow build-verify --entry brief --dir "$DIR/.harness" >/dev/null
+)
 
 VERSION=$(python3 - "$DIR/.harness/flow-state.json" <<'PY'
 import json, sys
@@ -43,8 +47,6 @@ if [ "$VERSION" = "4.5.6" ]; then
 else
   bad "expected 4.5.6, got $VERSION"
 fi
-
-rm -rf "$DIR"
 
 echo ""
 echo "Extension version state tests: $PASS passed, $FAIL failed"

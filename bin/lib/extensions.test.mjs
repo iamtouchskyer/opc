@@ -24,6 +24,7 @@ import {
   saveBreakerState,
   clearBreakerState,
   applyBreakerState,
+  participatingExtensions,
   BREAKER_STATE_FILE,
 } from "./extensions.mjs";
 
@@ -53,6 +54,67 @@ function ctx(overrides = {}) {
     ...overrides,
   };
 }
+
+describe("participatingExtensions", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpBase, { recursive: true, force: true }); });
+
+  test("returns only capability-matched hooks that completed successfully", async () => {
+    writeExtension(join(tmpBase, "matched"), `
+      export const meta = { name: "matched", provides: ["cap@1"] };
+      export function promptAppend(ctx) {
+        if (ctx.failMatched) throw new Error("later failure");
+        return "";
+      }
+    `);
+    writeExtension(join(tmpBase, "unmatched"), `
+      export const meta = { name: "unmatched", provides: ["other@1"] };
+      export function promptAppend() { return ""; }
+    `);
+    writeExtension(join(tmpBase, "no-hook"), `
+      export const meta = { name: "no-hook", provides: ["cap@1"] };
+      export function verdictAppend() { return []; }
+    `);
+    writeExtension(join(tmpBase, "throws"), `
+      export const meta = { name: "throws", provides: ["cap@1"] };
+      export function promptAppend() { throw new Error("boom"); }
+    `);
+    writeExtension(join(tmpBase, "bad-return"), `
+      export const meta = { name: "bad-return", provides: ["cap@1"] };
+      export function promptAppend() { return 42; }
+    `);
+
+    const registry = await loadExtensions({ extensionsDir: tmpBase });
+    const context = { nodeCapabilities: ["cap@1"] };
+
+    assert.deepEqual(participatingExtensions(null, context, ["prompt.append"]), []);
+    assert.deepEqual(participatingExtensions({ extensions: null }, context, ["prompt.append"]), []);
+    assert.deepEqual(participatingExtensions({ extensions: [null] }, context, ["prompt.append"]), []);
+    assert.deepEqual(participatingExtensions(registry, undefined, ["prompt.append"]), []);
+    assert.deepEqual(participatingExtensions(registry, context), []);
+    assert.deepEqual(participatingExtensions(registry, context, ["prompt.append"]), []);
+
+    await captureStderr(() => firePromptAppend(registry, context));
+    assert.deepEqual(
+      participatingExtensions(registry, context, ["prompt.append"]),
+      ["matched"]
+    );
+
+    await captureStderr(() => firePromptAppend(registry, { ...context, failMatched: true }));
+    assert.deepEqual(
+      participatingExtensions(registry, context, ["prompt.append"]),
+      [],
+      "a later failure must clear stale success from an earlier invocation"
+    );
+
+    const matched = registry.extensions.find((ext) => ext.name === "matched");
+    matched.enabled = true;
+    await captureStderr(() => firePromptAppend(registry, context));
+    matched.enabled = false;
+    assert.deepEqual(participatingExtensions(registry, context, ["prompt.append"]), []);
+  });
+});
 
 // ─── loadExtensions ──────────────────────────────────────────────
 
@@ -778,6 +840,7 @@ export async function verdictAppend() {
     assert.ok(!Number.isNaN(Date.parse(doc.generatedAt)), "generatedAt is ISO timestamp");
     assert.ok(doc.generatedAt.endsWith("Z"), "generatedAt is UTC");
     assert.deepEqual(doc.extensionsLoaded, [{ name: "linter", enabled: true }]);
+    assert.deepEqual(doc.extensionsApplied, ["linter"]);
     assert.equal(doc.findings.length, 1);
     assert.deepEqual(doc.findings[0], {
       extension: "linter",
@@ -786,6 +849,28 @@ export async function verdictAppend() {
       message: "missing semicolon",
       file: "a.js",
     });
+  });
+
+  test("malformed canonical JSON is preserved and blocks verdict writers", async () => {
+    const extDir = join(tmpBase, "extensions");
+    writeExtension(join(extDir, "linter"), `
+export const meta = { name: "linter", provides: ["cap"] };
+export async function verdictAppend() { return []; }
+`);
+    const registry = await loadExtensions({ extensionsDir: extDir });
+    const runDir = join(tmpBase, "run");
+    mkdirSync(runDir);
+    const jsonPath = join(runDir, "eval-extensions.json");
+    const markdownPath = join(runDir, "eval-extensions.md");
+    writeFileSync(jsonPath, "{broken", "utf8");
+    writeFileSync(markdownPath, "sentinel markdown", "utf8");
+
+    await assert.rejects(
+      () => fireVerdictAppend(registry, ctx({ runDir, nodeCapabilities: ["cap"] })),
+      /eval-extensions\.json.*parse/i
+    );
+    assert.equal(readFileSync(jsonPath, "utf8"), "{broken");
+    assert.equal(readFileSync(markdownPath, "utf8"), "sentinel markdown");
   });
 
   test("empty findings → JSON has findings:[], markdown still written", async () => {
@@ -801,6 +886,7 @@ export async function verdictAppend() { return []; }
 
     const doc = JSON.parse(readFileSync(result.jsonPath, "utf8"));
     assert.deepEqual(doc.findings, []);
+    assert.deepEqual(doc.extensionsApplied, ["linter"], "matched no-op hook is still a participant");
     const md = readFileSync(result.filePath, "utf8");
     assert.ok(md.includes("No extension findings"), "markdown fallback still present");
   });
@@ -1619,6 +1705,11 @@ describe("U1.3 — failure isolation in firePromptAppend", () => {
       });
       assert.equal(result.failures.length, 1);
       assert.equal(result.failures[0].kind, "timeout");
+      assert.deepEqual(
+        mod.participatingExtensions(result, { nodeCapabilities: ["cap@1"] }, ["prompt.append"]),
+        [],
+        "timed-out hook must not become participant provenance"
+      );
     } finally {
       delete process.env.OPC_HOOK_TIMEOUT_MS;
     }
@@ -1786,6 +1877,35 @@ describe("U1.3 — failure report file", () => {
     });
     const body = readFileSync(join(runDir, "extension-failures.md"), "utf8");
     assert.match(body, /x\.prompt\.append \[throw\]/);
+  });
+
+  test("malformed canonical failure sidecar is preserved and blocks later writers", () => {
+    const sidecarPath = join(runDir, "extension-failures.json");
+    const reportPath = join(runDir, "extension-failures.md");
+    writeFileSync(sidecarPath, "{broken", "utf8");
+    writeFileSync(reportPath, "sentinel report", "utf8");
+
+    assert.throws(
+      () => writeFailureReport({ failures: [] }, runDir),
+      /extension-failures\.json.*parse/i
+    );
+    assert.equal(readFileSync(sidecarPath, "utf8"), "{broken");
+    assert.equal(readFileSync(reportPath, "utf8"), "sentinel report");
+  });
+
+  test("schema-invalid canonical failure entries are preserved and block later writers", () => {
+    const sidecarPath = join(runDir, "extension-failures.json");
+    const reportPath = join(runDir, "extension-failures.md");
+    const malformed = JSON.stringify({ failures: [null], droppedTotal: 0 });
+    writeFileSync(sidecarPath, malformed, "utf8");
+    writeFileSync(reportPath, "sentinel report", "utf8");
+
+    assert.throws(
+      () => writeFailureReport({ failures: [] }, runDir),
+      /extension-failures\.json.*failures\[0\].*object/i
+    );
+    assert.equal(readFileSync(sidecarPath, "utf8"), malformed);
+    assert.equal(readFileSync(reportPath, "utf8"), "sentinel report");
   });
 });
 
@@ -2360,9 +2480,12 @@ describe("U1.6 — extension-artifact CLI integration", () => {
     writeFileSync(
       join(harnessDir, "flow-state.json"),
       JSON.stringify({
-        flow: "test-flow",
-        flowFile: join(harnessDir, "flow.json"),
+        flowTemplate: "flow",
+        _flow_file: join(harnessDir, "flow.json"),
         currentNode: nodeId,
+        entryNode: nodeId,
+        totalSteps: 1,
+        history: [{ nodeId, runId: "run_1", timestamp: new Date().toISOString() }],
       }),
       "utf8"
     );
@@ -2432,7 +2555,14 @@ describe("U1.6 — extension-artifact CLI integration", () => {
     writeFileSync(join(runDir, "handshake.json"), "{}", "utf8");
     writeFileSync(
       join(harnessDir, "flow-state.json"),
-      JSON.stringify({ flow: "f", flowFile: join(harnessDir, "flow.json"), currentNode: nodeId }),
+      JSON.stringify({
+        flowTemplate: "flow",
+        _flow_file: join(harnessDir, "flow.json"),
+        currentNode: nodeId,
+        entryNode: nodeId,
+        totalSteps: 1,
+        history: [{ nodeId, runId: "run_1", timestamp: new Date().toISOString() }],
+      }),
       "utf8"
     );
     writeFileSync(
@@ -2468,6 +2598,296 @@ describe("U1.6 — extension-artifact CLI integration", () => {
     const failReport = readFileSync(join(runDir, "extension-failures.md"), "utf8");
     assert.match(failReport, /bad\.execute\.run/);
     assert.match(failReport, /execute boom/);
+  });
+});
+
+describe("extension command applicability context", () => {
+  let tmpBase;
+  beforeEach(() => { tmpBase = makeTmpDir(); });
+  afterEach(() => { try { rmSync(tmpBase, { recursive: true, force: true }); } catch {} });
+
+  async function captureAll(fn) {
+    const origOut = console.log, origErr = console.error;
+    let out = "", err = "";
+    console.log = (...a) => { out += a.map(String).join(" ") + "\n"; };
+    console.error = (...a) => { err += a.map(String).join(" ") + "\n"; };
+    const origExit = process.exit;
+    let exitCode = 0;
+    process.exit = (c) => { exitCode = c; throw new Error(`__exit__${c}`); };
+    try {
+      try { await fn(); } catch (e) { if (!/^__exit__/.test(e.message)) throw e; }
+      return { out, err, exitCode };
+    } finally {
+      console.log = origOut; console.error = origErr; process.exit = origExit;
+    }
+  }
+
+  test("explicit prompt, verdict, preflight, and execute commands propagate applicability context", async () => {
+    const extDir = join(tmpBase, "exts");
+    writeExtension(join(extDir, "capture"), `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      export const meta = { name: "capture", provides: ["capture-context@1"] };
+      export function promptAppend(ctx) {
+        writeFileSync(join(ctx.runDir, "captured-prompt-context.json"), JSON.stringify(ctx));
+        return "";
+      }
+      export function verdictAppend(ctx) {
+        writeFileSync(join(ctx.runDir, "captured-verdict-context.json"), JSON.stringify(ctx));
+        return [];
+      }
+      export function preflight(ctx) {
+        writeFileSync(join(ctx.flowDir, "captured-preflight-context.json"), JSON.stringify(ctx));
+      }
+      export function executeRun(ctx) {
+        writeFileSync(join(ctx.runDir, "captured-execute-context.json"), JSON.stringify(ctx));
+      }
+    `);
+    writeExtension(join(extDir, "unmatched"), `
+      export const meta = { name: "unmatched", provides: ["other-context@1"] };
+      export function promptAppend() { return "unmatched"; }
+      export function verdictAppend() { return []; }
+      export function preflight() { return { type: "unmatched" }; }
+      export function executeRun() {}
+      export function artifactEmit() { return []; }
+    `);
+
+    const harnessDir = join(tmpBase, "session");
+    const nodeId = "review-node";
+    const runDir = join(harnessDir, "nodes", nodeId, "run_1");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "handshake.json"), "{}");
+    writeFileSync(join(harnessDir, "acceptance-criteria.md"), "# Harness context regression\n");
+    const flowFile = join(harnessDir, "context-flow.json");
+    writeFileSync(flowFile, JSON.stringify({
+      opc_compat: ">=0.0",
+      nodes: [nodeId],
+      edges: { [nodeId]: { PASS: null } },
+      limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+      nodeTypes: { [nodeId]: "review" },
+      nodeCapabilities: { [nodeId]: ["capture-context@1"] },
+    }));
+    const runStartedAt = new Date().toISOString();
+    writeFileSync(join(harnessDir, "flow-state.json"), JSON.stringify({
+      flowTemplate: "context-flow",
+      _flow_file: flowFile,
+      currentNode: nodeId,
+      entryNode: nodeId,
+      tier: "functional",
+      totalSteps: 1,
+      history: [{ nodeId, runId: "run_1", timestamp: runStartedAt }],
+    }));
+    mkdirSync(join(harnessDir, ".opc"), { recursive: true });
+    writeFileSync(join(harnessDir, ".opc", "config.json"), JSON.stringify({ extensionsDir: extDir }));
+
+    const commands = await import(`./ext-commands.mjs?context=${Date.now()}`);
+    const promptResult = await captureAll(() => commands.cmdPromptContext([
+      "--node", nodeId, "--role", "reviewer", "--dir", harnessDir,
+      "--flow-file", flowFile,
+    ]));
+    assert.equal(promptResult.exitCode, 0, promptResult.err);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(runDir, "handshake.json"), "utf8")).extensionsApplied,
+      ["capture"]
+    );
+
+    const verdictResult = await captureAll(() => commands.cmdExtensionVerdict([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(verdictResult.exitCode, 0, verdictResult.err);
+    assert.deepEqual(JSON.parse(verdictResult.out.trim()).extensionsApplied, ["capture"]);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(runDir, "handshake.json"), "utf8")).extensionsApplied,
+      ["capture"]
+    );
+
+    const preflightResult = await captureAll(() => commands.cmdNodePreflight([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(preflightResult.exitCode, 0, preflightResult.err);
+    assert.deepEqual(JSON.parse(preflightResult.out.trim()).extensionsApplied, ["capture"]);
+
+    const executeResult = await captureAll(() => commands.cmdExtensionArtifact([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(executeResult.exitCode, 0, executeResult.err);
+    assert.deepEqual(JSON.parse(executeResult.out.trim()).extensionsApplied, ["capture"]);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(runDir, "handshake.json"), "utf8")).extensionsApplied,
+      ["capture"]
+    );
+
+    const promptCtx = JSON.parse(readFileSync(join(runDir, "captured-prompt-context.json"), "utf8"));
+    assert.equal(promptCtx.runDir, runDir);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(runDir, "prompt-extensions.json"), "utf8")).extensionsApplied,
+      ["capture"]
+    );
+    const verdictCtx = JSON.parse(readFileSync(join(runDir, "captured-verdict-context.json"), "utf8"));
+    const preflightCtx = JSON.parse(readFileSync(join(harnessDir, "captured-preflight-context.json"), "utf8"));
+    assert.equal(preflightCtx.runDir, runDir);
+    const executeCtx = JSON.parse(readFileSync(join(runDir, "captured-execute-context.json"), "utf8"));
+    for (const captured of [promptCtx, verdictCtx, preflightCtx, executeCtx]) {
+      assert.equal(captured.nodeId, nodeId);
+      assert.equal(captured.nodeType, "review");
+      assert.equal(captured.tier, "functional");
+      assert.equal(captured.taskDescription, "Harness context regression");
+      assert.equal(captured.visualEvaluationRequired, false);
+    }
+  });
+
+  test("all lifecycle commands bind provenance to the state-selected run, not filesystem latest", async () => {
+    const extDir = join(tmpBase, "selected-run-exts");
+    writeExtension(join(extDir, "capture"), `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      export const meta = { name: "capture", provides: ["capture-context@1"] };
+      export function promptAppend(ctx) {
+        writeFileSync(join(ctx.runDir, "selected-prompt.txt"), ctx.runDir);
+        return "";
+      }
+      export function verdictAppend(ctx) {
+        writeFileSync(join(ctx.runDir, "selected-verdict.txt"), ctx.runDir);
+        return [];
+      }
+      export function preflight(ctx) {
+        writeFileSync(join(ctx.runDir, "selected-preflight.txt"), ctx.runDir);
+      }
+      export function executeRun(ctx) {
+        writeFileSync(join(ctx.runDir, "selected-execute.txt"), ctx.runDir);
+      }
+      export function artifactEmit() {
+        return [{ name: "selected-artifact.txt", content: "selected" }];
+      }
+    `);
+
+    const harnessDir = join(tmpBase, "selected-run-session");
+    const nodeId = "build";
+    const run1 = join(harnessDir, "nodes", nodeId, "run_1");
+    const run2 = join(harnessDir, "nodes", nodeId, "run_2");
+    mkdirSync(run1, { recursive: true });
+    mkdirSync(run2, { recursive: true });
+    writeFileSync(join(run1, "handshake.json"), "{}");
+    writeFileSync(join(run2, "handshake.json"), JSON.stringify({ sentinel: "rogue" }));
+    writeFileSync(join(harnessDir, "acceptance-criteria.md"), "# Selected run lifecycle regression\n");
+    const flowFile = join(harnessDir, "selected-run-flow.json");
+    writeFileSync(flowFile, JSON.stringify({
+      opc_compat: ">=0.0",
+      nodes: [nodeId],
+      edges: { [nodeId]: { PASS: null } },
+      limits: { maxLoopsPerEdge: 3, maxTotalSteps: 10, maxNodeReentry: 5 },
+      nodeTypes: { [nodeId]: "build" },
+      nodeCapabilities: { [nodeId]: ["capture-context@1"] },
+    }));
+    const startedAt = new Date().toISOString();
+    const statePath = join(harnessDir, "flow-state.json");
+    const validState = JSON.stringify({
+      flowTemplate: "selected-run-flow",
+      _flow_file: flowFile,
+      currentNode: nodeId,
+      entryNode: nodeId,
+      tier: "functional",
+      totalSteps: 1,
+      history: [{ nodeId, runId: "run_1", timestamp: startedAt }],
+    });
+    writeFileSync(statePath, validState);
+    mkdirSync(join(harnessDir, ".opc"), { recursive: true });
+    writeFileSync(join(harnessDir, ".opc", "config.json"), JSON.stringify({ extensionsDir: extDir }));
+
+    const commands = await import(`./ext-commands.mjs?selected=${Date.now()}`);
+    const promptResult = await captureAll(() => commands.cmdPromptContext([
+      "--node", nodeId, "--role", "implementer", "--dir", harnessDir,
+      "--flow-file", flowFile,
+    ]));
+    const verdictResult = await captureAll(() => commands.cmdExtensionVerdict([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    const preflightResult = await captureAll(() => commands.cmdNodePreflight([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    const artifactResult = await captureAll(() => commands.cmdExtensionArtifact([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+
+    for (const result of [promptResult, verdictResult, preflightResult, artifactResult]) {
+      assert.equal(result.exitCode, 0, result.err);
+    }
+    for (const name of ["selected-prompt.txt", "selected-verdict.txt", "selected-preflight.txt", "selected-execute.txt"]) {
+      assert.equal(readFileSync(join(run1, name), "utf8"), run1);
+      assert.equal(existsSync(join(run2, name)), false);
+    }
+    assert.equal(readFileSync(join(run1, "ext-capture", "selected-artifact.txt"), "utf8"), "selected");
+    assert.equal(existsSync(join(run2, "ext-capture", "selected-artifact.txt")), false);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(run1, "prompt-extensions.json"), "utf8")),
+      {
+        version: 1,
+        generatedAt: JSON.parse(readFileSync(join(run1, "prompt-extensions.json"), "utf8")).generatedAt,
+        nodeId,
+        runId: "run_1",
+        extensionsApplied: ["capture"],
+      }
+    );
+    assert.deepEqual(JSON.parse(readFileSync(join(run1, "handshake.json"), "utf8")).extensionsApplied, ["capture"]);
+    assert.deepEqual(JSON.parse(readFileSync(join(run2, "handshake.json"), "utf8")), { sentinel: "rogue" });
+
+    const failureSidecar = join(run1, "extension-failures.json");
+    writeFileSync(failureSidecar, "{broken");
+    for (const name of ["selected-prompt.txt", "selected-verdict.txt", "selected-preflight.txt", "selected-execute.txt"]) {
+      rmSync(join(run1, name), { force: true });
+    }
+    rmSync(join(run1, "ext-capture"), { recursive: true, force: true });
+    const blockedCommands = [
+      () => commands.cmdPromptContext([
+        "--node", nodeId, "--role", "implementer", "--dir", harnessDir,
+        "--flow-file", flowFile,
+      ]),
+      () => commands.cmdExtensionVerdict([
+        "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+      ]),
+      () => commands.cmdNodePreflight([
+        "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+      ]),
+      () => commands.cmdExtensionArtifact([
+        "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+      ]),
+    ];
+    for (const invoke of blockedCommands) {
+      const blocked = await captureAll(invoke);
+      assert.equal(blocked.exitCode, 1, blocked.err);
+      assert.match(blocked.err, /extension-failures\.json.*parse error/i);
+    }
+    assert.equal(readFileSync(failureSidecar, "utf8"), "{broken");
+    for (const name of ["selected-prompt.txt", "selected-verdict.txt", "selected-preflight.txt", "selected-execute.txt"]) {
+      assert.equal(existsSync(join(run1, name)), false);
+    }
+    assert.equal(existsSync(join(run1, "ext-capture")), false);
+    rmSync(failureSidecar);
+
+    writeFileSync(statePath, "{broken");
+    const corruptStatePreflight = await captureAll(() => commands.cmdNodePreflight([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(corruptStatePreflight.exitCode, 1);
+    assert.match(corruptStatePreflight.err, /flow-state\.json.*parse error/i);
+    assert.equal(existsSync(join(run1, "selected-preflight.txt")), false);
+    assert.equal(readFileSync(statePath, "utf8"), "{broken");
+    writeFileSync(statePath, validState);
+
+    writeFileSync(join(run1, "handshake.json"), "{broken");
+    const malformedVerdict = await captureAll(() => commands.cmdExtensionVerdict([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(malformedVerdict.exitCode, 1);
+    assert.match(malformedVerdict.err, /handshake\.json.*parse error/i);
+    assert.equal(readFileSync(join(run1, "handshake.json"), "utf8"), "{broken");
+
+    const malformedArtifact = await captureAll(() => commands.cmdExtensionArtifact([
+      "--node", nodeId, "--dir", harnessDir, "--flow-file", flowFile,
+    ]));
+    assert.equal(malformedArtifact.exitCode, 1);
+    assert.match(malformedArtifact.err, /handshake\.json.*parse error/i);
+    assert.equal(readFileSync(join(run1, "handshake.json"), "utf8"), "{broken");
   });
 });
 
@@ -2603,7 +3023,14 @@ describe("U1.6r — extension-artifact CLI includes nodeCapabilities (contract #
     writeFileSync(join(runDir, "handshake.json"), "{}");
     writeFileSync(
       join(harnessDir, "flow-state.json"),
-      JSON.stringify({ flow: "f", flowFile: join(harnessDir, "flow.json"), currentNode: nodeId })
+      JSON.stringify({
+        flowTemplate: "flow",
+        _flow_file: join(harnessDir, "flow.json"),
+        currentNode: nodeId,
+        entryNode: nodeId,
+        totalSteps: 1,
+        history: [{ nodeId, runId: "run_1", timestamp: new Date().toISOString() }],
+      })
     );
     writeFileSync(
       join(harnessDir, "flow.json"),

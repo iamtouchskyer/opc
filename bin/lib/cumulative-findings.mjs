@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { join } from "path";
 import { parseEvaluation } from "./eval-parser.mjs";
 import { parseStructuredFindings, structuredSeverityName } from "./structured-findings.mjs";
+import { compareRunIds } from "./run-id.mjs";
+import { authoritativeEntries } from "./flow-evidence.mjs";
 
 const OUT = "cumulative-findings.md";
 
@@ -12,9 +14,10 @@ function readJson(path) {
 function listRunDirs(nodeDir) {
   if (!existsSync(nodeDir)) return [];
   try {
-    return readdirSync(nodeDir)
-      .filter((name) => /^run_\d+$/.test(name))
-      .sort((a, b) => Number(a.slice(4)) - Number(b.slice(4)));
+    return readdirSync(nodeDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^run_\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort(compareRunIds);
   } catch { return []; }
 }
 
@@ -63,52 +66,39 @@ function readRunSummary(dir, entry) {
   const nodeId = entry.nodeId || entry.node;
   const runId = entry.runId || entry.run || "";
   const nodeDir = join(dir, "nodes", nodeId);
-  const runDir = runId ? join(nodeDir, runId) : join(nodeDir, listRunDirs(nodeDir).at(-1) || "");
-  const handshake = readJson(join(nodeDir, "handshake.json"));
+  const runDir = runId ? join(nodeDir, runId) : "";
+  const handshake = runId ? readJson(join(nodeDir, "handshake.json")) : null;
   const runHandshake = readJson(join(runDir, "handshake.json"));
   return { nodeId, runId, nodeDir, runDir, handshake, runHandshake };
 }
 
 function orderedEntries(dir, state) {
-  const nodes = [];
-  const seenNodes = new Set();
-  const addNode = (entry) => {
-    const nodeId = entry?.nodeId || entry?.node;
-    if (!nodeId || seenNodes.has(nodeId)) return;
-    seenNodes.add(nodeId);
-    nodes.push(nodeId);
-  };
-  addNode({ nodeId: state?.entryNode });
-  for (const entry of state?.history || []) addNode(entry);
-  addNode({ nodeId: state?.currentNode });
-  const nodesDir = join(dir, "nodes");
-  if (!existsSync(nodesDir)) return nodes.map((nodeId) => ({ nodeId }));
-  for (const nodeId of readdirSync(nodesDir).sort()) {
-    const nodeDir = join(nodesDir, nodeId);
-    if (statSync(nodeDir).isDirectory()) addNode({ nodeId });
-  }
-  return nodes.flatMap((nodeId) => {
-    const runIds = listRunDirs(join(nodesDir, nodeId));
-    return runIds.length ? runIds.map((runId) => ({ nodeId, runId })) : [{ nodeId }];
-  });
+  return authoritativeEntries(state);
 }
 
-export function collectExecutionFixes(dir) {
-  const fixes = [];
+function orphanEntries(dir, state) {
+  const authoritative = new Set(orderedEntries(dir, state).map((entry) => `${entry.nodeId}\0${entry.runId}`));
   const nodesDir = join(dir, "nodes");
-  if (!existsSync(nodesDir)) return fixes;
+  if (!existsSync(nodesDir)) return [];
+  const orphans = [];
   for (const nodeId of readdirSync(nodesDir).sort()) {
     const nodeDir = join(nodesDir, nodeId);
     if (!statSync(nodeDir).isDirectory()) continue;
-    for (const raw of fixArrays(readJson(join(nodeDir, "handshake.json")))) {
-      const text = fixText(raw);
-      if (text) fixes.push({ nodeId, runId: null, text });
-    }
     for (const runId of listRunDirs(nodeDir)) {
-      for (const raw of fixArrays(readJson(join(nodeDir, runId, "handshake.json")))) {
-        const text = fixText(raw);
-        if (text) fixes.push({ nodeId, runId, text });
-      }
+      if (!authoritative.has(`${nodeId}\0${runId}`)) orphans.push({ nodeId, runId });
+    }
+  }
+  return orphans;
+}
+
+export function collectExecutionFixes(dir, state) {
+  const fixes = [];
+  for (const entry of orderedEntries(dir, state)) {
+    const { nodeId, runId } = entry;
+    const hs = readJson(join(dir, "nodes", nodeId, runId, "handshake.json"));
+    for (const raw of fixArrays(hs)) {
+      const text = fixText(raw);
+      if (text) fixes.push({ nodeId, runId, text });
     }
   }
   return fixes;
@@ -117,7 +107,7 @@ export function collectExecutionFixes(dir) {
 function appendNode(lines, summary) {
   const { nodeId, runId, nodeDir, runDir, handshake, runHandshake } = summary;
   lines.push(`## ${nodeId}${runId ? ` / ${runId}` : ""}`);
-  const hs = handshake || runHandshake;
+  const hs = runHandshake || handshake;
   if (hs) lines.push(`- Status: ${hs.status || "unknown"}${hs.verdict ? `, verdict: ${hs.verdict}` : ""}`);
   if (existsSync(join(nodeDir, "extension-context.md"))) {
     lines.push(`- Extension context: nodes/${nodeId}/extension-context.md`);
@@ -147,7 +137,14 @@ export function buildCumulativeFindingsMarkdown(dir, state) {
   lines.push(`- Flow status: ${state?.status || "in_progress"}`);
   lines.push(`- Total steps: ${state?.totalSteps ?? 0}`, "");
   for (const entry of orderedEntries(dir, state)) appendNode(lines, readRunSummary(dir, entry));
-  const fixes = collectExecutionFixes(dir);
+  const orphans = orphanEntries(dir, state);
+  if (orphans.length > 0) {
+    lines.push("## Forensic Orphan Runs");
+    lines.push("These runs are present on disk but are not selected by flow-state/history.");
+    for (const entry of orphans) lines.push(`- ${entry.nodeId}/${entry.runId}`);
+    lines.push("");
+  }
+  const fixes = collectExecutionFixes(dir, state);
   if (fixes.length) {
     lines.push("## Fixes Applied During Execution");
     for (const f of fixes) lines.push(`- [${f.nodeId}${f.runId ? `/${f.runId}` : ""}] ${f.text}`);

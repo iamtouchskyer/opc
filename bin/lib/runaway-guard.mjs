@@ -58,6 +58,16 @@ export function resolveCurrentRun(state) {
     };
   }
 
+  if (state.autoMode !== true && state.totalSteps === 0 && state.history.length === 0 &&
+      nonEmptyString(state.entryNode) && state.currentNode === state.entryNode &&
+      state.flowStartedAt == null) {
+    return {
+      runId: "run_1",
+      startedAt: null,
+      runKey: `legacy-initial:${state.entryNode}`,
+    };
+  }
+
   return null;
 }
 

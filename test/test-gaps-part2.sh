@@ -87,18 +87,29 @@ rm -rf .h-bp && $HARNESS init --flow build-verify --entry gate --dir .h-bp >/dev
 mkdir -p .h-bp/nodes/test-execute
 cat > .h-bp/nodes/test-execute/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"ev.txt"}],"findings":{"warning":1,"critical":0}}
 HS
 echo "evidence" > .h-bp/nodes/test-execute/ev.txt
 # gate PASS→null in build-verify, but we need a non-null PASS target
 # Use full-stack: gate-test PASS→acceptance, FAIL→discuss
 rm -rf .h-bp2 && $HARNESS init --flow full-stack --entry gate-test --dir .h-bp2 >/dev/null 2>/dev/null
-mkdir -p .h-bp2/nodes/test-execute
-cat > .h-bp2/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-bp2/nodes/test-execute/run_1
+cat > .h-bp2/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"ev.txt"}],"findings":{"warning":1,"critical":0}}
 HS
-echo "evidence" > .h-bp2/nodes/test-execute/ev.txt
+echo "evidence" > .h-bp2/nodes/test-execute/run_1/ev.txt
+python3 -c "
+import json
+p='.h-bp2/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
+  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01Z'},
+]
+s['totalSteps']=2
+json.dump(s, open(p,'w'), indent=2)
+"
 OUT=$($HARNESS transition --from gate-test --to acceptance --verdict PASS --flow full-stack --dir .h-bp2 2>/dev/null)
 assert_field_eq "PASS backlog check" "$OUT" "allowed" "false"
 assert_contains "PASS backlog msg" "$OUT" "backlog"
@@ -106,12 +117,23 @@ assert_contains "PASS backlog msg" "$OUT" "backlog"
 echo ""
 echo "--- 5.4: Backlog 0 matching entries blocked ---"
 rm -rf .h-bp3 && $HARNESS init --flow full-stack --entry gate-test --dir .h-bp3 >/dev/null 2>/dev/null
-mkdir -p .h-bp3/nodes/test-execute
-cat > .h-bp3/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-bp3/nodes/test-execute/run_1
+cat > .h-bp3/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":1,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"ev.txt"}],"findings":{"warning":1,"critical":0}}
 HS
-echo "evidence" > .h-bp3/nodes/test-execute/ev.txt
+echo "evidence" > .h-bp3/nodes/test-execute/run_1/ev.txt
+python3 -c "
+import json
+p='.h-bp3/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
+  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01Z'},
+]
+s['totalSteps']=2
+json.dump(s, open(p,'w'), indent=2)
+"
 # Backlog exists but no entries from test-execute
 cat > .h-bp3/backlog.md << 'BL'
 # Backlog
@@ -165,12 +187,23 @@ echo "--- 6.5: pass succeeds on gate with non-null transition ---"
 # full-stack: gate-test PASS→acceptance
 rm -rf .h-esc4 && $HARNESS init --flow full-stack --entry gate-test --dir .h-esc4 >/dev/null 2>/dev/null
 # gate-test upstream = test-execute. Create handshake with no warnings to skip backlog check.
-mkdir -p .h-esc4/nodes/test-execute
-cat > .h-esc4/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-esc4/nodes/test-execute/run_1
+cat > .h-esc4/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["ev.txt"],"findings":{"warning":0,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"ev.txt"}],"findings":{"warning":0,"critical":0}}
 HS
-echo "evidence" > .h-esc4/nodes/test-execute/ev.txt
+echo "evidence" > .h-esc4/nodes/test-execute/run_1/ev.txt
+python3 -c "
+import json
+p='.h-esc4/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:01:00.000Z'},
+]
+s['totalSteps']=1
+json.dump(s, open(p,'w'), indent=2)
+"
 OUT=$($HARNESS pass --dir .h-esc4 2>/dev/null)
 assert_field_eq "pass gate→acceptance" "$OUT" "allowed" "true"
 

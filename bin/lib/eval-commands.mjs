@@ -5,9 +5,10 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
-import { getFlag, resolveDir } from "./util.mjs";
+import { getFlag, hasFlag, resolveDir } from "./util.mjs";
 import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
 import { anchorIssues as collectAnchorIssues } from "./test-plan-gate.mjs";
+import { compareRunIds, parseRunOrdinal } from "./run-id.mjs";
 
 /**
  * Resolve the set of changed files that a review's changeScope layer must cover.
@@ -212,20 +213,27 @@ export function cmdSynthesize(args) {
       process.exit(1);
     }
 
-    const runFlag = args.indexOf("--run");
+    const runProvided = hasFlag(args, "run");
 
-    if (runFlag !== -1 && args[runFlag + 1]) {
-      targetRunDir = join(dir, "nodes", nodeId, `run_${args[runFlag + 1]}`);
+    if (runProvided) {
+      const runValue = getFlag(args, "run", "");
+      if (!/^[1-9]\d*$/.test(runValue)) {
+        console.log(JSON.stringify({
+          roles: [],
+          totals: { critical: 0, warning: 0, suggestion: 0 },
+          verdict: "BLOCKED",
+          reason: "--run must be a positive numeric ordinal",
+        }));
+        return;
+      }
+      targetRunDir = join(dir, "nodes", nodeId, `run_${runValue}`);
     } else {
       const nodeDir = join(dir, "nodes", nodeId);
       try {
-        const runs = readdirSync(nodeDir)
-          .filter((d) => d.startsWith("run_"))
-          .sort((a, b) => {
-            const na = parseInt(a.replace("run_", ""), 10);
-            const nb = parseInt(b.replace("run_", ""), 10);
-            return nb - na;
-          });
+        const runs = readdirSync(nodeDir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && /^run_\d+$/.test(entry.name))
+          .map((entry) => entry.name)
+          .sort((a, b) => compareRunIds(b, a));
         if (runs.length === 0) {
           console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `no runs found for node '${nodeId}' in ${nodeDir}` }));
           return;
@@ -843,13 +851,13 @@ export function cmdSynthesize(args) {
     // ── Fix #4: Convergence detection — max-min across last 3 runs ──
     if (rubricScore && nodeId) {
       const runFlag = args.indexOf("--run");
-      const currentRunN = runFlag !== -1 && args[runFlag + 1] ? parseInt(args[runFlag + 1], 10) : null;
-      const iteration = currentRunN || parseInt((targetRunDir.match(/run_(\d+)$/) || [])[1] || "1", 10);
-      if (iteration >= 3) {
+      const explicitRun = runFlag !== -1 ? parseRunOrdinal(args[runFlag + 1]) : null;
+      const iteration = explicitRun ?? parseRunOrdinal(targetRunDir.match(/run_(\d+)$/)?.[1]) ?? 1n;
+      if (iteration >= 3n) {
         const recentScores = [rubricScore.final];
-        for (let i = iteration - 1; i >= Math.max(1, iteration - 2); i--) {
+        for (const previous of [iteration - 1n, iteration - 2n]) {
           try {
-            const prevPath = join(dir, "nodes", nodeId, `run_${i}`, "ext-design-intelligence", "rubric-verdict.json");
+            const prevPath = join(dir, "nodes", nodeId, `run_${previous}`, "ext-design-intelligence", "rubric-verdict.json");
             if (existsSync(prevPath)) {
               const prev = JSON.parse(readFileSync(prevPath, "utf8"));
               if (prev.final != null) recentScores.push(prev.final);

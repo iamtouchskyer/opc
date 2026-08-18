@@ -6,9 +6,39 @@ source "$(dirname "$0")/test-helpers.sh"
 setup_tmpdir
 setup_git
 
+FLOW_DIR="$HOME/.claude/flows"
+IDEA_FLOW="$FLOW_DIR/idea-factory.json"
+CONTEXT_FLOW="$FLOW_DIR/test-ctx-flow.json"
+IDEA_BACKUP="$TMPDIR/idea-factory.json.backup"
+CONTEXT_BACKUP="$TMPDIR/test-ctx-flow.json.backup"
+IDEA_EXISTED=0
+CONTEXT_EXISTED=0
+mkdir -p "$FLOW_DIR"
+if [ -e "$IDEA_FLOW" ] || [ -L "$IDEA_FLOW" ]; then
+  mv "$IDEA_FLOW" "$IDEA_BACKUP"
+  IDEA_EXISTED=1
+fi
+if [ -e "$CONTEXT_FLOW" ] || [ -L "$CONTEXT_FLOW" ]; then
+  mv "$CONTEXT_FLOW" "$CONTEXT_BACKUP"
+  CONTEXT_EXISTED=1
+fi
+cleanup() {
+  rm -f "$IDEA_FLOW" "$CONTEXT_FLOW"
+  if [ "$IDEA_EXISTED" -eq 1 ]; then
+    mv "$IDEA_BACKUP" "$IDEA_FLOW"
+  fi
+  if [ "$CONTEXT_EXISTED" -eq 1 ]; then
+    mv "$CONTEXT_BACKUP" "$CONTEXT_FLOW"
+  fi
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # Create idea-factory fixture for testing (not a built-in template)
-mkdir -p "$HOME/.claude/flows"
-cat > "$HOME/.claude/flows/idea-factory.json" << 'FIXTURE'
+cat > "$IDEA_FLOW" << 'FIXTURE'
 {
   "nodes": ["discover", "validate", "build", "gate", "synthesize", "pitch"],
   "edges": {
@@ -99,6 +129,7 @@ python3 -c "
 import json
 d = json.load(open('.h-edge/flow-state.json'))
 d['edgeCounts']['gate→brief'] = d['maxLoopsPerEdge']
+d['repairEdgeCounts']['gate→brief'] = d['maxLoopsPerEdge']
 json.dump(d, open('.h-edge/flow-state.json', 'w'), indent=2)
 "
 OUT=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .h-edge 2>/dev/null)
@@ -129,28 +160,21 @@ echo "=== CG-3: Idempotency guard ==="
 # ═══════════════════════════════════════════════════════════════
 
 echo "--- CG-3.1: Duplicate transition within 5s window blocked ---"
-rm -rf .h-idemp && $HARNESS init --flow build-verify --dir .h-idemp >/dev/null 2>/dev/null
-mkdir -p .h-idemp/nodes/build
-cat > .h-idemp/nodes/build/handshake.json << 'HS'
+rm -rf .h-idemp && $HARNESS init --flow build-verify --entry build --dir .h-idemp >/dev/null 2>/dev/null
+mkdir -p .h-idemp/nodes/build/run_1
+cat > .h-idemp/nodes/build/run_1/handshake.json << 'HS'
 {"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
 $HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-idemp >/dev/null 2>/dev/null
-mkdir -p .h-idemp/nodes/code-review
-cat > .h-idemp/nodes/code-review/handshake.json << 'HS'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
-HS
-OUT=$($HARNESS transition --from code-review --to test-execute --verdict PASS --flow build-verify --dir .h-idemp 2>/dev/null)
-rm -rf .h-idemp2 && $HARNESS init --flow build-verify --entry gate --dir .h-idemp2 >/dev/null 2>/dev/null
-$HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .h-idemp2 >/dev/null 2>/dev/null
 python3 -c "
 import json
-d = json.load(open('.h-idemp2/flow-state.json'))
-d['currentNode'] = 'gate'
-json.dump(d, open('.h-idemp2/flow-state.json', 'w'), indent=2)
+d = json.load(open('.h-idemp/flow-state.json'))
+d['currentNode'] = 'build'
+json.dump(d, open('.h-idemp/flow-state.json', 'w'), indent=2)
 "
-OUT=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .h-idemp2 2>/dev/null)
+OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .h-idemp 2>/dev/null)
 assert_field_eq "idempotency blocked" "$OUT" "allowed" "false"
-assert_contains "idempotency guard" "$OUT" "idempotency"
+assert_contains "manual rewind rejected before duplicate transition" "$OUT" "cannot resolve current run"
 
 # ═══════════════════════════════════════════════════════════════
 echo ""
@@ -159,12 +183,23 @@ echo "=== CG-4: Backlog enforcement ==="
 
 echo "--- CG-4.1: Gate ITERATE blocked when upstream has warnings but no backlog ---"
 rm -rf .h-backlog && $HARNESS init --flow build-verify --entry gate --dir .h-backlog >/dev/null 2>/dev/null
-mkdir -p .h-backlog/nodes/test-execute
-cat > .h-backlog/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-backlog/nodes/test-execute/run_1
+cat > .h-backlog/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":2,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"evidence.txt"}],"findings":{"warning":2,"critical":0}}
 HS
-echo "test evidence" > .h-backlog/nodes/test-execute/evidence.txt
+echo "test evidence" > .h-backlog/nodes/test-execute/run_1/evidence.txt
+python3 -c "
+import json
+p='.h-backlog/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:01.000Z'},
+]
+s['totalSteps']=2
+json.dump(s, open(p,'w'), indent=2)
+"
 OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir .h-backlog 2>/dev/null)
 assert_field_eq "backlog required" "$OUT" "allowed" "false"
 assert_contains "backlog missing msg" "$OUT" "backlog"
@@ -172,12 +207,23 @@ assert_contains "backlog missing msg" "$OUT" "backlog"
 echo ""
 echo "--- CG-4.2: Gate passes when backlog has matching entries ---"
 rm -rf .h-backlog2 && $HARNESS init --flow build-verify --entry gate --dir .h-backlog2 >/dev/null 2>/dev/null
-mkdir -p .h-backlog2/nodes/test-execute
-cat > .h-backlog2/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-backlog2/nodes/test-execute/run_1
+cat > .h-backlog2/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":2,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"evidence.txt"}],"findings":{"warning":2,"critical":0}}
 HS
-echo "test evidence" > .h-backlog2/nodes/test-execute/evidence.txt
+echo "test evidence" > .h-backlog2/nodes/test-execute/run_1/evidence.txt
+python3 -c "
+import json
+p='.h-backlog2/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:01.000Z'},
+]
+s['totalSteps']=2
+json.dump(s, open(p,'w'), indent=2)
+"
 cat > .h-backlog2/backlog.md << 'BL'
 # Backlog
 - [ ] 🟡 Missing input validation [test-execute]
@@ -189,12 +235,23 @@ assert_field_eq "backlog satisfied" "$OUT" "allowed" "true"
 echo ""
 echo "--- CG-4.3: Insufficient backlog entries rejected ---"
 rm -rf .h-backlog3 && $HARNESS init --flow build-verify --entry gate --dir .h-backlog3 >/dev/null 2>/dev/null
-mkdir -p .h-backlog3/nodes/test-execute
-cat > .h-backlog3/nodes/test-execute/handshake.json << 'HS'
+mkdir -p .h-backlog3/nodes/test-execute/run_1
+cat > .h-backlog3/nodes/test-execute/run_1/handshake.json << 'HS'
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"done",
- "timestamp":"2024-01-01T00:00:00Z","artifacts":["evidence.txt"],"findings":{"warning":3,"critical":0}}
+ "timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"evidence.txt"}],"findings":{"warning":3,"critical":0}}
 HS
-echo "test evidence" > .h-backlog3/nodes/test-execute/evidence.txt
+echo "test evidence" > .h-backlog3/nodes/test-execute/run_1/evidence.txt
+python3 -c "
+import json
+p='.h-backlog3/flow-state.json'
+s=json.load(open(p))
+s['history']=[
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate','runId':'run_1','timestamp':'2024-01-01T00:00:01.000Z'},
+]
+s['totalSteps']=2
+json.dump(s, open(p,'w'), indent=2)
+"
 cat > .h-backlog3/backlog.md << 'BL'
 - [ ] 🟡 Only one entry [test-execute]
 BL
@@ -232,6 +289,9 @@ cat > "$HOME/.claude/flows/test-ctx-flow.json" << 'CTX'
   "opc_compat": ">=0.5"
 }
 CTX
+if [ "${OPC_TEST_ABORT_AFTER_CONTEXT_FIXTURE:-0}" = "1" ]; then
+  exit 97
+fi
 $HARNESS init --flow test-ctx-flow --dir .h-ctx2 >/dev/null 2>/dev/null
 OUT=$($HARNESS validate-context --flow test-ctx-flow --node step1 --dir .h-ctx2 2>/dev/null)
 assert_field_eq "no context file" "$OUT" "valid" "false"

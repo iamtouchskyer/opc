@@ -21,13 +21,14 @@ check() {
 write_review() {
   local dir="$1"
   mkdir -p "$dir/nodes/review/run_1"
-  printf '# Reviewer A\n\n[WARNING] src/app.js:12 — Report hides warning finding\n→ Render it in the final report\nReasoning: The warning must stay visible after recovery.\nVERDICT: ITERATE FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-a.md"
+  printf '# Reviewer A\n\n[SUGGESTION] src/app.js:12 — Report hides warning finding\n→ Render it in the final report\nReasoning: The warning must stay visible after recovery.\nVERDICT: PASS FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-a.md"
   printf '# Reviewer B\n\n[SUGGESTION] src/app.js:18 — Add recovery context\n→ Include cumulative findings in prompt context\nReasoning: Compaction needs prior findings.\nVERDICT: PASS FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-b.md"
-  printf '# Legacy Review\n\n## Finding 1 — Real structured issue title\n**Severity**: 🔴\n**Location**: src/legacy.js:7\n**R2 Status**: ⚠️\n\nVERDICT: FAIL FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-legacy.md"
+  printf '# Skeptic Owner\n\n[SUGGESTION] src/app.js:22 — Keep recovery observable\n→ Preserve cumulative findings after transition\nReasoning: Mandatory reviewer presence should not hide recovery evidence.\nVERDICT: PASS FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-skeptic-owner.md"
+  printf '# Legacy Review\n\n## Finding 1 — Real structured issue title\n**Severity**: 🔵\n**Location**: src/legacy.js:7\n**R2 Status**: ✅\n\nVERDICT: PASS FINDINGS[1]\n' > "$dir/nodes/review/run_1/eval-legacy.md"
   mkdir -p "$dir/nodes/review/run_2"
   printf '# Reviewer C\n\n[WARNING] src/retry.js:33 — Retry run finding stays visible\n→ Preserve loopback findings per run\nReasoning: Retry runs must not be hidden by node-level de-duplication.\nVERDICT: ITERATE FINDINGS[1]\n' > "$dir/nodes/review/run_2/eval-c.md"
-  printf '{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2026-06-20T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":"PASS"}\n' > "$dir/nodes/review/handshake.json"
-  printf '{"nodeId":"review","runId":"run_1","status":"completed","fixes_applied":["Bound report parser to canonical eval severity parsing"]}\n' > "$dir/nodes/review/run_1/handshake.json"
+  printf '{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2026-06-20T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"},{"type":"eval","path":"run_1/eval-skeptic-owner.md"}],"verdict":"PASS","fixes_applied":["Bound report parser to canonical eval severity parsing"]}\n' > "$dir/nodes/review/handshake.json"
+  printf '{"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2026-06-20T00:00:00Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"},{"type":"eval","path":"eval-skeptic-owner.md"}],"verdict":"PASS","fixes_applied":["Bound report parser to canonical eval severity parsing"]}\n' > "$dir/nodes/review/run_1/handshake.json"
 }
 
 TMPD="$(mktemp -d)"
@@ -42,7 +43,8 @@ $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .
 check "transition writes cumulative findings" 'test -f .harness/cumulative-findings.md'
 check "cumulative findings include warning" 'grep -q "Report hides warning finding" .harness/cumulative-findings.md'
 check "cumulative findings include legacy structured title" 'grep -q "Real structured issue title" .harness/cumulative-findings.md'
-check "cumulative findings include retry run" 'grep -q "Retry run finding stays visible" .harness/cumulative-findings.md'
+check "cumulative findings lists retry run as forensic orphan" 'grep -q "review/run_2" .harness/cumulative-findings.md'
+check "cumulative findings excludes orphan retry text" '! grep -q "Retry run finding stays visible" .harness/cumulative-findings.md'
 check "cumulative findings include execution fix" 'grep -q "Bound report parser" .harness/cumulative-findings.md'
 
 PROMPT_JSON=$(OPC_DISABLE_EXTENSIONS=1 $HARNESS prompt-context --node gate --role resume --dir .harness 2>/dev/null)
@@ -50,15 +52,16 @@ PROMPT_APPEND=$(printf '%s' "$PROMPT_JSON" | python3 -c 'import json,sys; print(
 check "prompt-context injects recovery context" 'printf "%s" "$PROMPT_APPEND" | grep -q "OPC Recovery Context"'
 check "prompt-context includes prior warning" 'printf "%s" "$PROMPT_APPEND" | grep -q "Report hides warning finding"'
 check "prompt-context includes legacy structured title" 'printf "%s" "$PROMPT_APPEND" | grep -q "Real structured issue title"'
+check "prompt-context excludes orphan retry text" '! printf "%s" "$PROMPT_APPEND" | grep -q "Retry run finding stays visible"'
 
 $HARNESS transition --from gate --to null --verdict PASS --flow review --dir .harness > /dev/null 2>&1
 VIZ=$($HARNESS viz --flow review --dir .harness 2>/dev/null)
 VIZ_JSON=$($HARNESS viz --flow review --dir .harness --json 2>/dev/null)
 
-check "viz shows completed terminal state" 'printf "%s" "$VIZ" | grep -q "FLOW COMPLETED at gate"'
-check "viz no longer marks terminal as current" '! printf "%s" "$VIZ" | grep -q "▶ gate"'
-check "viz json exposes completion" 'printf "%s" "$VIZ_JSON" | grep -q "\"completed\": true"'
-check "viz json exposes terminal node" 'printf "%s" "$VIZ_JSON" | grep -q "\"terminalNode\": \"gate\""'
+check "viz shows completed terminal state" 'grep -q "FLOW COMPLETED at gate" <<< "$VIZ"'
+check "viz no longer marks terminal as current" '! grep -q "▶ gate" <<< "$VIZ"'
+check "viz json exposes completion" 'grep -q "\"completed\": true" <<< "$VIZ_JSON"'
+check "viz json exposes terminal node" 'grep -q "\"terminalNode\": \"gate\"" <<< "$VIZ_JSON"'
 
 node "$ROOT/bin/opc-report.mjs" --dir .harness --output report.html --title "Recovery Report" > /dev/null
 check "report includes parser warning finding" 'grep -q "Report hides warning finding" report.html'

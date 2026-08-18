@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test: goto maxLoopsPerEdge enforcement
+# Test: goto audit counts and maxNodeReentry enforcement
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HARNESS="node $SCRIPT_DIR/bin/opc-harness.mjs"
@@ -42,7 +42,7 @@ setup_flow() {
 EOF
 }
 
-echo "=== TEST GROUP 1: goto respects maxLoopsPerEdge ==="
+echo "=== TEST GROUP 1: goto ignores repair-edge limits but respects node reentry ==="
 
 setup_flow "run1"
 
@@ -50,20 +50,16 @@ R1=$(H goto code-review --dir run1)
 check "first goto succeeds" 'echo "$R1" | grep -q "\"goto\":\"code-review\""'
 check "edgeCounts updated" 'grep -q "build→code-review" "$TMPD/run1/flow-state.json"'
 
-R2=$(H goto build --dir run1)
-check "goto back to build succeeds" 'echo "$R2" | grep -q "\"goto\":\"build\""'
-
+R2=$(H goto code-review --dir run1)
+check "first same-edge goto succeeds" 'echo "$R2" | grep -q "\"goto\":\"code-review\""'
 R3=$(H goto code-review --dir run1)
-check "second goto code-review succeeds" 'echo "$R3" | grep -q "\"goto\":\"code-review\""'
-
-H goto build --dir run1 > /dev/null
+R4=$(H goto code-review --dir run1)
 R5=$(H goto code-review --dir run1)
-check "third goto code-review succeeds" 'echo "$R5" | grep -q "\"goto\":\"code-review\""'
+check "4th same-edge goto still succeeds" 'echo "$R5" | grep -q "\"goto\":\"code-review\""'
 
-# 4th goto code-review from build — should fail (maxLoopsPerEdge=3)
-H goto build --dir run1 > /dev/null
-R7=$(H goto code-review --dir run1)
-check "4th goto code-review blocked" 'echo "$R7" | grep -q "maxLoopsPerEdge"'
+R6=$(H goto code-review --dir run1)
+check "6th code-review entry is blocked" 'echo "$R6" | grep -q "maxNodeReentry"'
+check "manual edge traversals remain audited" 'grep -q "code-review→code-review" "$TMPD/run1/flow-state.json"'
 
 echo ""
 echo "=== TEST GROUP 2: edgeCounts persisted ==="

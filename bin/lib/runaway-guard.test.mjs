@@ -70,6 +70,20 @@ describe("run identity", () => {
     });
   });
 
+  test("resolves legacy non-auto initial entry without flowStartedAt", () => {
+    const legacy = {
+      entryNode: "build",
+      currentNode: "build",
+      totalSteps: 0,
+      history: [],
+    };
+    assert.deepEqual(resolveCurrentRun(legacy), {
+      runId: "run_1",
+      startedAt: null,
+      runKey: "legacy-initial:build",
+    });
+  });
+
   test("fails closed for unverifiable state", () => {
     const valid = {
       entryNode: "build",
@@ -84,7 +98,7 @@ describe("run identity", () => {
       { ...valid, history: null },
       { ...valid, currentNode: "" },
       { ...valid, currentNode: "review" },
-      { ...valid, flowStartedAt: null },
+      { ...valid, flowStartedAt: null, autoMode: true },
       { ...valid, flowStartedAt: "not-a-date" },
       { ...valid, flowStartedAt: "2026-02-30T00:00:00.000Z" },
       { ...valid, totalSteps: 1 },

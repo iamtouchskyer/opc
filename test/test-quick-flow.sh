@@ -26,11 +26,12 @@ write_clean_eval() {
 }
 
 write_quick_build() {
-  mkdir -p .harness/nodes/build
+  mkdir -p .harness/nodes/build/run_1
   cat > .harness/nodes/build/handshake.json <<'EOF'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"built","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
+{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"built","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"run_1/x"}]}
 EOF
-  touch .harness/nodes/build/x
+  touch .harness/nodes/build/run_1/x
+  sync_run_handshakes .harness
 }
 
 write_quick_review() {
@@ -40,6 +41,7 @@ write_quick_review() {
   cat > .harness/nodes/review/handshake.json <<'EOF'
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-quick-reviewer.md"}]}
 EOF
+  sync_run_handshakes .harness
 }
 
 write_quick_test_design() {
@@ -50,6 +52,7 @@ write_quick_test_design() {
   cat > .harness/nodes/test-design/handshake.json <<'EOF'
 {"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"tests designed","timestamp":"2026-01-01T00:03:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-skeptic-owner.md"},{"type":"eval","path":"run_1/eval-quick-tester.md"},{"type":"test-plan","path":"run_1/test-plan.md"}],"testCommand":"printf quick-ok > quick-test.txt"}
 EOF
+  sync_run_handshakes .harness
 }
 
 advance_quick() {

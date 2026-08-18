@@ -189,6 +189,7 @@ EVAL
 cat > nodes/review/handshake.json << 'HS'
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 HS
+sync_run_handshakes .
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 OUT=$($HARNESS viz --flow review --dir . 2>/dev/null)
 assert_contains "$OUT" "✅ review" "5.1a: visited entry node shows ✅"

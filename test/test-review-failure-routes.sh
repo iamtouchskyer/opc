@@ -26,12 +26,13 @@ assert_route_next() {
 
 write_review_handshake() {
   local dir="$1" verdict="$2"
-  mkdir -p "$dir/nodes/code-review"
+  mkdir -p "$dir/nodes/code-review/run_1"
   cat > "$dir/nodes/code-review/handshake.json" <<EOF
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"$verdict","summary":"review found work for producer","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"}]}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"$verdict","summary":"review found work for producer","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 EOF
-  echo "# Eval A" > "$dir/nodes/code-review/eval-a.md"
-  echo "# Eval B" > "$dir/nodes/code-review/eval-b.md"
+  sync_run_handshakes "$dir"
+  echo "# Eval A" > "$dir/nodes/code-review/run_1/eval-a.md"
+  echo "# Eval B" > "$dir/nodes/code-review/run_1/eval-b.md"
 }
 
 assert_transition_back_to_build() {

@@ -50,19 +50,22 @@ write_handshake() {
   local path="$dir/nodes/$node/handshake.json"
   mkdir -p "$(dirname "$path")"
   local artifacts="[]"
-  local run_dir="$dir/nodes/$node/run_1"
+  local run_id="run_1"
+  local run_dir="$dir/nodes/$node/$run_id"
+  local latest
+  latest=$(ls -d "$dir/nodes/$node"/run_* 2>/dev/null | sort -V | tail -1 || true)
+  if [ -n "$latest" ]; then
+    run_id=$(basename "$latest")
+    run_dir="$latest"
+  fi
   if [ "$node_type" = "review" ] && [ -d "$run_dir" ]; then
-    artifacts=$(ls "$run_dir"/eval-*.md 2>/dev/null | python3 -c "
-import sys, json
-files = [l.strip() for l in sys.stdin if l.strip()]
-print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
-" 2>/dev/null || echo "[]")
+    artifacts=$(find "$run_dir" -maxdepth 1 -name 'eval-*.md' -print | python3 -c 'import json, os, sys; run_id=sys.argv[1]; files=[line.strip() for line in sys.stdin if line.strip()]; print(json.dumps([{"path": f"{run_id}/{os.path.basename(path)}", "type": "eval"} for path in files]))' "$run_id" 2>/dev/null || echo "[]")
   fi
   cat > "$path" << HSEOF
 {
   "nodeId": "$node",
   "nodeType": "$node_type",
-  "runId": "run_1",
+  "runId": "$run_id",
   "status": "completed",
   "summary": "$summary",
   "verdict": "$verdict",
@@ -70,6 +73,7 @@ print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 HSEOF
+  sync_run_handshakes "$dir"
 }
 
 write_good_eval() {
@@ -182,9 +186,13 @@ rm -rf .harness
 $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 write_warning_eval .harness review senior
 write_good_eval .harness review tester
-write_handshake .harness review "Review round 1" "ITERATE"
+write_good_eval .harness review skeptic-owner
+write_handshake .harness review "Review round 1" "PASS"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
-SYNTH=$($HARNESS synthesize .harness --node review)
+write_warning_eval .harness review senior
+write_good_eval .harness review tester
+write_handshake .harness review "Review round 1" "ITERATE"
+SYNTH=$($HARNESS synthesize .harness --node review --run 1)
 assert_field_eq "2.1: round 1 ITERATE" "$SYNTH" "verdict" '"ITERATE"'
 write_handshake .harness gate "Gate iterates" "ITERATE" gate
 ROUTE=$($HARNESS route --node gate --verdict ITERATE --flow review)
@@ -193,12 +201,27 @@ $HARNESS transition --from gate --to review --verdict ITERATE --flow review --di
 STATE=$(cat .harness/flow-state.json)
 assert_field_eq "2.3: back at review" "$STATE" "currentNode" '"review"'
 mkdir -p .harness/nodes/review/run_2
-write_good_eval .harness review senior
-mv .harness/nodes/review/run_1/eval-senior.md .harness/nodes/review/run_2/eval-senior.md
-write_good_eval .harness review tester
-mv .harness/nodes/review/run_1/eval-tester.md .harness/nodes/review/run_2/eval-tester.md
-write_good_eval .harness review skeptic-owner
-mv .harness/nodes/review/run_1/eval-skeptic-owner.md .harness/nodes/review/run_2/eval-skeptic-owner.md
+cat > .harness/nodes/review/run_2/eval-senior.md <<'EVAL'
+# senior Review
+🔵 src/handler.ts:15 — Input validation is acceptable
+Reasoning: The second review verified the boundary checks.
+→ Keep the existing validation.
+VERDICT: PASS FINDINGS[0]
+EVAL
+cat > .harness/nodes/review/run_2/eval-tester.md <<'EVAL'
+# tester Review
+🔵 src/service.ts:55 — Test coverage is acceptable
+Reasoning: The second review verified edge cases.
+→ Keep the existing tests.
+VERDICT: PASS FINDINGS[0]
+EVAL
+cat > .harness/nodes/review/run_2/eval-skeptic-owner.md <<'EVAL'
+# skeptic-owner Review
+🔵 src/flow.ts:30 — Mechanism holds
+Reasoning: The second review verified the requested authority boundary.
+→ No action required.
+VERDICT: PASS FINDINGS[0]
+EVAL
 write_handshake .harness review "Review round 2" "PASS"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
 SYNTH=$($HARNESS synthesize .harness --node review --run 2)

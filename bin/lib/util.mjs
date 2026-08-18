@@ -17,6 +17,12 @@ export function getFlag(args, name, fallback = null) {
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
 }
 
+export function hasFlag(args, name) {
+  const flag = `--${name}`;
+  const eqPrefix = `${flag}=`;
+  return args.includes(flag) || args.some(a => typeof a === "string" && a.startsWith(eqPrefix));
+}
+
 // ── Safe directory resolution with path traversal guard ─────────
 // When no --dir is given, prefer the latest session dir (if one exists).
 // Falls back to ".harness" for backward compatibility.

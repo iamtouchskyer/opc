@@ -79,6 +79,7 @@ cat > nodes/build/handshake.json << 'EOF'
   "verdict": null
 }
 EOF
+sync_run_handshakes .
 OUT=$($HARNESS transition --from build --to gate-check --verdict PASS --flow test-no-types --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "True" "transition from build to gate-check"
 # Now gate-check should be detected as gate via name prefix (no nodeTypes)
@@ -95,6 +96,17 @@ cd /tmp
 echo ""
 echo "── GAP2-9: softEvidence in pre-transition handshake validation"
 D9=$(mktemp -d)
+mkdir -p "$HOME/.claude/flows"
+cat > "$HOME/.claude/flows/test-soft-ev.json" << 'EOF'
+{
+  "nodes": ["exec-node", "gate"],
+  "edges": {"exec-node": {"PASS": "gate"}, "gate": {"PASS": null}},
+  "limits": {"maxLoopsPerEdge": 3, "maxTotalSteps": 10, "maxNodeReentry": 5},
+  "nodeTypes": {"exec-node": "execute", "gate": "gate"},
+  "softEvidence": true,
+  "opc_compat": ">=0.5"
+}
+EOF
 cd "$D9"
 $HARNESS init --flow test-soft-ev --dir . > /dev/null 2>&1
 # exec-node is executor type with softEvidence=true
@@ -112,6 +124,7 @@ cat > nodes/exec-node/handshake.json << 'EOF'
   "verdict": null
 }
 EOF
+sync_run_handshakes .
 # Transition should succeed (softEvidence → warning not error)
 OUT=$($HARNESS transition --from exec-node --to gate --verdict PASS --flow test-soft-ev --dir . 2>&1)
 assert_contains "$OUT" "softEvidence" "pre-transition softEvidence warning emitted"
@@ -133,11 +146,33 @@ D10=$(mktemp -d)
 cd "$D10"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
 # Advance to gate node with proper handshakes
-mkdir -p nodes/build nodes/code-review nodes/test-execute
-for n in build code-review test-execute; do
+mkdir -p nodes/build/run_1 nodes/code-review/run_1 nodes/test-design/run_1 nodes/test-execute/run_1
+for n in build code-review test-design test-execute; do
+  nt="build"
+  [ "$n" = "code-review" ] && nt="review"
+  [ "$n" = "test-design" ] && nt="review"
+  [ "$n" = "test-execute" ] && nt="execute"
+  artifacts="[]"
+  if [ "$nt" = "review" ]; then
+    echo "# A" > "nodes/$n/run_1/eval-a.md"
+    echo "# B" > "nodes/$n/run_1/eval-b.md"
+    artifacts='[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]'
+  fi
+  if [ "$nt" = "execute" ]; then
+    echo "ok" > "nodes/$n/run_1/cli-output.txt"
+    artifacts='[{"type":"cli-output","path":"run_1/cli-output.txt"}]'
+  fi
   cat > "nodes/$n/handshake.json" << EOF
-{"nodeId":"$n","nodeType":"build","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
+{"nodeId":"$n","nodeType":"$nt","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":$artifacts,"verdict":null}
 EOF
+  python3 - "nodes/$n/handshake.json" "nodes/$n/run_1/handshake.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+for a in d["artifacts"]:
+    if a["path"].startswith("run_1/"):
+        a["path"]=a["path"][len("run_1/"):]
+json.dump(d, open(sys.argv[2], "w"))
+PY
 done
 # Manually advance state to gate
 SFILE="flow-state.json"
@@ -151,6 +186,7 @@ json.dump(s,open('$SFILE','w'),indent=2)
 "
 # Make upstream (test-execute) handshake corrupt JSON
 echo "NOT JSON AT ALL" > nodes/test-execute/handshake.json
+echo "NOT JSON AT ALL" > nodes/test-execute/run_1/handshake.json
 # Try gate ITERATE transition — should detect corrupt upstream during backlog check
 OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 # ITERATE triggers backlog check → corrupt upstream → error
@@ -237,39 +273,37 @@ assert_field_eq "$OUT" "['flows']" "[]" "ls skips corrupt state files"
 rm -rf "$D14"
 
 # ─────────────────────────────────────────────────────────────────
-# GAP2-15: cmdVerify — non-ENOENT read error
+# GAP2-15: cmdVerify — deterministic non-ENOENT read error
 # ─────────────────────────────────────────────────────────────────
 echo ""
 echo "── GAP2-15: verify non-ENOENT read error"
 D15=$(mktemp -d)
-mkdir "$D15/unreadable"
-chmod 000 "$D15/unreadable" 2>/dev/null || true
-# Try to read a file inside an unreadable directory
-if ! $HARNESS verify "$D15/unreadable/eval.md" > /dev/null 2>&1; then
-  echo "✅ verify exits non-zero on permission error"; PASS=$((PASS+1))
+mkdir "$D15/not-a-file"
+set +e
+OUT=$($HARNESS verify "$D15/not-a-file" 2>&1)
+RC=$?
+set -e
+if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "Cannot read"; then
+  echo "✅ verify rejects a directory with a non-ENOENT diagnostic"; PASS=$((PASS+1))
 else
-  # chmod may not work on this platform (root, container, macOS quirk)
-  echo "⏭️  verify handles unreadable (chmod not enforced on this OS — skip)"; PASS=$((PASS+1))  # platform-dependent skip
+  echo "❌ verify expected non-zero with non-ENOENT diagnostic, got rc=$RC: $OUT"; FAIL=$((FAIL+1))
 fi
-chmod 755 "$D15/unreadable" 2>/dev/null || true
 rm -rf "$D15"
 
 # ─────────────────────────────────────────────────────────────────
-# GAP2-16: cmdSynthesize — unreadable node dir (catch)
+# GAP2-16: cmdSynthesize — deterministic unreadable node path (catch)
 # ─────────────────────────────────────────────────────────────────
 echo ""
-echo "── GAP2-16: synthesize unreadable node dir"
+echo "── GAP2-16: synthesize unreadable node path"
 D16=$(mktemp -d)
-mkdir -p "$D16/nodes/broken-node"
-# Make node dir unreadable
-chmod 000 "$D16/nodes/broken-node" 2>/dev/null || true
-if ! $HARNESS synthesize "$D16" --node broken-node 2>/dev/null; then
-  echo "✅ synthesize exits non-zero for unreadable node dir"; PASS=$((PASS+1))
+mkdir -p "$D16/nodes"
+printf 'not a directory\n' > "$D16/nodes/broken-node"
+OUT=$($HARNESS synthesize "$D16" --node broken-node 2>/dev/null)
+if echo "$OUT" | grep -q '"verdict":"BLOCKED"' && echo "$OUT" | grep -q "cannot read node dir"; then
+  echo "✅ synthesize reports BLOCKED for an unreadable node path"; PASS=$((PASS+1))
 else
-  # chmod may not work on this platform (root, container, macOS quirk)
-  echo "⏭️  synthesize handles unreadable node dir (chmod not enforced — skip)"; PASS=$((PASS+1))  # platform-dependent skip
+  echo "❌ synthesize expected BLOCKED read diagnostic, got: $OUT"; FAIL=$((FAIL+1))
 fi
-chmod 755 "$D16/nodes/broken-node" 2>/dev/null || true
 rm -rf "$D16"
 
 print_results

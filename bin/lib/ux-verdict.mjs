@@ -4,6 +4,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { getFlag, resolveDir, atomicWriteSync } from "./util.mjs";
+import { parseRunOrdinal } from "./run-id.mjs";
 import {
   VALID_TIERS, RED_FLAG_KEYS, TRUST_SIGNAL_KEYS, TIER_FIT_BUCKETS,
   WARNING_THRESHOLDS, getRedFlagSeverity, parseRedFlagOverrides,
@@ -236,9 +237,9 @@ function countSeverities(flagMap) {
 
 // ── Load baseline verdict ──────────────────────────────────────
 function loadBaseline(dir, currentRun) {
-  const runNum = parseInt(currentRun, 10);
-  if (isNaN(runNum) || runNum <= 1) return null;
-  const prevRun = `run_${runNum - 1}`;
+  const runOrdinal = parseRunOrdinal(currentRun);
+  if (runOrdinal === null || runOrdinal <= 1n) return null;
+  const prevRun = `run_${runOrdinal - 1n}`;
   const prevPath = join(dir, "nodes", "ux-simulation", prevRun, "ux-verdict.json");
   try {
     return { data: JSON.parse(readFileSync(prevPath, "utf8")), runId: prevRun };

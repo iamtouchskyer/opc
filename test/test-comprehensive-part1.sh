@@ -42,6 +42,7 @@ write_review_hs() {
   printf '# Review B\nPerspective: Performance\nVERDICT: %s FINDINGS[0]\n' "$VERDICT" > "$DIR/nodes/$NODE/run_1/eval-b.md"
   printf '{"nodeId":"%s","nodeType":"review","runId":"run_1","status":"completed","summary":"Done","timestamp":"%s","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":"%s"}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERDICT" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 write_build_hs() {
@@ -50,6 +51,7 @@ write_build_hs() {
   echo "output" > "$DIR/nodes/$NODE/run_1/output.md"
   printf '{"nodeId":"%s","nodeType":"build","runId":"run_1","status":"completed","summary":"Built","timestamp":"%s","artifacts":[{"type":"source","path":"run_1/output.md"}],"verdict":null}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 write_exec_hs() {
@@ -58,6 +60,7 @@ write_exec_hs() {
   echo "test output" > "$DIR/nodes/$NODE/run_1/output.txt"
   printf '{"nodeId":"%s","nodeType":"execute","runId":"run_1","status":"completed","summary":"Executed","timestamp":"%s","artifacts":[{"type":"cli-output","path":"run_1/output.txt"}],"verdict":null}\n' \
     "$NODE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DIR/nodes/$NODE/handshake.json"
+  sync_run_handshakes "$DIR"
 }
 
 # ─────────────────────────────────────────────────────────────────

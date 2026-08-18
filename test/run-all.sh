@@ -11,7 +11,7 @@ for f in "$DIR"/test-*.sh; do
   echo "═══════════════════════════════════════════"
   echo "  Running $(basename "$f")"
   echo "═══════════════════════════════════════════"
-  if bash "$f"; then
+  if bash "$f" < /dev/null; then
     TOTAL_PASS=$((TOTAL_PASS + 1))
   else
     TOTAL_FAIL=$((TOTAL_FAIL + 1))

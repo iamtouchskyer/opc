@@ -128,9 +128,11 @@ echo "=== PART 17: viz --json edges + loopbacks ==="
 
 echo ""
 echo "── 17.1: viz --json includes FAIL and ITERATE loopbacks"
-OUT=$($HARNESS viz --flow build-verify --json 2>/dev/null)
+VIZ_DIR=$(mktemp -d)
+OUT=$($HARNESS viz --flow build-verify --dir "$VIZ_DIR" --json 2>/dev/null)
 assert_contains "$OUT" '"FAIL"' "17.1a: viz --json has FAIL loopback"
 assert_contains "$OUT" '"ITERATE"' "17.1b: viz --json has ITERATE loopback"
+rm -rf "$VIZ_DIR"
 
 # ═══════════════════════════════════════════════════════════════════
 echo ""

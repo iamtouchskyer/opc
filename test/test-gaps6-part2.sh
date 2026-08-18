@@ -158,10 +158,11 @@ D=$(mktemp -d)
 cd "$D"
 # Use review: review → gate (gate PASS → null = terminal)
 $HARNESS init --flow review --entry gate --dir . > /dev/null 2>&1
-mkdir -p nodes/gate
+mkdir -p nodes/gate/run_1
 cat > nodes/gate/handshake.json << 'EOF'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"in_progress","summary":"not done yet","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 EOF
+cp nodes/gate/handshake.json nodes/gate/run_1/handshake.json
 OUT=$($HARNESS finalize --dir . 2>/dev/null)
 assert_contains "$OUT" "in_progress" "13.1a: finalize rejects non-completed status"
 assert_contains "$OUT" "expected.*completed" "13.1b: error says expected completed"

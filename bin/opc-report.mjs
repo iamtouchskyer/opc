@@ -124,7 +124,7 @@ const loopState = tryReadJSON(join(DIR, 'loop-state.json'));
 const flowState = tryReadJSON(join(DIR, 'flow-state.json'));
 const planMd = tryRead(join(DIR, 'plan.md'));
 const evalsByNode = collectEvals(DIR);
-const executionFixes = collectExecutionFixes(DIR);
+const executionFixes = collectExecutionFixes(DIR, flowState);
 
 // Determine R1 vs R2 nodes from loop-state if available
 let unitIds = loopState?.unit_ids || [];

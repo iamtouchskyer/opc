@@ -145,17 +145,27 @@ D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --dir . > /dev/null 2>&1
 # Manually build state at gate with proper history
-mkdir -p nodes/build nodes/code-review nodes/test-execute
+mkdir -p nodes/build/run_1 nodes/code-review/run_1 nodes/test-execute/run_1
 # build handshake with warnings (triggers backlog check)
 cat > nodes/build/handshake.json << 'EOF'
 {"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
 EOF
+cp nodes/build/handshake.json nodes/build/run_1/handshake.json
+echo "# A" > nodes/code-review/run_1/eval-a.md
+echo "# B" > nodes/code-review/run_1/eval-b.md
 cat > nodes/code-review/handshake.json << 'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}],"verdict":null}
+EOF
+cat > nodes/code-review/run_1/handshake.json << 'EOF'
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"}],"verdict":null}
 EOF
 # test-execute handshake is the upstream of gate — make it have warnings then corrupt it
+echo "ok" > nodes/test-execute/run_1/cli-output.txt
 cat > nodes/test-execute/handshake.json << 'EOF'
-{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[],"verdict":null,"findings":{"warning":2}}
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"run_1/cli-output.txt"}],"verdict":null,"findings":{"warning":2}}
+EOF
+cat > nodes/test-execute/run_1/handshake.json << 'EOF'
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"cli-output","path":"cli-output.txt"}],"verdict":null,"findings":{"warning":2}}
 EOF
 # Advance state to gate
 python3 -c "
@@ -174,6 +184,7 @@ json.dump(s,open('flow-state.json','w'),indent=2)
 "
 # Now corrupt the upstream handshake AFTER state was built
 echo "CORRUPT JSON {{{{" > nodes/test-execute/handshake.json
+echo "CORRUPT JSON {{{{" > nodes/test-execute/run_1/handshake.json
 # ITERATE from gate triggers backlog check on upstream test-execute
 OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 assert_contains "$OUT" "corrupt" "corrupt upstream handshake detected"
@@ -215,7 +226,7 @@ json.dump(s,open('flow-state.json','w'),indent=2)
 # PASS from gate — no upstream handshake means OPC cannot prove prior node was clean.
 OUT=$($HARNESS transition --from gate --to brief --verdict ITERATE --flow build-verify --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['allowed']" "False" "missing upstream handshake blocks gate transition"
-assert_contains "$OUT" "handshake for test-execute is missing" "missing upstream handshake reported"
+assert_contains "$OUT" "missing handshake for node 'test-execute' run 'run_1'" "missing upstream handshake reported"
 rm -rf "$D"
 cd /tmp
 

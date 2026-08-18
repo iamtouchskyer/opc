@@ -336,6 +336,7 @@ cat > .h-forge/nodes/brief/handshake.json << 'HS'
   "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
+sync_run_handshakes .h-forge
 OUT=$($HARNESS validate .h-forge/nodes/brief/handshake.json 2>/dev/null)
 VALID=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('valid'))" 2>/dev/null)
 if [ "$VALID" = "False" ]; then
@@ -359,6 +360,7 @@ cat > .h-real/nodes/brief/handshake.json << 'HS'
   "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
+sync_run_handshakes .h-real
 OUT=$($HARNESS validate .h-real/nodes/brief/handshake.json 2>/dev/null)
 VALID=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('valid'))" 2>/dev/null)
 if [ "$VALID" = "True" ]; then
@@ -389,14 +391,30 @@ rm -rf .h-loop && $HARNESS init --flow build-verify --dir .h-loop >/dev/null 2>/
 mkdir -p .h-loop/nodes/brief/run_2
 write_golden_brief .h-loop/nodes/brief/build-brief.md
 echo '{"pass":true}' > .h-loop/nodes/brief/run_2/brief-lint-result.json
-cat > .h-loop/nodes/brief/handshake.json << 'HS'
+cat > .h-loop/nodes/brief/run_2/handshake.json << 'HS'
 {
   "nodeId": "brief", "nodeType": "brief", "runId": "run_2",
   "status": "completed", "summary": "loopback no delta", "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_2/brief-lint-result.json"}]
+  "artifacts": [{"type":"brief","path":"../build-brief.md"},{"type":"report","path":"brief-lint-result.json"}]
 }
 HS
-OUT=$($HARNESS validate .h-loop/nodes/brief/handshake.json 2>/dev/null)
+mkdir -p .h-loop/nodes/brief/run_1
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path(".h-loop/nodes/brief/run_2/handshake.json")
+d = json.loads(p.read_text())
+d["runId"] = "run_1"
+pathlib.Path(".h-loop/nodes/brief/run_1/handshake.json").write_text(json.dumps(d, indent=2) + "\n")
+PY
+python3 -c "
+import json
+p='.h-loop/flow-state.json'
+s=json.load(open(p))
+s['history']=[{'nodeId':'brief','runId':'run_2','timestamp':'2024-01-01T00:00:00.000Z'}]
+s['totalSteps']=1
+json.dump(s, open(p,'w'), indent=2)
+"
+OUT=$($HARNESS validate .h-loop/nodes/brief/run_2/handshake.json 2>/dev/null)
 VALID=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('valid'))" 2>/dev/null)
 ERRORS=$(echo "$OUT" | python3 -c "import sys,json; print(' '.join(json.load(sys.stdin).get('errors',[])))" 2>/dev/null)
 if [ "$VALID" = "False" ] && echo "$ERRORS" | grep -q "Iteration Delta"; then
@@ -413,14 +431,30 @@ rm -rf .h-loop2 && $HARNESS init --flow build-verify --dir .h-loop2 >/dev/null 2
 mkdir -p .h-loop2/nodes/brief/run_2
 { write_golden_brief /dev/stdout; printf '\n## Iteration Delta\n- Fixed contrast on KPI cards to 4.5:1 per prior finding\n- Added 200ms transition to chart hover\n'; } > .h-loop2/nodes/brief/build-brief.md
 echo '{"pass":true}' > .h-loop2/nodes/brief/run_2/brief-lint-result.json
-cat > .h-loop2/nodes/brief/handshake.json << 'HS'
+cat > .h-loop2/nodes/brief/run_2/handshake.json << 'HS'
 {
   "nodeId": "brief", "nodeType": "brief", "runId": "run_2",
   "status": "completed", "summary": "loopback with delta", "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_2/brief-lint-result.json"}]
+  "artifacts": [{"type":"brief","path":"../build-brief.md"},{"type":"report","path":"brief-lint-result.json"}]
 }
 HS
-OUT=$($HARNESS validate .h-loop2/nodes/brief/handshake.json 2>/dev/null)
+mkdir -p .h-loop2/nodes/brief/run_1
+python3 - <<'PY'
+import json, pathlib
+p = pathlib.Path(".h-loop2/nodes/brief/run_2/handshake.json")
+d = json.loads(p.read_text())
+d["runId"] = "run_1"
+pathlib.Path(".h-loop2/nodes/brief/run_1/handshake.json").write_text(json.dumps(d, indent=2) + "\n")
+PY
+python3 -c "
+import json
+p='.h-loop2/flow-state.json'
+s=json.load(open(p))
+s['history']=[{'nodeId':'brief','runId':'run_2','timestamp':'2024-01-01T00:00:00.000Z'}]
+s['totalSteps']=1
+json.dump(s, open(p,'w'), indent=2)
+"
+OUT=$($HARNESS validate .h-loop2/nodes/brief/run_2/handshake.json 2>/dev/null)
 VALID=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('valid'))" 2>/dev/null)
 if [ "$VALID" = "True" ]; then
   echo "  ✅ validate accepts loopback brief with Iteration Delta"

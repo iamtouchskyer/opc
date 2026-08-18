@@ -1,25 +1,50 @@
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { TEST_LAYERS, TEST_LAYER_KEYWORDS } from "./tier-baselines.mjs";
+import { compareRunIds } from "./run-id.mjs";
 
 const CMD_RE = /\b(npm\s+(test|run)|npx\s+\w|pytest|vitest|jest|playwright\s+test|curl\s+|bash\s+|sh\s+|node\s+|python[3]?\s+)/i;
 
 function latestRunDir(nodeDir) {
   try {
-    return readdirSync(nodeDir)
-      .filter(name => /^run_\d+$/.test(name))
-      .sort((a, b) => parseInt(b.slice(4), 10) - parseInt(a.slice(4), 10))
-      .map(name => join(nodeDir, name))[0] || null;
+    return readdirSync(nodeDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^run_\d+$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => compareRunIds(b, a))
+      .map((name) => join(nodeDir, name))[0] || null;
   } catch {
     return null;
   }
 }
 
-function findPlanPath(dir, nodeId) {
+function runDirFor(nodeDir, runId) {
+  if (typeof runId !== "string" || !/^run_\d+$/.test(runId)) return null;
+  const dir = join(nodeDir, runId);
+  return existsSync(dir) ? dir : null;
+}
+
+function findPlanPath(dir, nodeId, runId = null) {
   const nodeDir = join(dir, "nodes", nodeId);
-  const runDir = latestRunDir(nodeDir);
+  const runDir = runId ? runDirFor(nodeDir, runId) : latestRunDir(nodeDir);
   const runPlan = runDir ? join(runDir, "test-plan.md") : null;
   if (runPlan && existsSync(runPlan)) return runPlan;
+  if (runId) {
+    const canonical = join(nodeDir, "handshake.json");
+    if (!existsSync(canonical)) return null;
+    let handshake;
+    try {
+      handshake = JSON.parse(readFileSync(canonical, "utf8"));
+    } catch {
+      return null;
+    }
+    if (!handshake || typeof handshake !== "object" || Array.isArray(handshake)) return null;
+    if (handshake.nodeId !== nodeId || handshake.runId !== runId) return null;
+    const artifact = Array.isArray(handshake.artifacts)
+      ? handshake.artifacts.find(a => a?.type === "test-plan" && typeof a.path === "string")
+      : null;
+    const artifactPath = artifact ? join(nodeDir, artifact.path) : null;
+    return artifactPath && existsSync(artifactPath) ? artifactPath : null;
+  }
   const nodePlan = join(nodeDir, "test-plan.md");
   return existsSync(nodePlan) ? nodePlan : null;
 }
@@ -115,8 +140,8 @@ export function anchorIssues(lines, roots) {
   return issues;
 }
 
-export function collectTestDesignPlanReasons(dir, nodeId) {
-  const planPath = findPlanPath(dir, nodeId);
+export function collectTestDesignPlanReasons(dir, nodeId, runId = null) {
+  const planPath = findPlanPath(dir, nodeId, runId);
   if (!planPath) return [`${nodeId} test-plan.md missing`];
   const text = readFileSync(planPath, "utf8");
   const lines = text.split("\n");

@@ -69,8 +69,12 @@ echo "5. pass on gate node → advances"
 rm -rf .harness
 $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 
-# Skip review to get to gate
-$HARNESS skip --dir .harness --flow review 2>/dev/null >/dev/null
+# Complete review to get to gate with valid upstream authority
+mkdir -p .harness/nodes/review/run_1
+echo "# Eval A" > .harness/nodes/review/run_1/eval-a.md
+echo "# Eval B" > .harness/nodes/review/run_1/eval-b.md
+$HARNESS seal --node review --dir .harness 2>/dev/null >/dev/null
+$HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null >/dev/null
 NODE3=$(python3 -c "import json; print(json.load(open('.harness/flow-state.json'))['currentNode'])")
 if [ "$NODE3" = "gate" ]; then
   $HARNESS pass --dir .harness 2>/dev/null >/dev/null || true

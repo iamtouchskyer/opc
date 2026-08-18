@@ -2,15 +2,17 @@
 // prompt-context, extension-test, and extension-verdict commands
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, cpSync, mkdtempSync, rmSync, lstatSync, statSync, realpathSync, mkdirSync, copyFileSync } from "fs";
-import { readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
-import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, fireNodePreflight, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode, survivingExtensions } from "./extensions.mjs";
+import { basename, join, resolve } from "path";
+import { loadExtensions, firePromptAppend, fireVerdictAppend, fireExecuteRun, fireArtifactEmit, fireNodePreflight, readFailureReportState, writeFailureReport, saveRegistryCache, normalizeHook, lintCapability, enforceStrictMode, participatingExtensions } from "./extensions.mjs";
 import { getFlag, atomicWriteSync, resolveDir, resolveDirReadOnly } from "./util.mjs";
 import { resolveFlowTemplate } from "./flow-templates.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
 import { loadLayeredOpcConfig, stripProvenance } from "./config-layering.mjs";
 import { readCumulativeFindingsAppend } from "./cumulative-findings.mjs";
+import { compareRunIds } from "./run-id.mjs";
+import { resolveCurrentRun } from "./runaway-guard.mjs";
+import { assertFlowMutable } from "./flow-state-guard.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
 //
@@ -44,9 +46,150 @@ export function findLatestRunDir(nodeDir) {
     const runDirs = entries
       .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
       .map(e => e.name)
-      .sort((a, b) => parseInt(b.replace("run_", ""), 10) - parseInt(a.replace("run_", ""), 10));
+      .sort((a, b) => compareRunIds(b, a));
     return runDirs.length > 0 ? join(nodeDir, runDirs[0]) : null;
   } catch { return null; }
+}
+
+export function resolveSelectedRunDir(dir, node, command = "extension lifecycle") {
+  let state;
+  try {
+    state = JSON.parse(readFileSync(resolve(dir, "flow-state.json"), "utf8"));
+  } catch (error) {
+    throw new Error(`cannot resolve selected run: flow-state.json parse error: ${error.message}`);
+  }
+  assertFlowMutable(state, command);
+  if (state.currentNode !== node) {
+    throw new Error(`cannot resolve selected run: current node is '${state.currentNode}', not '${node}'`);
+  }
+  const selected = resolveCurrentRun(state);
+  if (!selected) {
+    throw new Error(`cannot resolve selected run for '${node}'`);
+  }
+  const runDir = resolve(dir, "nodes", node, selected.runId);
+  if (!existsSync(runDir) || !lstatSync(runDir).isDirectory()) {
+    throw new Error(`selected run directory not found: nodes/${node}/${selected.runId}`);
+  }
+  return runDir;
+}
+
+function readOptionalHandshake(handshakePath) {
+  if (!existsSync(handshakePath)) return {};
+  let handshake;
+  try {
+    handshake = JSON.parse(readFileSync(handshakePath, "utf8"));
+  } catch (error) {
+    throw new Error(`handshake.json parse error: ${error.message}`);
+  }
+  if (!handshake || typeof handshake !== "object" || Array.isArray(handshake)) {
+    throw new Error("handshake.json schema error: root must be an object");
+  }
+  return handshake;
+}
+
+function validatePromptProvenanceInputs(runDir, context) {
+  const runId = basename(runDir);
+  const nodeId = context?.nodeId;
+  const sidecarPath = join(runDir, "prompt-extensions.json");
+  if (existsSync(sidecarPath)) {
+    let sidecar;
+    try {
+      sidecar = JSON.parse(readFileSync(sidecarPath, "utf8"));
+    } catch (error) {
+      throw new Error(`prompt-extensions.json parse error: ${error.message}`);
+    }
+    if (!sidecar || typeof sidecar !== "object" || Array.isArray(sidecar) || sidecar.version !== 1) {
+      throw new Error("prompt-extensions.json schema/version error");
+    }
+    if (sidecar.nodeId !== nodeId || sidecar.runId !== runId) {
+      throw new Error("prompt-extensions.json provenance does not match selected run");
+    }
+    if (!Array.isArray(sidecar.extensionsApplied) || sidecar.extensionsApplied.some((name) => typeof name !== "string" || !name)) {
+      throw new Error("prompt-extensions.json extensionsApplied must be an array of names");
+    }
+  }
+
+  const handshake = readOptionalHandshake(join(runDir, "handshake.json"));
+  if (handshake.nodeId && handshake.nodeId !== nodeId) {
+    throw new Error(`run handshake nodeId '${handshake.nodeId}' does not match '${nodeId}'`);
+  }
+  if (handshake.runId && handshake.runId !== runId) {
+    throw new Error(`run handshake runId '${handshake.runId}' does not match '${runId}'`);
+  }
+  return handshake;
+}
+
+function prevalidateLifecycleEvidence(runDir, context, { prompt = false } = {}) {
+  readFailureReportState(runDir);
+  return prompt
+    ? validatePromptProvenanceInputs(runDir, context)
+    : readOptionalHandshake(join(runDir, "handshake.json"));
+}
+
+export function writePromptExtensionProvenance(runDir, context, extensionsApplied) {
+  const runId = basename(runDir);
+  const nodeId = context?.nodeId;
+  if (typeof nodeId !== "string" || !nodeId || !/^run_\d+$/.test(runId)) {
+    throw new Error("cannot write prompt extension provenance without valid nodeId and runId");
+  }
+  if (!Array.isArray(extensionsApplied) || extensionsApplied.some((name) => typeof name !== "string" || !name)) {
+    throw new Error("cannot write prompt extension provenance: extensionsApplied must be an array of names");
+  }
+
+  const sidecarPath = join(runDir, "prompt-extensions.json");
+  const handshakePath = join(runDir, "handshake.json");
+  const handshake = validatePromptProvenanceInputs(runDir, context);
+  if (extensionsApplied.length === 0 && Object.keys(handshake).length === 0) return null;
+
+  const sidecar = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    nodeId,
+    runId,
+    extensionsApplied: extensionsApplied.slice(),
+  };
+  atomicWriteSync(sidecarPath, JSON.stringify(sidecar, null, 2) + "\n");
+  atomicWriteSync(handshakePath, JSON.stringify({
+    ...handshake,
+    nodeId,
+    ...(context.nodeType ? { nodeType: context.nodeType } : {}),
+    runId,
+    extensionsApplied: extensionsApplied.slice(),
+  }, null, 2) + "\n");
+  return sidecarPath;
+}
+
+export function collectPromptExtensionProvenanceErrors(runDir, expected) {
+  const runId = expected?.runId || basename(runDir);
+  const sidecarPath = join(runDir, "prompt-extensions.json");
+  if (!existsSync(sidecarPath)) return [`${runId}/prompt-extensions.json not found`];
+
+  let sidecar;
+  try {
+    sidecar = JSON.parse(readFileSync(sidecarPath, "utf8"));
+  } catch (error) {
+    return [`${runId}/prompt-extensions.json parse error: ${error.message}`];
+  }
+  const errors = [];
+  if (!sidecar || typeof sidecar !== "object" || Array.isArray(sidecar) || sidecar.version !== 1) {
+    errors.push(`${runId}/prompt-extensions.json schema/version invalid`);
+    return errors;
+  }
+  if (sidecar.nodeId !== expected.nodeId) {
+    errors.push(`${runId}/prompt-extensions.json nodeId '${sidecar.nodeId}' does not match '${expected.nodeId}'`);
+  }
+  if (sidecar.runId !== runId) {
+    errors.push(`${runId}/prompt-extensions.json runId '${sidecar.runId}' does not match '${runId}'`);
+  }
+  if (!Array.isArray(sidecar.extensionsApplied) || sidecar.extensionsApplied.some((name) => typeof name !== "string" || !name)) {
+    errors.push(`${runId}/prompt-extensions.json extensionsApplied missing or invalid`);
+  } else {
+    const claimed = expected.extensionsApplied || [];
+    if (claimed.length !== sidecar.extensionsApplied.length || claimed.some((name) => !sidecar.extensionsApplied.includes(name))) {
+      errors.push(`${runId}/prompt-extensions.json extensionsApplied does not match handshake claim`);
+    }
+  }
+  return errors;
 }
 
 /**
@@ -65,22 +208,66 @@ export function findLatestRunDir(nodeDir) {
  *     "couldn't resolve a template / unknown node" (genuine misconfig).
  */
 function readNodeCapabilities(dir, node, args) {
-  try {
-    const statePath = resolve(dir, "flow-state.json");
-    let state = null;
-    if (existsSync(statePath)) {
-      try { state = JSON.parse(readFileSync(statePath, "utf8")); } catch { /* state corrupt — treat as absent */ }
+  let state = null;
+  const statePath = resolve(dir, "flow-state.json");
+  if (existsSync(statePath)) {
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch (error) {
+      throw new Error(`flow-state.json parse error: ${error.message}`);
     }
-    const { template } = resolveFlowTemplate(args, state);
-    const templateResolved = !!template;
-    const nodeResolved = templateResolved && Array.isArray(template.nodes) && template.nodes.includes(node);
-    if (!nodeResolved) return { caps: [], templateResolved: false };
-    if (!template.nodeCapabilities) return { caps: [], templateResolved: true };
-    const caps = template.nodeCapabilities[node];
-    return { caps: Array.isArray(caps) ? caps : [], templateResolved: true };
-  } catch {
-    return { caps: [], templateResolved: false };
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      throw new Error("flow-state.json schema error: root must be an object");
+    }
   }
+
+  const tier = typeof state?.tier === "string" ? state.tier : null;
+  const visualEvaluationRequired = tier === "polished" || tier === "delightful";
+  const resolved = resolveFlowTemplate(args, state);
+  if (resolved.error) throw new Error(resolved.error);
+  const { template } = resolved;
+  const templateResolved = !!template;
+  const nodeResolved = templateResolved && Array.isArray(template.nodes) && template.nodes.includes(node);
+  const nodeType = nodeResolved ? template.nodeTypes?.[node] || null : null;
+  if (!nodeResolved) {
+    return { caps: [], templateResolved: false, nodeType, tier, visualEvaluationRequired };
+  }
+  const caps = template.nodeCapabilities?.[node];
+  return {
+    caps: Array.isArray(caps) ? caps : [],
+    templateResolved: true,
+    nodeType,
+    tier,
+    visualEvaluationRequired,
+  };
+}
+
+export function resolveNodeExtensionContext(dir, node, args = [], overrides = {}) {
+  const {
+    caps: nodeCapabilities,
+    templateResolved,
+    nodeType,
+    tier,
+    visualEvaluationRequired,
+  } = readNodeCapabilities(dir, node, args);
+  const task = Object.hasOwn(overrides, "task") ? overrides.task : readTaskFromAC(dir);
+  const context = {
+    node,
+    nodeId: node,
+    nodeType,
+    tier,
+    role: overrides.role ?? null,
+    task,
+    taskDescription: task,
+    visualEvaluationRequired,
+    flowDir: resolve(dir),
+    cwd: overrides.cwd ?? process.cwd(),
+    devServerUrl: overrides.devServerUrl ?? "",
+    nodeCapabilities,
+    nodeCapabilitiesResolved: templateResolved,
+  };
+  if (overrides.runDir) context.runDir = overrides.runDir;
+  return context;
 }
 
 // ─── prompt-context ──────────────────────────────────────────────
@@ -104,6 +291,23 @@ export async function cmdPromptContext(args) {
   const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
+  const runDir = resolveSelectedRunDir(dir, node, "prompt-context");
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const context = resolveNodeExtensionContext(dir, node, args, {
+    role,
+    task,
+    runDir,
+    devServerUrl,
+  });
+  const { nodeCapabilities } = context;
+
+  try {
+    prevalidateLifecycleEvidence(runDir, context, { prompt: true });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+    return;
+  }
 
   let registry;
   try {
@@ -113,66 +317,20 @@ export async function cmdPromptContext(args) {
     process.exit(1);
   }
 
-  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
-
-  // Resolve nodeType from flow-state.json + template
-  let nodeType = null;
-  try {
-    const stPath = join(resolve(dir), "flow-state.json");
-    if (existsSync(stPath)) {
-      const st = JSON.parse(readFileSync(stPath, "utf8"));
-      const tplName = st.flowTemplate;
-      if (tplName) {
-        const { FLOW_TEMPLATES } = await import("./flow-templates.mjs");
-        const tpl = FLOW_TEMPLATES[tplName];
-        if (tpl?.nodeTypes) nodeType = tpl.nodeTypes[node] || null;
-      }
-    }
-  } catch { /* best effort */ }
-
-  const context = {
-    node,
-    nodeId: node,
-    nodeType,
-    role,
-    task,
-    taskDescription: task,
-    flowDir: resolve(dir),
-    runDir: resolve(dir),
-    cwd: process.cwd(),
-    devServerUrl,
-    nodeCapabilities,
-    nodeCapabilitiesResolved: templateResolved,
-  };
-
   const extensionAppend = await firePromptAppend(registry, context);
   const append = [
     readCumulativeFindingsAppend(resolve(dir)),
     extensionAppend,
   ].filter(Boolean).join("\n\n");
+  const applied = participatingExtensions(registry, context, ["prompt.append"]);
 
-  // Stamp extensionsApplied into this node's latest run handshake (if run dir exists)
-  const nodeDir = resolve(dir, "nodes", node);
-  const latestRunDir = findLatestRunDir(nodeDir);
-  if (latestRunDir) {
-    try {
-      const handshakePath = join(latestRunDir, 'handshake.json');
-      let handshake = {};
-      try { handshake = JSON.parse(readFileSync(handshakePath, 'utf8')); } catch { /* no handshake yet */ }
-      handshake.extensionsApplied = survivingExtensions(registry);
-      atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2));
-    } catch { /* best effort */ }
-
-    // G2 fix: persist prompt-phase failures (e.g. slow-ext timeout) so
-    // operators see them in extension-failures.md instead of just stderr.
-    // writeFailureReport now read-merges, so this won't clobber prior phases.
-    writeFailureReport(registry, latestRunDir);
-  }
-
+  // Failure evidence is canonical and must remain parseable before participant
+  // provenance can be stamped into the selected run.
+  writeFailureReport(registry, runDir);
+  writePromptExtensionProvenance(runDir, context, applied);
   saveRegistryCache(resolve(dir), registry);
 
-  console.log(JSON.stringify({ append, applied: registry.applied, nodeCapabilities }));
+  console.log(JSON.stringify({ append, applied, nodeCapabilities }));
 
   // Strict mode: after isolation work is done, exit non-zero if any failures.
   enforceStrictMode(registry);
@@ -444,7 +602,7 @@ export async function cmdExtensionTest(args) {
 export async function cmdExtensionVerdict(args) {
   if (args.includes("--help")) {
     console.error("Usage: opc-harness extension-verdict --node <id> --dir <harness-dir>");
-    console.error("Loads extensions, fires verdict.append, writes eval-extensions.md to latest run dir.");
+    console.error("Loads extensions, fires verdict.append, writes eval-extensions.md to the state-selected run dir.");
     return;
   }
 
@@ -459,6 +617,28 @@ export async function cmdExtensionVerdict(args) {
   const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
+  const runDir = resolveSelectedRunDir(dir, node, "extension-verdict");
+
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const context = resolveNodeExtensionContext(dir, node, args, {
+    role: "evaluator",
+    task,
+    runDir,
+    devServerUrl,
+  });
+  const { nodeCapabilities } = context;
+
+  // Existing canonical provenance is a trust boundary. Missing is allowed;
+  // malformed bytes fail closed and are never replaced with a fresh object.
+  const handshakePath = join(runDir, "handshake.json");
+  let handshake;
+  try {
+    handshake = prevalidateLifecycleEvidence(runDir, context);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+    return;
+  }
 
   let registry;
   try {
@@ -468,38 +648,14 @@ export async function cmdExtensionVerdict(args) {
     process.exit(1);
   }
 
-  const runDir = findLatestRunDir(resolve(dir, "nodes", node));
-  if (!runDir) {
-    console.error(`No run directories found for node '${node}' in ${resolve(dir, "nodes", node)}`);
-    process.exit(1);
-  }
-
-  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
-
-  const context = {
-    node,
-    role: "evaluator",
-    task,
-    flowDir: resolve(dir),
-    runDir,
-    devServerUrl,
-    nodeCapabilities,
-    nodeCapabilitiesResolved: templateResolved,
-  };
-
   await fireVerdictAppend(registry, context);
 
   // Stamp extensionsApplied into the run dir's handshake.json
-  const handshakePath = join(runDir, 'handshake.json');
-  let handshake = {};
-  try {
-    handshake = JSON.parse(await readFile(handshakePath, 'utf8'));
-  } catch { /* no handshake yet, start fresh */ }
-  handshake.extensionsApplied = survivingExtensions(registry);
+  const appliedExtensions = participatingExtensions(registry, context, ["verdict.append"]);
+  handshake.extensionsApplied = appliedExtensions;
   atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2));
 
-  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: survivingExtensions(registry), nodeCapabilities }));
+  console.log(JSON.stringify({ ok: true, node, runDir, extensionsApplied: appliedExtensions, nodeCapabilities }));
 
   // Strict mode: after eval-extensions.md and writeFailureReport have run
   // (inside fireVerdictAppend), exit non-zero if any failures recorded.
@@ -534,6 +690,28 @@ export async function cmdExtensionArtifact(args) {
   const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
+  const runDir = resolveSelectedRunDir(dir, node, "extension-artifact");
+
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  const context = resolveNodeExtensionContext(dir, node, args, {
+    role: "executor",
+    task,
+    runDir,
+    devServerUrl,
+  });
+  const { nodeCapabilities } = context;
+
+  // Read before running side-effectful hooks so malformed canonical provenance
+  // cannot be laundered by a later handshake rewrite.
+  const handshakePath = join(runDir, "handshake.json");
+  let handshake;
+  try {
+    handshake = prevalidateLifecycleEvidence(runDir, context);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+    return;
+  }
 
   let registry;
   try {
@@ -542,26 +720,6 @@ export async function cmdExtensionArtifact(args) {
     console.error(err.message);
     process.exit(1);
   }
-
-  const runDir = findLatestRunDir(resolve(dir, "nodes", node));
-  if (!runDir) {
-    console.error(`No run directories found for node '${node}' in ${resolve(dir, "nodes", node)}`);
-    process.exit(1);
-  }
-
-  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
-
-  const context = {
-    node,
-    role: "executor",
-    task,
-    flowDir: resolve(dir),
-    runDir,
-    devServerUrl,
-    nodeCapabilities,
-    nodeCapabilitiesResolved: templateResolved,
-  };
 
   const executeResults = await fireExecuteRun(registry, context);
   const emitted = await fireArtifactEmit(registry, context);
@@ -572,24 +730,20 @@ export async function cmdExtensionArtifact(args) {
   writeFailureReport(registry, runDir);
 
   // Merge ext-artifact entries into handshake.artifacts[] (dedup by path)
-  const handshakePath = join(runDir, 'handshake.json');
-  let handshake = {};
-  try {
-    handshake = JSON.parse(await readFile(handshakePath, 'utf8'));
-  } catch { /* no handshake yet */ }
   if (!Array.isArray(handshake.artifacts)) handshake.artifacts = [];
   const seen = new Set(handshake.artifacts.map(a => (a && a.path) || null).filter(Boolean));
   for (const a of emitted) {
     if (!seen.has(a.path)) { handshake.artifacts.push(a); seen.add(a.path); }
   }
-  handshake.extensionsApplied = survivingExtensions(registry);
+  const appliedExtensions = participatingExtensions(registry, context, ["execute.run", "artifact.emit"]);
+  handshake.extensionsApplied = appliedExtensions;
   atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2));
 
   console.log(JSON.stringify({
     ok: true,
     node,
     runDir,
-    extensionsApplied: survivingExtensions(registry),
+    extensionsApplied: appliedExtensions,
     nodeCapabilities,
     executeRunCount: executeResults.length,
     emitted,
@@ -626,7 +780,24 @@ export async function cmdNodePreflight(args) {
   const config = loadOpcConfig(dir);
   Object.assign(config, parseBypassArgs(args), { flowDir: dir });
   const task = readTaskFromAC(dir);
-  const { caps: nodeCapabilities, templateResolved } = readNodeCapabilities(dir, node, args);
+  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
+  let runDir;
+  let context;
+  try {
+    runDir = resolveSelectedRunDir(dir, node, "node-preflight");
+    context = resolveNodeExtensionContext(dir, node, args, {
+      role: "preflight",
+      task,
+      runDir,
+      devServerUrl,
+    });
+    prevalidateLifecycleEvidence(runDir, context);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+    return;
+  }
+  const { nodeCapabilities } = context;
 
   if (nodeCapabilities.length > 0 && !task.trim()) {
     console.log(JSON.stringify({
@@ -650,29 +821,9 @@ export async function cmdNodePreflight(args) {
     process.exit(1);
   }
 
-  const devServerUrl = getFlag(args, "dev-server") || process.env.DEV_SERVER_URL || config.devServerUrl || "";
-
-  const context = {
-    node,
-    nodeId: node,
-    role: "preflight",
-    task,
-    taskDescription: task,
-    flowDir: resolve(dir),
-    cwd: process.cwd(),
-    devServerUrl,
-    nodeCapabilities,
-    nodeCapabilitiesResolved: templateResolved,
-  };
-
   const results = await fireNodePreflight(registry, context);
 
-  // Write failure report to the node's latest run dir (if exists)
-  const nodeDir = resolve(dir, "nodes", node);
-  const latestRunDir = findLatestRunDir(nodeDir);
-  if (latestRunDir) {
-    writeFailureReport(registry, latestRunDir);
-  }
+  writeFailureReport(registry, runDir);
 
   saveRegistryCache(resolve(dir), registry);
 
@@ -684,7 +835,7 @@ export async function cmdNodePreflight(args) {
     node,
     preflightResults: results.length,
     artifactTypes,
-    extensionsApplied: survivingExtensions(registry),
+    extensionsApplied: participatingExtensions(registry, context, ["preflight"]),
     nodeCapabilities,
   }));
 

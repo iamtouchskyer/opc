@@ -83,8 +83,9 @@ assert_contains "lint script detected" "$OUT" "lint script"
 echo ""
 echo "--- 16.2: validate-chain handshake parse error ---"
 rm -rf .h-vc2 && $HARNESS init --flow build-verify --dir .h-vc2 >/dev/null 2>/dev/null
-mkdir -p .h-vc2/nodes/build
+mkdir -p .h-vc2/nodes/build/run_1
 echo "not json" > .h-vc2/nodes/build/handshake.json
+echo "not json" > .h-vc2/nodes/build/run_1/handshake.json
 # Add history so validator checks build's handshake
 python3 -c "
 import json

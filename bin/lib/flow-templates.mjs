@@ -489,28 +489,56 @@ export function resolveFlowTemplate(args, state = null) {
   const flowName = getFlag(args, "flow");
   const flowFile = getFlag(args, "flow-file");
 
-  // Priority 1: explicit --flow-file
+  if (state && typeof state === "object") {
+    const persistedName = typeof state.flowTemplate === "string" && state.flowTemplate.trim()
+      ? state.flowTemplate
+      : null;
+    const persistedFile = typeof state._flow_file === "string" && state._flow_file.trim()
+      ? resolve(state._flow_file)
+      : null;
+
+    if (flowName && flowName !== persistedName) {
+      return {
+        error: `persisted flow identity '${persistedName ?? "<missing>"}' does not match explicit --flow '${flowName}'`,
+      };
+    }
+    if (flowFile) {
+      const explicitFile = resolve(flowFile);
+      if (!persistedFile || explicitFile !== persistedFile) {
+        return {
+          error: `persisted flow identity '${persistedFile ?? persistedName ?? "<missing>"}' does not match explicit --flow-file '${explicitFile}'`,
+        };
+      }
+    }
+
+    if (persistedFile) {
+      if (!persistedName) {
+        return { error: `persisted flow identity is missing flowTemplate for '${persistedFile}'` };
+      }
+      const result = loadFlowFromFile(persistedFile);
+      if (result.error) return { error: `persisted flow identity '${persistedFile}' is unavailable: ${result.error}` };
+      if (result.name !== persistedName) {
+        return {
+          error: `persisted flow identity mismatch: flowTemplate '${persistedName}' does not match _flow_file '${result.name}'`,
+        };
+      }
+      return { template: result.template, name: result.name };
+    }
+
+    if (!persistedName) return { error: "persisted flow identity is missing flowTemplate" };
+    const template = Object.hasOwn(FLOW_TEMPLATES, persistedName) ? FLOW_TEMPLATES[persistedName] : null;
+    if (!template) return { error: `unknown flow template: ${persistedName}` };
+    return { template, name: persistedName };
+  }
+
   if (flowFile) {
     const result = loadFlowFromFile(flowFile);
     if (result.error) return { error: result.error };
     return { template: result.template, name: result.name };
   }
 
-  // Priority 2: _flow_file from persisted state
-  if (state && state._flow_file) {
-    const result = loadFlowFromFile(state._flow_file);
-    if (result.error) {
-      // File disappeared — fall through to name lookup
-      console.error(`⚠️  _flow_file '${state._flow_file}' failed: ${result.error} — falling back to template name`);
-    } else {
-      return { template: result.template, name: result.name };
-    }
-  }
-
-  // Priority 3: lookup by name — explicit --flow, else persisted state.flowTemplate
-  const resolvedName = flowName || (state && state.flowTemplate);
-  if (!resolvedName) return { error: "no --flow or --flow-file specified" };
-  const template = Object.hasOwn(FLOW_TEMPLATES, resolvedName) ? FLOW_TEMPLATES[resolvedName] : null;
-  if (!template) return { error: `unknown flow template: ${resolvedName}` };
-  return { template, name: resolvedName };
+  if (!flowName) return { error: "no --flow or --flow-file specified" };
+  const template = Object.hasOwn(FLOW_TEMPLATES, flowName) ? FLOW_TEMPLATES[flowName] : null;
+  if (!template) return { error: `unknown flow template: ${flowName}` };
+  return { template, name: flowName };
 }

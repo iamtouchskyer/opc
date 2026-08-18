@@ -97,8 +97,10 @@ echo "=== PART 8: 🔵 LOW — viz ASCII loopback display ==="
 
 echo ""
 echo "── 8.1: viz with FAIL+ITERATE edges shows FAIL in ASCII"
-OUT=$($HARNESS viz --flow build-verify 2>/dev/null)
+VIZ_DIR=$(mktemp -d)
+OUT=$($HARNESS viz --flow build-verify --dir "$VIZ_DIR" 2>/dev/null)
 assert_contains "$OUT" "FAIL" "8.1a: viz ASCII shows FAIL edge for gate"
+rm -rf "$VIZ_DIR"
 
 echo ""
 echo "── 8.2: transition stderr viz output contains markers"
@@ -120,6 +122,7 @@ EVAL
 cat > nodes/review/handshake.json << 'EOF'
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-alpha.md"},{"type":"eval","path":"run_1/eval-beta.md"}]}
 EOF
+sync_run_handshakes .
 sleep 2
 STDERR_FILE=$(mktemp)
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2> "$STDERR_FILE"
@@ -135,17 +138,22 @@ echo "=== PART 9: 🔵 LOW — validate-chain currentNode skip ==="
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "── 9.1: validate-chain skips missing handshake for currentNode"
+echo "── 9.1: validate-chain rejects missing currentNode handshake"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --entry build --dir . > /dev/null 2>&1
-mkdir -p nodes/build
-cat > nodes/build/handshake.json << 'EOF'
-{"nodeId":"build","nodeType":"build","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z"}
+mkdir -p nodes/build/run_1
+cat > nodes/build/run_1/handshake.json << 'EOF'
+{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","summary":"done","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
+EOF
+cp nodes/build/run_1/handshake.json nodes/build/handshake.json
+cat > nodes/build/run_1/build.log << 'EOF'
+build complete
 EOF
 $HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 OUT=$($HARNESS validate-chain --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['valid']" "True" "9.1a: currentNode without handshake is not an error"
+assert_field_eq "$OUT" "['valid']" "False" "9.1a: currentNode without handshake fails closed"
+assert_contains "$OUT" "code-review/run_1: .*status missing or invalid" "9.1b: error names exact selected run"
 cd "$ORIG_DIR"
 rm -rf "$D"
 

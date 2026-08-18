@@ -45,24 +45,40 @@ assert_not_contains() {
   fi
 }
 
+current_run_id() {
+  local dir="$1" node="$2"
+  python3 - "$dir/flow-state.json" "$node" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+history = state.get("history", [])
+tail = history[-1] if history else None
+if tail and tail.get("nodeId") == sys.argv[2] and tail.get("runId"):
+    print(tail["runId"])
+elif (state.get("totalSteps") == 0 and not history and
+      state.get("currentNode") == state.get("entryNode") == sys.argv[2] and
+      state.get("flowStartedAt")):
+    print("run_1")
+else:
+    raise SystemExit(1)
+PY
+}
+
 write_handshake() {
   local dir="$1" node="$2" summary="$3" verdict="$4" node_type="${5:-review}"
   local path="$dir/nodes/$node/handshake.json"
+  local run_id
+  run_id=$(current_run_id "$dir" "$node") || return 1
   mkdir -p "$(dirname "$path")"
   local artifacts="[]"
-  local run_dir="$dir/nodes/$node/run_1"
+  local run_dir="$dir/nodes/$node/$run_id"
   if [ "$node_type" = "review" ] && [ -d "$run_dir" ]; then
-    artifacts=$(ls "$run_dir"/eval-*.md 2>/dev/null | python3 -c "
-import sys, json
-files = [l.strip() for l in sys.stdin if l.strip()]
-print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
-" 2>/dev/null || echo "[]")
+    artifacts=$(find "$run_dir" -maxdepth 1 -name 'eval-*.md' -print | python3 -c 'import json, os, sys; run_id=sys.argv[1]; files=[line.strip() for line in sys.stdin if line.strip()]; print(json.dumps([{"path": f"{run_id}/{os.path.basename(path)}", "type": "eval"} for path in files]))' "$run_id" 2>/dev/null || echo "[]")
   fi
   cat > "$path" << HSEOF
 {
   "nodeId": "$node",
   "nodeType": "$node_type",
-  "runId": "run_1",
+  "runId": "$run_id",
   "status": "completed",
   "summary": "$summary",
   "verdict": "$verdict",
@@ -70,11 +86,14 @@ print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 HSEOF
+  sync_run_handshakes "$dir"
 }
 
 write_good_eval() {
   local dir="$1" node="$2" role="$3"
-  local run_dir="$dir/nodes/$node/run_1"
+  local run_id
+  run_id=$(current_run_id "$dir" "$node") || return 1
+  local run_dir="$dir/nodes/$node/$run_id"
   mkdir -p "$run_dir"
   cat > "$run_dir/eval-${role}.md" << EVALEOF
 # ${role} Review
@@ -111,7 +130,9 @@ EVALEOF
 
 write_warning_eval() {
   local dir="$1" node="$2" role="$3"
-  local run_dir="$dir/nodes/$node/run_1"
+  local run_id
+  run_id=$(current_run_id "$dir" "$node") || return 1
+  local run_dir="$dir/nodes/$node/$run_id"
   mkdir -p "$run_dir"
   cat > "$run_dir/eval-${role}.md" << EVALEOF
 # ${role} Review
@@ -130,7 +151,9 @@ EVALEOF
 
 write_critical_eval() {
   local dir="$1" node="$2" role="$3"
-  local run_dir="$dir/nodes/$node/run_1"
+  local run_id
+  run_id=$(current_run_id "$dir" "$node") || return 1
+  local run_dir="$dir/nodes/$node/$run_id"
   mkdir -p "$run_dir"
   cat > "$run_dir/eval-${role}.md" << EVALEOF
 # ${role} Review
@@ -182,6 +205,7 @@ $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 for round in 1 2 3; do
   write_good_eval .harness review "role${round}"
   write_good_eval .harness review "backup${round}"
+  write_good_eval .harness review "skeptic-owner"
   write_handshake .harness review "Round $round" "PASS"
   $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
   write_handshake .harness gate "Gate iterates round $round" "ITERATE" gate
@@ -192,6 +216,7 @@ for round in 1 2 3; do
 done
 write_good_eval .harness review "role4"
 write_good_eval .harness review "backup4"
+write_good_eval .harness review "skeptic-owner"
 write_handshake .harness review "Round 4" "PASS"
 TRANS_4=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null || echo '{"allowed":false}')
 write_handshake .harness gate "Gate round 4" "ITERATE" gate
@@ -207,7 +232,7 @@ echo "=== E2E TEST 9: validate-chain integrity ==="
 rm -rf .harness
 $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 write_good_eval .harness review analyst
-write_good_eval .harness review architect
+write_good_eval .harness review skeptic-owner
 write_handshake .harness review "Clean review" "PASS"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
 write_handshake .harness gate "Gate passes" "PASS" gate

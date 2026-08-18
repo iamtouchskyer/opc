@@ -60,7 +60,7 @@ function createTestDesignSession(name, testPlan) {
   writeFileSync(join(runDir, "eval-skeptic-owner.md"), "# Skeptic\n**Verdict: APPROVE**\nNo issues.\n");
   writeFileSync(join(runDir, "eval-tester.md"), "# Tester\n**Verdict: APPROVE**\nNo issues.\n");
   if (testPlan !== null) writeFileSync(join(runDir, "test-plan.md"), testPlan);
-  writeFileSync(join(nodeDir, "handshake.json"), JSON.stringify({
+  const canonical = {
     nodeId: "test-design",
     nodeType: "review",
     runId: "run_1",
@@ -68,11 +68,21 @@ function createTestDesignSession(name, testPlan) {
     verdict: "PASS",
     summary: "test plan ready",
     timestamp: new Date().toISOString(),
+    testCommand: "printf ok",
     artifacts: [
       { type: "eval", path: "run_1/eval-skeptic-owner.md" },
       { type: "eval", path: "run_1/eval-tester.md" },
     ],
-  }));
+  };
+  const runScoped = {
+    ...canonical,
+    artifacts: canonical.artifacts.map((artifact) => ({
+      ...artifact,
+      path: artifact.path.replace(/^run_1\//, ""),
+    })),
+  };
+  writeFileSync(join(nodeDir, "handshake.json"), JSON.stringify(canonical));
+  writeFileSync(join(runDir, "handshake.json"), JSON.stringify(runScoped));
   writeFileSync(join(dir, "flow-state.json"), JSON.stringify({
     version: "1.0",
     flowTemplate: "build-verify",

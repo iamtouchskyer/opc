@@ -142,8 +142,8 @@ setup_tier_flow() {
   local dir="$1"
   rm -rf "$dir"
   $HARNESS init --flow full-stack --tier polished --entry test-execute --dir "$dir" 2>/dev/null >/dev/null
-  mkdir -p "$dir/nodes/test-execute"
-  touch "$dir/nodes/test-execute/screen.png"
+  mkdir -p "$dir/nodes/test-execute/run_1"
+  touch "$dir/nodes/test-execute/run_1/screen.png"
 }
 
 echo "--- 5.1: Execute node missing tierCoverage rejected ---"
@@ -153,9 +153,10 @@ cat > .h-t1/nodes/test-execute/handshake.json << 'HS'
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran tests",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}]
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}]
 }
 HS
+sync_run_handshakes .h-t1
 OUT=$($HARNESS validate .h-t1/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "missing tierCoverage rejected" "$OUT" "valid" "false"
 assert_contains "explains missing tierCoverage" "$OUT" "tierCoverage"
@@ -163,19 +164,20 @@ assert_contains "explains missing tierCoverage" "$OUT" "tierCoverage"
 echo ""
 echo "--- 5.2: tierCoverage with all items covered accepted ---"
 setup_tier_flow .h-t2
-echo "npm test: 42 passed, 0 failed" > .h-t2/nodes/test-execute/test-output.txt
+echo "npm test: 42 passed, 0 failed" > .h-t2/nodes/test-execute/run_1/test-output.txt
 cat > .h-t2/nodes/test-execute/handshake.json << 'HS'
 {
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran tests",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}, {"type": "cli-output", "path": "test-output.txt"}],
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}, {"type": "cli-output", "path": "run_1/test-output.txt"}],
   "tierCoverage": {
     "covered": ["typography","color-scheme","navigation","responsive","code-blocks","tables","loading-states","error-states","favicon-meta","focus-styles","testing-md"],
     "skipped": []
   }
 }
 HS
+sync_run_handshakes .h-t2
 OUT=$($HARNESS validate .h-t2/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "full coverage accepted" "$OUT" "valid" "true"
 
@@ -187,13 +189,14 @@ cat > .h-t3/nodes/test-execute/handshake.json << 'HS'
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}],
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}],
   "tierCoverage": {
     "covered": ["typography","color-scheme","navigation","responsive","code-blocks","tables","loading-states","error-states","favicon-meta"],
     "skipped": [{"key": "focus-styles", "reason": "nope"}]
   }
 }
 HS
+sync_run_handshakes .h-t3
 OUT=$($HARNESS validate .h-t3/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "short reason rejected" "$OUT" "valid" "false"
 assert_contains "explains reason length" "$OUT" "min 10 chars"
@@ -206,13 +209,14 @@ cat > .h-t4/nodes/test-execute/handshake.json << 'HS'
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}],
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}],
   "tierCoverage": {
     "covered": ["typography","banana","color-scheme","navigation","responsive","code-blocks","tables","loading-states","error-states","favicon-meta","focus-styles"],
     "skipped": []
   }
 }
 HS
+sync_run_handshakes .h-t4
 OUT=$($HARNESS validate .h-t4/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "unknown key rejected" "$OUT" "valid" "false"
 assert_contains "explains unknown" "$OUT" "unknown baseline key"
@@ -227,13 +231,14 @@ cat > .h-t5/nodes/test-execute/handshake.json << 'HS'
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}],
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}],
   "tierCoverage": {
     "covered": ["typography","color-scheme","navigation","responsive"],
     "skipped": []
   }
 }
 HS
+sync_run_handshakes .h-t5
 OUT=$($HARNESS validate .h-t5/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "incomplete coverage rejected" "$OUT" "valid" "false"
 assert_contains "lists missing item" "$OUT" "missing required baseline"
@@ -241,19 +246,20 @@ assert_contains "lists missing item" "$OUT" "missing required baseline"
 echo ""
 echo "--- 5.6: Valid skip with proper reason accepted ---"
 setup_tier_flow .h-t6
-echo "npm test: all passed" > .h-t6/nodes/test-execute/test-output.txt
+echo "npm test: all passed" > .h-t6/nodes/test-execute/run_1/test-output.txt
 cat > .h-t6/nodes/test-execute/handshake.json << 'HS'
 {
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}, {"type": "cli-output", "path": "test-output.txt"}],
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}, {"type": "cli-output", "path": "run_1/test-output.txt"}],
   "tierCoverage": {
     "covered": ["typography","color-scheme","navigation","responsive","tables","loading-states","error-states","favicon-meta","focus-styles","testing-md"],
     "skipped": [{"key": "code-blocks", "reason": "product has no code blocks — it is a marketing site with no technical content"}]
   }
 }
 HS
+sync_run_handshakes .h-t6
 OUT=$($HARNESS validate .h-t6/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "valid skip accepted" "$OUT" "valid" "true"
 
@@ -269,6 +275,17 @@ cat > .h-t7/nodes/build/handshake.json << 'HS'
   "artifacts": [], "verdict": null
 }
 HS
+sync_run_handshakes .h-t7
+python3 -c "
+import json
+p='.h-t7/flow-state.json'
+s=json.load(open(p))
+s['entryNode']='build'
+s['currentNode']='build'
+s['totalSteps']=1
+s['history']=[{'nodeId':'build','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'}]
+json.dump(s, open(p,'w'), indent=2)
+"
 OUT=$($HARNESS validate .h-t7/nodes/build/handshake.json 2>/dev/null)
 assert_field_eq "build node unaffected" "$OUT" "valid" "true"
 
@@ -276,16 +293,17 @@ echo ""
 echo "--- 5.8: Functional tier — no tierCoverage required ---"
 rm -rf .h-t8
 $HARNESS init --flow full-stack --tier functional --entry test-execute --dir .h-t8 2>/dev/null >/dev/null
-mkdir -p .h-t8/nodes/test-execute
-touch .h-t8/nodes/test-execute/screen.png
+mkdir -p .h-t8/nodes/test-execute/run_1
+touch .h-t8/nodes/test-execute/run_1/screen.png
 cat > .h-t8/nodes/test-execute/handshake.json << 'HS'
 {
   "nodeId": "test-execute", "nodeType": "execute", "runId": "run_1",
   "status": "completed", "verdict": "PASS", "summary": "ran",
   "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [{"type": "screenshot", "path": "screen.png"}]
+  "artifacts": [{"type": "screenshot", "path": "run_1/screen.png"}]
 }
 HS
+sync_run_handshakes .h-t8
 OUT=$($HARNESS validate .h-t8/nodes/test-execute/handshake.json 2>/dev/null)
 assert_field_eq "functional tier no coverage needed" "$OUT" "valid" "true"
 

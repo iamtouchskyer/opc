@@ -4,7 +4,11 @@
 #   source "$(dirname "$0")/test-helpers.sh"
 
 # ── Repo-relative harness path (portable, no hardcoded install path) ──
-HARNESS="node $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/opc-harness.mjs"
+OPC_HARNESS_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/opc-harness.mjs"
+opc_harness() {
+  node "$OPC_HARNESS_BIN" "$@"
+}
+HARNESS=opc_harness
 
 # ── Counters ──
 PASS=0
@@ -13,7 +17,17 @@ FAIL=0
 # ── Temp directory with cleanup ──
 setup_tmpdir() {
   TMPDIR=$(mktemp -d)
-  trap "rm -rf $TMPDIR" EXIT
+  if [ -n "${OPC_TEST_HOME_OVERRIDE:-}" ]; then
+    export HOME="$OPC_TEST_HOME_OVERRIDE"
+  else
+    export HOME="$TMPDIR/home"
+  fi
+  mkdir -p "$HOME"
+  if [ -n "${OPC_TEST_HOME_PROBE:-}" ]; then
+    printf '%s\n' "$HOME" > "$OPC_TEST_HOME_PROBE"
+  fi
+  trap 'rm -rf "$TMPDIR"' EXIT
+  trap 'exit 130' HUP INT TERM
   cd "$TMPDIR"
 }
 
@@ -93,4 +107,48 @@ Check typography hierarchy.
 Check navigation affordance.
 Check dark mode baseline.
 PLAN
+}
+
+sync_run_handshakes() {
+  local dir="$1"
+  python3 - "$dir" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+nodes = root / "nodes"
+if not nodes.exists():
+    raise SystemExit(0)
+
+for canonical in nodes.glob("*/handshake.json"):
+    try:
+        data = json.loads(canonical.read_text())
+    except Exception:
+        continue
+    run_id = data.get("runId")
+    if not isinstance(run_id, str) or not run_id.startswith("run_"):
+        continue
+    run_data = dict(data)
+    run_dir = canonical.parent / run_id
+    artifacts = []
+    for artifact in data.get("artifacts") or []:
+        if not isinstance(artifact, dict):
+            artifacts.append(artifact)
+            continue
+        copied = dict(artifact)
+        path = copied.get("path")
+        prefix = f"{run_id}/"
+        if isinstance(path, str) and path.startswith(prefix):
+            copied["path"] = path[len(prefix):]
+        elif isinstance(path, str) and not pathlib.Path(path).is_absolute():
+            node_relative = canonical.parent / path
+            run_relative = run_dir / path
+            if node_relative.exists() and not run_relative.exists():
+                copied["path"] = f"../{path}"
+        artifacts.append(copied)
+    run_data["artifacts"] = artifacts
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "handshake.json").write_text(json.dumps(run_data, indent=2) + "\n")
+PY
 }

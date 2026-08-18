@@ -49,6 +49,21 @@ JSON
 cat > "$HARNESS/acceptance-criteria.md" <<'MD'
 # Acceptance Criteria
 MD
+mkdir -p "$HARNESS/nodes/build/run_1"
+cat > "$HARNESS/flow-state.json" <<EOF
+{
+  "version": "1.0",
+  "flowTemplate": "flow",
+  "currentNode": "build",
+  "entryNode": "build",
+  "tier": "functional",
+  "flowStartedAt": "2026-01-01T00:00:00.000Z",
+  "totalSteps": 0,
+  "history": [],
+  "edgeCounts": {},
+  "_flow_file": "$FLOW_FILE"
+}
+EOF
 
 HARNESS_BIN="node $REPO_ROOT/bin/opc-harness.mjs"
 OUT=$(OPC_BREAKER_STATE=disabled $HARNESS_BIN node-preflight --node build --dir "$HARNESS" --flow-file "$FLOW_FILE" 2>/dev/null)

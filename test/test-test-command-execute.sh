@@ -11,13 +11,13 @@ json_field() {
 
 write_test_design_handshake() {
   local dir="$1" command="$2"
-  mkdir -p "$dir/nodes/test-design"
-  echo "# Eval A" > "$dir/nodes/test-design/eval-a.md"
-  echo "# Eval B" > "$dir/nodes/test-design/eval-b.md"
-  write_complete_test_plan "$dir/nodes/test-design/test-plan.md"
-  python3 - "$dir/nodes/test-design/handshake.json" "$command" <<'PY'
+  mkdir -p "$dir/nodes/test-design/run_1"
+  echo "# Eval A" > "$dir/nodes/test-design/run_1/eval-a.md"
+  echo "# Eval B" > "$dir/nodes/test-design/run_1/eval-b.md"
+  write_complete_test_plan "$dir/nodes/test-design/run_1/test-plan.md"
+  python3 - "$dir/nodes/test-design/handshake.json" "$dir/nodes/test-design/run_1/handshake.json" "$command" <<'PY'
 import json, sys
-path, command = sys.argv[1], sys.argv[2]
+path, run_path, command = sys.argv[1], sys.argv[2], sys.argv[3]
 data = {
   "nodeId": "test-design",
   "nodeType": "review",
@@ -27,23 +27,30 @@ data = {
   "summary": "tests designed",
   "timestamp": "2026-01-01T00:00:00.000Z",
   "artifacts": [
-    {"type": "eval", "path": "eval-a.md"},
-    {"type": "eval", "path": "eval-b.md"}
+    {"type": "eval", "path": "run_1/eval-a.md"},
+    {"type": "eval", "path": "run_1/eval-b.md"},
+    {"type": "test-plan", "path": "run_1/test-plan.md"}
   ],
   "testCommand": command,
   "prerequisites": ["local fixture command"]
 }
 open(path, "w").write(json.dumps(data))
+run_data = dict(data)
+for artifact in run_data["artifacts"]:
+  artifact["path"] = artifact["path"].replace("run_1/", "")
+open(run_path, "w").write(json.dumps(run_data))
 PY
 }
 
 write_test_execution_spec() {
   local dir="$1" command="$2" cwd="$3"
-  mkdir -p "$dir/nodes/test-design"
-  python3 - "$dir/nodes/test-design/test-execution.json" "$command" "$cwd" <<'PY'
+  mkdir -p "$dir/nodes/test-design/run_1"
+  python3 - "$dir/nodes/test-design/run_1/test-execution.json" "$command" "$cwd" <<'PY'
 import json, sys
 path, command, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
 data = {
+  "nodeId": "test-design",
+  "runId": "run_1",
   "testCommand": command,
   "cwd": cwd,
   "prerequisites": ["cwd must exist"]
@@ -81,12 +88,14 @@ fi
 
 if grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/handshake.json &&
+   grep -q '"sourceRunId": "run_1"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"resultHash":' .harness/nodes/test-execute/handshake.json &&
    grep -q '"ledger":' .harness/nodes/test-execute/handshake.json &&
    [ -f .harness/.opc-provenance.jsonl ] &&
    grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/handshake.json &&
    grep -q '"kind": "opc-test-command"' .harness/nodes/test-execute/run_1/test-command-result.json &&
    grep -q '"sourcePlanHash":' .harness/nodes/test-execute/run_1/test-command-result.json &&
+   grep -q '"sourceRunId": "run_1"' .harness/nodes/test-execute/run_1/test-command-result.json &&
    grep -q '"executionActor": "opc-harness:test-command"' .harness/nodes/test-execute/run_1/test-command-result.json; then
   echo "  ✅ testCommand evidence records OPC provenance"
   PASS=$((PASS + 1))
@@ -170,6 +179,13 @@ cat > .harness-forged/nodes/test-execute/handshake.json <<'JSON'
   "artifacts": [{"type": "test-result", "path": "run_1/test-execution.json"}]
 }
 JSON
+python3 - <<'PY'
+import json
+data = json.load(open('.harness-forged/nodes/test-execute/handshake.json'))
+run_data = dict(data)
+run_data["artifacts"] = [{"type": "test-result", "path": "test-execution.json"}]
+open('.harness-forged/nodes/test-execute/run_1/handshake.json', 'w').write(json.dumps(run_data))
+PY
 OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness-forged 2>/dev/null)
 ALLOWED=$(json_field "$OUT" "allowed")
 if [ "$ALLOWED" = "False" ] && grep -q "lacks matching OPC testCommand provenance" <<< "$OUT"; then
@@ -194,6 +210,8 @@ result = {
   "testCommand": command,
   "provenance": {
     "kind": "opc-test-command",
+    "sourceNode": "test-design",
+    "sourceRunId": "run_1",
     "commandHash": command_hash,
     "sourcePlanHash": plan_hash,
     "executionActor": "opc-harness:test-command"
@@ -216,17 +234,25 @@ exec_hs = {
   "status": "completed", "verdict": "PASS", "summary": "forged public hashes",
   "timestamp": "2026-01-01T00:00:00.000Z",
   "artifacts": [{"type": "test-result", "path": "run_1/test-command-result.json"}],
-  "testEvidenceProvenance": {
-    "kind": "opc-test-command",
-    "sourceNode": "test-design",
-    "commandHash": command_hash,
+	  "testEvidenceProvenance": {
+	    "kind": "opc-test-command",
+	    "sourceNode": "test-design",
+	    "sourceRunId": "run_1",
+	    "commandHash": command_hash,
     "sourcePlanHash": plan_hash,
     "resultHash": result_hash,
     "executionActor": "opc-harness:test-command"
-  }
-}
+	  },
+	  "testEvidencePolicy": {"allowVacuousChecks": []}
+	}
+design_run_hs = dict(design_hs)
+design_run_hs["artifacts"] = [{"type": "test-plan", "path": "test-plan.md"}]
+exec_run_hs = dict(exec_hs)
+exec_run_hs["artifacts"] = [{"type": "test-result", "path": "test-command-result.json"}]
 open('.harness-consistent-forge/nodes/test-design/handshake.json', 'w').write(json.dumps(design_hs))
+open('.harness-consistent-forge/nodes/test-design/run_1/handshake.json', 'w').write(json.dumps(design_run_hs))
 open('.harness-consistent-forge/nodes/test-execute/handshake.json', 'w').write(json.dumps(exec_hs))
+open('.harness-consistent-forge/nodes/test-execute/run_1/handshake.json', 'w').write(json.dumps(exec_run_hs))
 PY
 OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness-consistent-forge 2>/dev/null)
 ALLOWED=$(json_field "$OUT" "allowed")
