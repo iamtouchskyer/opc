@@ -59,6 +59,11 @@ The implement tick that builds the app SHOULD leave the dev server running in ba
 
 Read from upstream handshake summary and `$SESSION_DIR/progress.md`. Each acceptance criterion becomes a test scenario.
 
+If `flow-state.json` or `loop-state.json` contains `mission`, also read the pinned
+`mission-contract.json`. Execute its `endToEndScenario` and map evidence to the
+active `OUT-N`/`FLOOR-N` IDs. Do not infer global coverage from test names,
+descriptions, or keyword overlap.
+
 If Design Intelligence sidecars are present (`design-brief.md`,
 `design-tokens.json`, `design-mode.json`), read them for expected visual and
 interaction constraints. They are not execution evidence by themselves; you
@@ -93,6 +98,13 @@ For each acceptance criterion:
 
 ### Step 4 — Write Handshake
 
+For a custom execute node, write the following shape. Its `evidence` block is an
+audit declaration only: custom execute nodes (including `e2e-user` and
+`post-launch-sim`) currently remain `scope: local` and cannot mint standard-flow
+Mission criterion coverage. For built-in `test-execute` reached from
+`test-design`/`hotfix`, do not replace the handshake that the harness already
+minted; use `seal` only to merge discovered artifacts.
+
 ```json
 {
   "nodeId": "{NODE_ID}",
@@ -103,14 +115,130 @@ For each acceptance criterion:
   "summary": "<what was tested, results, N/M scenarios passed>",
   "timestamp": "<ISO8601>",
   "artifacts": [
-    { "type": "cli-output", "path": "$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/command-output-1.txt" },
-    { "type": "screenshot", "path": "$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/screenshot-1.png" }
+    { "type": "cli-output", "path": "run_{RUN}/command-output-1.txt" },
+    { "type": "screenshot", "path": "run_{RUN}/screenshot-1.png" }
   ],
+  "evidence": {
+    "sliceId": "{NODE_ID}",
+    "scenarioId": "SCENARIO-1",
+    "validatorType": "e2e",
+    "validator": "checkout-e2e",
+    "satisfies": ["OUT-1", "OUT-2", "FLOOR-1"]
+  },
   "findings": { "critical": 0, "warning": 1, "suggestion": 0 }
 }
 ```
 
 **Evidence requirement (enforced by code):** `nodeType=execute` handshakes must contain at least one artifact with type ∈ {test-result, screenshot, cli-output}. Missing evidence → `opc-harness validate` rejects the handshake.
+
+The `evidence` object on a custom execute node records what was attempted but is
+not authority for integrated Mission coverage. The only implemented
+standard-flow minting path is built-in, harness-run `test-execute`, where the
+harness copies the frozen plan tuple into its own handshake. A future custom
+path must provide a comparable trusted harness execution record; caller-authored
+fallback is never accepted. Mission-less handshakes and local-only execute nodes
+keep the legacy shape.
+
+For a Mission receipt, every declared evidence path must be relative to the
+sealed latest `run_N` for that execute node. The harness rejects absolute paths,
+older run directories, symlinks, non-regular files, and paths that escape the
+current run after canonicalization. An integrated receipt also requires a
+current-run JSON `test-result` with a machine-readable PASS; screenshots or
+reviewer prose alone cannot mint integrated success.
+
+When the flow template requires OPC-owned test execution, do not hand-author a
+passing result. `test-design`/`hotfix` supplies `test-execution.json` with a
+`testCommand`; the transition into `test-execute` runs that command through the
+harness. The resulting handshake and `test-command-result.json` are bound to
+the command hash, source test-plan hash, result hash, node/run identity, and the
+OPC signed provenance ledger. Gate validation rejects an unsigned, edited,
+stale-run, or mismatched result even when its public JSON says PASS.
+
+For Mission coverage, the source `test-plan.md` must already contain exactly one
+`scenario:`/`validator-type:`/`satisfies:` tuple. The harness hashes that plan
+before execution and later derives the receipt mapping from those frozen lines,
+not from executor-authored handshake fields. Any missing, duplicate, changed,
+or post-result relabeling is rejected. The command must also prove a non-vacuous
+PASS: either non-empty TAP with a positive executed-test count and zero
+failures, or—on a loop verification command—a valid `OPC_ORACLE` record whose
+non-empty checks all pass with `total > 0`. Exit code zero alone is not
+integrated evidence.
+
+The execute handshake is harness-owned. If artifact sealing runs afterward, it
+merges discovered artifacts into the existing handshake while preserving the
+test command, frozen-plan hash, result hash, node/run identity, and signed
+ledger record. For built-in `test-execute`, the harness also auto-populates the
+frozen scenario/validator/satisfies tuple. Do not overwrite or reconstruct those
+provenance or mapping fields.
+
+### Mission Evidence Receipts
+
+On a PASS transition from the built-in, harness-run `test-execute` node, the
+harness turns eligible handshake evidence into an `EV-N` receipt. Other
+standard execute nodes remain local even when their declaration names
+integration criteria. For autonomous loop verification units, provide the same
+bindings to `complete-tick`:
+
+```bash
+opc-harness complete-tick \
+  --unit F1.8 --artifacts "$EVIDENCE_PATH" \
+  --scenario SCENARIO-1 --validator-type e2e \
+  --satisfies OUT-1,OUT-2,FLOOR-1 \
+  --description "Integrated scenario passed" --dir "$SESSION_DIR"
+```
+
+Receipt fields have these meanings:
+
+| Field | Rule |
+|---|---|
+| `sliceId` | Execute node or loop unit that generated the evidence |
+| `scenarioId` | Must equal the Mission Contract's `endToEndScenario.id` for integrated scope |
+| `validatorType` | Must be one of the scenario's allowed `e2e`, `acceptance`, or `ux-sim` types |
+| `validator` | Concrete validator identity; defaults to the node/unit |
+| `satisfies` | Explicit active `OUT-N`/`FLOOR-N` IDs proven by this evidence |
+| `artifactHashes` | SHA-256 hashes of only the evidence-bearing artifacts |
+| `strategyEpoch` | Current mission strategy; written by the harness, not the executor |
+
+An eligible receipt has `result: PASS`. Its `scope` is `integrated` only when
+both scenario and validator bindings match the contract; otherwise it is
+`local`. A supplied scenario mismatch, a validator disallowed for that supplied
+scenario, or an unknown criterion ID is rejected rather than silently promoted.
+Only current-epoch integrated PASS receipts count as positive trajectory progress
+and final Mission criterion coverage.
+
+Receipt validity is live, not historical by assertion. Immediately before a
+trajectory decision and before finalization, the harness reopens every current
+integrated receipt's bound regular files, re-hashes them, and rechecks its
+harness-owned PASS proof. A missing, changed, symlinked, or no-longer-passing
+artifact marks the receipt stale in the audit trail; its `satisfies` claims no
+longer count. Re-copying or replaying the same execution is idempotent and must
+not create a second source of progress. The receipt keys that identity as
+`sourceExecution {sessionSha256,nodeId,runId,resultSha256}`; a conflicting
+relabel or replay of a stale receipt is rejected.
+
+For loop `e2e`/`accept`/`ux-sim` units, the current unit must first be claimed by
+`next-tick`. Integrated artifacts must be contained regular non-symlink files
+under the loop session, have an mtime at or after that claim, and include a
+machine-readable passing result. At least one machine-result hash must be new
+relative to every prior receipt; copying a previous PASS artifact cannot create
+a fresh receipt. Accepted canonical paths are added to the loop's declared
+artifact manifest so the next cold packet binds ignored/non-Git evidence too.
+The harness executes the plan unit's frozen `verify:` command itself and writes
+the receipt's PASS log; caller-authored JSON is supplemental only. The
+`--scenario`, `--validator-type`, and `--satisfies` flags must exactly equal that
+unit's pre-execution mappings.
+
+When a later Mission Gate opens, the trajectory packet includes the integrated
+PASS receipts added since the prior gate as compact evidence-delta entries. Each
+entry carries the receipt hash, scenario, validator type, `satisfies` IDs, and
+artifact hashes; the cold reviewer can therefore verify what materially changed
+without receiving the local repair transcript.
+
+At finalization, coverage is a set union over `satisfies` from current integrated
+receipts. Every active outcome and protected floor must be present before a
+`before_finalize` cold review can pass. The cold review's required `SUPPORTS`
+reality signals must cite these receipt IDs. A current local receipt, an old-epoch
+receipt, or uncited prose is not completion evidence.
 
 ## Verdict Rules
 

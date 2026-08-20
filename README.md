@@ -129,6 +129,9 @@ cp -r opc ~/.claude/skills/opc
 /opc goto build    # jump to node
 ```
 
+`skip` and `goto` are mission-less escape hatches. Mission-enabled runs reject
+both; use the audited Mission decision path (or standard-flow emergency `stop`).
+
 ### Autonomous Loop
 
 ```bash
@@ -161,6 +164,83 @@ For well-scoped tasks, the system runs **10+ hours continuously** without interv
 | Concurrent tick mutex | in_progress status blocks overlapping cron fires |
 | JSON crash recovery | try/catch on all JSON.parse; structured errors, not crashes |
 | External validators | Pre-commit hooks, test suites detected at init and leveraged |
+
+### Mission-aware Long Runs (optional)
+
+For long-range work where repeated local fixes can lose sight of the original
+bet, OPC can pin a versioned Mission Contract above the normal flow/loop gates:
+
+```bash
+opc-harness init-loop --plan .harness/plan.md \
+  --mission /absolute/path/mission.json --dir .harness
+```
+
+The contract freezes the original request, observable outcomes, protected
+floors, appetite, end-to-end scenario, reality signals, guardrails, and
+exit/salvage instructions. It is optional: runs without `--mission` behave as
+before. Mission-enabled sessions add these controls:
+
+- The whole active Mission runtime state—not only contract hashes—is sealed as
+  one signed, generation-linked prepare/commit record. This binds policy,
+  trajectory, findings, receipts, checkpoints, cursor/history, limits, status,
+  and ownership. Recovery completes or discards an interrupted staged write;
+  direct editing, stripping Mission mode, or intact-ledger rollback fails closed.
+
+- Review findings are classified as `ARTIFACT`, `PLAN`, `GOAL_SPEC`, or
+  `ENVIRONMENT`. A repeated artifact failure or any non-artifact failure pauses
+  local iteration before another patch begins; an expired frozen assumption
+  also pauses with `ASSUMPTION_EXPIRED`.
+- In both standard flows and loops, repair, expiry, and persisted wall-time
+  appetites pause the run mechanically.
+  Token appetite does so only when an embedding runtime supplies measured token
+  use; normal OPC runs report it as unknown.
+- A fresh cold reviewer judges the global bet from a bound trajectory packet,
+  including stable finding details, current validator receipts, the Git and
+  declared/ignored artifact manifest, trigger-specific allowed actions, and
+  receipt-hashed integrated evidence added since the previous gate. Exactly one
+  harness-issued cold review run can be sealed per trigger. The packet itself is
+  hash-bound to a signed opening record, so an edited public packet fails closed.
+  Retryable packets expose all six actions so
+  the cold reviewer can replace the local classification; non-retryable and
+  final packets remain narrowly bounded.
+- Malformed Mission reviews (verdict/count/structure/reasoning/fix/metadata)
+  cannot route work. One fresh run must disposition every retained claim as
+  `CONFIRM`, evidence-backed `REJECT`, or `SUPERSEDE`; the next invalid attempt
+  opens a non-retryable quality gate. An evidenced `GOAL_SPEC` + `UNLINKED`
+  protected-floor risk routes only to human re-bet or stop.
+- The audited `mission-decision` can continue once per canonical finding/repair
+  edge, shrink the plan once per canonical finding as an agent, restore, recon,
+  request a human re-bet, or stop and salvage. The one retry is scope-bound and
+  consumed by the first matching transition/unit claim; RECON is limited to
+  once per bet. A finding that survives its one agent reshape requires
+  `HUMAN_REBET` or `STOP_SALVAGE`.
+- Mission mode forbids `skip` and `goto`; standard-flow emergency `stop` remains
+  a non-success exit. RESTORE rejects a no-op tree, while RECON records a
+  reproducible baseline at intent and requires an actual measured delta at
+  resume; RECON remains limited to once per bet.
+- Existing graph limits remain hard: reaching one opens a non-retryable Mission
+  Gate before mutation, and retry grants cannot bypass it. Force/reinit commands
+  cannot reset a session that already has signed Mission authority.
+- Explicit human steering can snapshot a `HUMAN_INTERVENTION` gate immediately,
+  without waiting for another local failure.
+- Execute evidence is bound to the contract scenario, validator type, named
+  criteria (`satisfies`), and `strategyEpoch`. Integrated evidence must come
+  from the current sealed run/claimed loop unit as contained regular files with
+  a machine PASS; loop receipts must add a machine-result hash not used before,
+  while standard-flow integrated coverage is currently minted only by built-in,
+  harness-run `test-execute` with signed `testCommand` provenance. Custom
+  execute nodes, `e2e-user`, and `post-launch-sim` remain local evidence. The
+  scenario/validator/criteria mapping is frozen in
+  the plan before execution, a zero-execution PASS is rejected, and bound files
+  are revalidated before trajectory decisions and finalization. Missing or
+  mutated evidence becomes stale and stops counting. Final success requires current integrated PASS
+  coverage plus a fresh cold Mission pass. `STOP_SALVAGE` is absorbing; standard
+  emergency `stop` remains available while a gate is pending, and neither is
+  success.
+
+See [CONTRACTS.md](CONTRACTS.md#mission-contract-and-additive-state),
+[INTEGRATION.md](INTEGRATION.md#mission-aware-orchestration-optional), and the
+[Gate Protocol](pipeline/gate-protocol.md#mission-gate-side-band).
 
 ### Flow Templates
 
@@ -396,6 +476,9 @@ cp -r opc ~/.claude/skills/opc
 /opc goto build    # 跳转到指定节点
 ```
 
+`skip` 与 `goto` 仅用于非 Mission 流程。Mission 模式会拒绝两者；请使用经过审计的
+Mission decision（或 standard flow 的 emergency `stop`）。
+
 ### 自主循环
 
 ```bash
@@ -428,6 +511,67 @@ cp -r opc ~/.claude/skills/opc
 | 并发 tick 互斥 | in_progress 状态阻止重叠的 cron 触发 |
 | JSON 崩溃恢复 | 所有 JSON.parse 加 try/catch；结构化报错而非崩溃 |
 | 外部校验器 | init 时检测并利用 pre-commit hook、测试套件 |
+
+### 面向长期任务的 Mission 模式（可选）
+
+当连续局部修补可能偏离原始目标时，可在普通 flow/loop gate 之上固定一份
+版本化 Mission Contract：
+
+```bash
+opc-harness init-loop --plan .harness/plan.md \
+  --mission /absolute/path/mission.json --dir .harness
+```
+
+Contract 固定原始请求、可观察结果、不可退化底线、投入上限、端到端场景、
+现实信号、护栏和退出/沉淀方案。它是可选能力；不传 `--mission` 时，原有
+流程完全不变。启用后：
+
+- 整个 Mission runtime state（不只是 contract hash）会通过带 generation 链接的
+  签名 prepare/commit 记录整体 seal，覆盖 policy、trajectory、finding、receipt、
+  checkpoint、cursor/history、limit、status 与 ownership。中断后的 staged write
+  会被确定性完成或丢弃；直接编辑、移除 Mission mode 或在 ledger 完整时回滚都会 fail closed。
+
+- Review finding 会分为 `ARTIFACT`、`PLAN`、`GOAL_SPEC`、`ENVIRONMENT`。
+  同一 artifact 再次失败、出现任何非 artifact 问题，或固定假设超过
+  `freshUntil` 时，会在下一轮补丁前暂停。
+- 无论 standard flow 还是 loop，修复次数、到期时间和基于持久化起始时间计算的
+  wall-time appetite 都会由代码强制暂停流程。Token appetite 仅在外部 runtime 提供实际 token 计量时生效；
+  普通 OPC 运行会将其报告为 unknown。
+- 一个全新的冷上下文 reviewer 只根据绑定后的 trajectory packet 判断全局 bet；
+  packet 包含稳定 finding、当前 validator、Git 与声明/忽略产物摘要、该 trigger
+  允许执行的动作，以及自上次 gate 后新增的、按 receipt 哈希绑定的集成证据。
+  每个 trigger 只能使用 harness 分配的 run ID seal 一份 cold review；packet 本身也
+  会绑定到签名后的 opening record，公开 packet 被修改时会 fail closed。可重试 packet 会暴露全部六种动作，让
+  cold reviewer 能推翻局部分类；不可重试和 final packet 仍保持严格边界。
+- Mission review 的 verdict/数量/结构/reasoning/fix/metadata 任一无效都不能路由；
+  下一次全新 run 必须把每个 claim 处理为 CONFIRM、有证据的 REJECT 或 SUPERSEDE，
+  再次无效就进入不可重试的质量 gate。只有带明确 evidence 的
+  GOAL_SPEC + UNLINKED 新底线风险可以路由，而且只能人工 re-bet 或停止。
+- 经过审计的 `mission-decision` 对同一 canonical finding/repair edge 最多继续一次；
+  该 retry 会绑定 scope，并在第一次匹配的 transition/单位 claim 时消耗；每个 bet
+  最多 RECON 一次。agent 对同一 canonical finding 最多缩小计划一次。该 finding
+  再次出现后只能人工 re-bet，或停止并保留可复用成果。
+- Mission 模式始终禁止 `skip` 和 `goto`；standard flow 仍可用 emergency `stop`
+  作为非成功退出。RESTORE 拒绝未改变的 tree；RECON 在 intent 固定可复现 baseline，
+  resume 必须证明真实测量 delta，并且每个 bet 只允许一次。
+- 原有 graph limit 仍是硬边界：命中时会在 mutation 前打开不可重试的 Mission Gate，
+  retry grant 不能绕过；已有签名 Mission authority 的 session 也不能被 force/reinit 重置。
+- 人工 steering 可以立即建立 `HUMAN_INTERVENTION` gate，无需再等一次局部失败。
+- 执行证据会绑定到场景、validator 类型、明确的 `satisfies` criteria 和
+  `strategyEpoch`。集成证据必须来自当前 sealed run/已 claim 的 loop 单位、位于
+  session 内的普通非 symlink 文件，并包含机器 PASS；loop receipt 还必须加入至少一个
+  未在旧 receipt 中使用过的机器结果 hash。standard flow 目前只有 built-in、由
+  harness 执行的 `test-execute` 能生成集成 coverage，并校验签名后的 `testCommand`
+  provenance；custom execute、`e2e-user`、`post-launch-sim` 仍只算 local evidence。
+  scenario/validator/satisfies 映射必须在
+  执行前固定在 plan 中，零测试 PASS 会被拒绝；trajectory decision 和 finalize 前
+  还会重新校验绑定文件，丢失或修改后的证据会变 stale 并停止计数。最终成功必须同时具备
+  当前 epoch 的集成 PASS 覆盖和新的 cold Mission pass。`STOP_SALVAGE` 是吸收态，
+  pending 时 standard flow 仍可紧急 `stop`，两者都不能算成功。
+
+详见 [CONTRACTS.md](CONTRACTS.md#mission-contract-and-additive-state)、
+[INTEGRATION.md](INTEGRATION.md#mission-aware-orchestration-optional) 与
+[Gate Protocol](pipeline/gate-protocol.md#mission-gate-side-band)。
 
 ### 流模板
 

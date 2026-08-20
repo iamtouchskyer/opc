@@ -13,6 +13,7 @@ import { readCumulativeFindingsAppend } from "./cumulative-findings.mjs";
 import { compareRunIds } from "./run-id.mjs";
 import { resolveCurrentRun } from "./runaway-guard.mjs";
 import { assertFlowMutable } from "./flow-state-guard.mjs";
+import { missionPromptContext } from "./mission-contract.mjs";
 
 // ─── Shared helpers ──────────────────────────────────────────────
 //
@@ -192,6 +193,15 @@ export function collectPromptExtensionProvenanceErrors(runDir, expected) {
   return errors;
 }
 
+function readMissionAwareState(dir) {
+  for (const name of ["loop-state.json", "flow-state.json"]) {
+    const statePath = join(resolve(dir), name);
+    if (!existsSync(statePath)) continue;
+    try { return JSON.parse(readFileSync(statePath, "utf8")); } catch { return null; }
+  }
+  return null;
+}
+
 /**
  * Read flow-state.json + resolved flow template, return the current node's
  * required capabilities along with whether a flow template actually resolved.
@@ -318,7 +328,12 @@ export async function cmdPromptContext(args) {
   }
 
   const extensionAppend = await firePromptAppend(registry, context);
+  const missionState = readMissionAwareState(dir);
+  const missionAppend = missionState
+    ? missionPromptContext({ sessionDir: resolve(dir), state: missionState })
+    : "";
   const append = [
+    missionAppend,
     readCumulativeFindingsAppend(resolve(dir)),
     extensionAppend,
   ].filter(Boolean).join("\n\n");

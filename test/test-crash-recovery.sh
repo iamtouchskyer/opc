@@ -104,7 +104,7 @@ echo ""
 echo "=== TEST GROUP 4: VALID_LOOP_STATUSES export ==="
 
 VSIZE=$(node --input-type=module -e "import { VALID_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(VALID_LOOP_STATUSES.size)" 2>&1)
-check "VALID_LOOP_STATUSES has 5 entries" '[ "$VSIZE" = "5" ]'
+check "VALID_LOOP_STATUSES has 6 entries" '[ "$VSIZE" = "6" ]'
 
 TSIZE=$(node --input-type=module -e "import { TERMINAL_LOOP_STATUSES } from '$SCRIPT_DIR/bin/lib/util.mjs'; console.log(TERMINAL_LOOP_STATUSES.size)" 2>&1)
 check "TERMINAL_LOOP_STATUSES has 3 entries" '[ "$TSIZE" = "3" ]'

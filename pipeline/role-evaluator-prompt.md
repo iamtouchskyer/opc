@@ -150,6 +150,49 @@ When evaluating multi-platform products, apply these additional rules:
 - Cross-platform parity findings must show evidence from BOTH platforms (not just "probably broken on Android too")
 - Format: `[SEVERITY] [platform] file:line — Issue description`
 
+### Mission Finding Metadata (conditional)
+
+Apply this section only when the appended prompt context contains a clearly marked `## Mission Context` heading. If that heading is absent, keep the legacy finding format and omit these fields.
+
+For every red or yellow finding in Mission Context, add these exact lines beneath its `reasoning:` and `fix:` lines:
+
+```text
+class: ARTIFACT
+criterion: OUT-1
+finding_ref: NEW
+fingerprint: checkout-total-rounding
+invariant: Displayed checkout total equals the persisted sum of line items, tax, and shipping.
+evidence: test-results/checkout-e2e.json records the displayed and persisted totals from the same run.
+```
+
+- `class` must be exactly `ARTIFACT`, `PLAN`, `GOAL_SPEC`, or `ENVIRONMENT`.
+- `criterion` must be an active `OUT-N` or `FLOOR-N` identifier listed in Mission Context, or `UNLINKED` when no active criterion owns the claim.
+- `finding_ref` must be an existing `FIND-N` from the supplied finding registry or `NEW`.
+- Every finding must include a lowercase hyphenated semantic `fingerprint` and one canonical `invariant` statement. An existing `FIND-N` repeats both values exactly from the supplied registry; omission or drift makes the review non-routing.
+- Blue suggestions may omit all mission metadata. Ordinary `UNLINKED` claims stay visible but cannot route artifact repair. The sole exception is an evidenced `GOAL_SPEC` + `UNLINKED` claim that reveals a new protected-floor risk: it must include a non-empty `evidence:` line and routes only to human re-bet or stop.
+
+Mission review quality is fail-closed. Emit exactly one `VERDICT:` line. If any findings are present, it must be `VERDICT: FINDINGS [N]` and `N` must equal every parsed red, yellow, and blue finding. With no findings, use `VERDICT: LGTM`, `VERDICT: BLOCKED [specific reason]`, or `VERDICT: FINDINGS [0]`. Every finding must be structured with an em dash or exact `file:line` reference and must include non-empty `reasoning:` and `fix:` lines. A missing/invalid verdict, count mismatch, unstructured finding, missing reasoning/fix, or invalid Mission metadata makes the review non-routing and requires fresh evaluation.
+
+If Mission Context supplies pending invalid-review claim hashes, create exactly one `review-claim-dispositions.json` beside the fresh evaluation artifacts in that same run directory. Use schema v1 and exactly one of these entry shapes:
+
+```json
+{
+  "schemaVersion": 1,
+  "dispositions": [
+    { "claimHash": "<64-hex-sha256>", "disposition": "CONFIRM", "findingRef": "FIND-7" },
+    { "claimHash": "<64-hex-sha256>", "disposition": "SUPERSEDE", "fingerprint": "checkout-total-rounding" },
+    { "claimHash": "<64-hex-sha256>", "disposition": "REJECT", "evidence": "tests/checkout.test.ts:88 proves the invariant does not reproduce" }
+  ]
+}
+```
+
+- Include exactly one disposition for every supplied hash; an unknown, duplicate, or missing hash is invalid.
+- `CONFIRM` and `SUPERSEDE` must reference a valid routing finding from this fresh evaluation by either `findingRef` or `fingerprint`. `CONFIRM` may not change the retained claim's class, criterion, or invariant.
+- `REJECT` must include concrete non-empty `evidence` as a string, array, or object; an unsupported dismissal is invalid.
+- Do not place this file in a prior run, parent directory, or symlink. Standard flows bind claims to the immediately prior consecutive run and strategy epoch. Loops additionally require the fresh eval files and disposition file to be contained regular files in one run directory and newer than the prior invalid review.
+
+When Mission Context marks the role as a cold Mission reviewer or contains `contextMode: cold`, do not produce Domain Findings or line-level fix lists. Instead, assess the integrated outcome and emit exactly one `classification` (`ARTIFACT`, `PLAN`, `GOAL_SPEC`, `ENVIRONMENT`, or `NONE`), one `recommendation` (`CONTINUE_CURRENT`, `RESHAPE_SMALLER`, `RESTORE`, `RECON`, `HUMAN_REBET`, or `STOP_SALVAGE`), and a concise evidence-bound `rationale`. Copy the harness-issued `reviewRequest.runId` exactly into the reviewer's `runId`; never invent or reuse another run ID. Choose only from the packet's `allowedDecisions`, then obey the route matrix for your fresh classification. A retryable packet intentionally exposes all six actions so you can reject the local classification; non-retryable and final packets are narrower. Cold Mission review changes trajectory; it does not prescribe local patches.
+
 ## Output Format
 
 ### Acceptance Criteria Results (build tasks only)

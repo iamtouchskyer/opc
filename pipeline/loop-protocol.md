@@ -175,6 +175,69 @@ Before writing plan.md, establish a global definition of done. Follow the "Defin
 
 Per-unit verify/eval lines in plan.md are derived from these global criteria.
 
+### Step 1.6 — Optional Mission Contract for Long-range Loops
+
+Use `--mission <path>` when a loop needs a durable global bet, not only local artifact correctness. This is additive: loops initialized without it keep the legacy state machine and evidence rules.
+
+Before `init-loop`:
+
+1. Write a schema-v1 Mission Contract with 3-10 observable `OUT-N` outcomes, at least one `FLOOR-N`, one required or optional `SIG-N` reality signal, an end-to-end scenario, guardrails, an accountable owner, affected parties, appetite, and exit/salvage instructions.
+2. Copy the outcome IDs and statements exactly into the `## Outcomes` bullets of `$SESSION_DIR/acceptance-criteria.md` and pass criteria lint.
+3. Ensure the plan contains verification units capable of running the declared
+   scenario. Before execution, every Mission `e2e`/`accept`/`ux-sim` unit that
+   will claim integrated coverage must freeze one tuple directly under the unit:
+
+   ```markdown
+   - F1.8 [e2e]: Run the complete user journey
+     - verify: npm test -- --test-reporter=tap
+     - scenario: SCENARIO-1
+     - validator-type: e2e
+     - satisfies: OUT-1, OUT-2, FLOOR-1
+   ```
+
+   Each of the three mapping lines appears exactly once for that unit. Together,
+   verification units must cover every active outcome and protected floor. The
+   `verify:` command must emit a non-vacuous `OPC_ORACLE {"checks":[...]}` line
+   (every check passes and has `total > 0`) or non-empty TAP with a positive
+   test count and zero failures. Exit zero alone is insufficient.
+4. Initialize with:
+
+```bash
+opc-harness init-loop --plan "$SESSION_DIR/plan.md" \
+  --mission /absolute/path/mission.json --dir "$SESSION_DIR"
+```
+
+The harness validates first, then copies the exact mission bytes, pins the mission, criteria, and plan hashes, and seals the complete loop state with a generation-linked signed prepare/commit write. Recovery resolves an interrupted staged write before it trusts the Mission flag; direct edits or intact-ledger rollback fail closed. Unsealed bootstrap is one-way: `init-loop` and `reinit-loop` refuse to reuse/reset a session that already has Mission authority. Do not edit the pinned plan to escape a stall: mission-enabled `reinit-loop` is rejected. Resolve a pending gate with `RESHAPE_SMALLER --plan <revised-plan>` instead. For that revised plan, the harness hashes each full unit definition with its predecessor lineage, preserves the longest identical completed prefix, stales later tick history, and returns the first changed/inserted unit. An identical already-completed plan routes to the final Mission checkpoint instead of auto-terminating.
+
+If a tick starts a nested OPC flow, initialize that child with `--parent-session "$SESSION_DIR"`. The loop stays the canonical authority; the child fails closed if the parent mission is invalid or pending. The parent remains the only retry/receipt authority: child mutations carry their origin, acquire the parent lock before live-parent validation, hold it through the child commit and parent update, and merge an eligible receipt idempotently. Retrying the same child transition cannot duplicate a receipt or consume a second retry grant.
+
+The first valid `ARTIFACT` failure may proceed to one local fix. `PLAN`,
+`GOAL_SPEC`, and `ENVIRONMENT` findings instead schedule an immediate Mission
+Gate before the next unit claim. The same canonical artifact failing again,
+claiming fix units up to `appetite.maxRepairCycles`, measured Mission wall time
+reaching `appetite.maxWallTimeHours`, a contract expiry, a frozen assumption
+reaching `freshUntil`, a declared checkpoint, or a second consecutive invalid review-metadata
+attempt also opens the gate. A fix claim spends appetite even if the work later
+fails or is abandoned. `maxTokens` participates only when an embedding runtime
+supplies a finite measured value; normal OPC loops report it as unknown. A valid
+review resets only the review-quality strike; it does not erase the finding
+registry or repair history.
+
+All review-to-fix traversals share the semantic repair edge `review→fix`.
+Changing a fingerprint does not reset that edge: a second negative traversal
+without new current-epoch integrated PASS evidence opens the gate. The edge
+counter itself does not double-charge appetite; `maxRepairCycles` is charged
+when the fix unit is actually claimed, including a fix later failed or abandoned.
+
+`CONTINUE_CURRENT` can authorize only one retry for a canonical finding/repair
+edge. The grant is bound to the trigger, strategy epoch, canonical finding/edge,
+`next-tick`, selected next unit, and exact packet origin
+`{command,sessionSha256,fromNode,nextUnit,edgeKey}`. It is consumed when that unit is first
+claimed—even if the work later fails or is abandoned—and cannot float to a
+different unit. An agent can reshape a canonical finding only once; if it recurs
+after that reshape, the loop remains gated until `HUMAN_REBET` or
+`STOP_SALVAGE`.
+
 ### Step 2 — Initialize Loop State
 
 Write `$SESSION_DIR/loop-state.json`:
@@ -243,6 +306,13 @@ Each tick follows this sequence:
    - accept units           → pre-release flow
    - **custom handler**     → if `next-tick` returns `handler`, dispatch to that skill/command instead of OPC's built-in dispatch (see Unit Handlers below)
 7. Execute the flow
+   - For a Mission child flow, pass `--parent-session "$SESSION_DIR"` at child init.
+   - Mission-enabled red/yellow review findings require `class`, `criterion`, and
+     `finding_ref`; a `NEW` finding also requires a semantic `fingerprint` and
+     canonical `invariant`. An ordinary `UNLINKED` finding is retained but does
+     not route. Only `class: GOAL_SPEC` + `criterion: UNLINKED` with a non-empty
+     `evidence:` line may open the protected-floor-risk gate, whose allowed
+     decisions are only `HUMAN_REBET` and `STOP_SALVAGE`.
 8. Verify output:
    - Tests pass (pytest, vitest, etc.)
    - Build succeeds (vite build, cargo build, etc.)
@@ -253,7 +323,13 @@ Each tick follows this sequence:
     designed for post-task capture (knowledge retro, learning capture, etc.).
     If any are found, invoke them now — before writing loop-state.
 11. FINISH THE TICK — run `opc-harness complete-tick --unit <next_unit>
-    --artifacts <paths> --description "<summary>"`. This validates evidence and
+    --artifacts <paths> --description "<summary>"`. For a Mission `e2e`, `accept`,
+    or `ux-sim` unit, also pass `--scenario <contract-scenario-id>`,
+    `--validator-type <e2e|acceptance|ux-sim>`, and
+    `--satisfies <OUT-N,FLOOR-N,...>`. Those three values must exactly match the
+    unit's frozen `scenario:`, `validator-type:`, and `satisfies:` tuple. The
+    harness runs the frozen `verify:` command and owns the PASS log; supplied
+    artifacts are supplemental. This validates evidence and
     advances the cursor to the next unit. Do NOT call next-tick again here — the
     NEXT cron fire's step 1 advances the cursor and re-checks ownership before
     any further work runs.
@@ -270,6 +346,48 @@ trailing `complete-tick` finishes and advances; the next cron fire's leading
 `next-tick` picks up the new unit. One claim in, one finish out, no gap where an
 un-gated tick can run.
 
+**Mission Gate result:** If `next-tick` returns `ready:false` and
+`rebet_required:true`, stop the cron work path immediately. The reviewed tick is
+already committed, but the next cursor is intentionally not claimed. Follow the
+Mission Gate procedure in `gate-protocol.md`; do not run stall handling, backlog
+drain, `pass`, `skip`, `goto`, or another tick while the gate is pending.
+If `complete-tick` returns `rebet_required:true` after a second consecutive invalid review,
+stop for the same procedure; that review unit was not completed or advanced.
+When the last Mission unit completes normally, `complete-tick` instead returns
+`terminate:false` and `final_review_pending:true`. Call `next-tick` to open the
+mandatory final gate; `next_unit:null` is not permission to stop the loop.
+
+**Invalid review reevaluation:** Mission review quality requires a valid
+`VERDICT`, an exact `FINDINGS [N]` count when findings exist, structured
+findings, and non-empty `reasoning:`, `fix:`, and required Mission metadata.
+After the first invalid attempt, use a fresh run directory and write
+`review-claim-dispositions.json` beside all fresh eval artifacts:
+
+```json
+{
+  "schemaVersion": 1,
+  "dispositions": [
+    { "claimHash": "<64-hex-sha256>", "disposition": "CONFIRM", "findingRef": "FIND-3" },
+    { "claimHash": "<64-hex-sha256>", "disposition": "SUPERSEDE", "fingerprint": "new-canonical-invariant" },
+    { "claimHash": "<64-hex-sha256>", "disposition": "REJECT", "evidence": "fresh-eval.md:42 disproves the claim" }
+  ]
+}
+```
+
+Provide exactly one disposition for every unit/epoch-bound prior claim.
+`CONFIRM`/`SUPERSEDE` must reference a valid routing finding from the fresh
+evaluation; `REJECT` needs non-empty evidence. Unknown, duplicate, or missing
+hashes are invalid. The fresh evals and disposition file must share one run
+directory, be contained regular non-symlink files, and be newer than the prior
+invalid review. The harness adds accepted claim/disposition artifacts to
+`declaredArtifacts`. A second invalid attempt opens non-retryable
+`REVIEW_QUALITY_STALL` instead of routing any claim to a fix unit.
+
+When a reviewer reuses an existing `FIND-N`, it must repeat that registry
+entry's canonical `fingerprint` and `invariant` exactly. Merely naming the ID, or
+drifting either identity field, makes the finding non-routing and triggers the
+same bounded review-quality path.
+
 ### Step 5 — Verification Gate (per tick)
 
 **Every tick MUST produce verification evidence.** This is not optional.
@@ -282,6 +400,44 @@ un-gated tick can run.
 | fix | Tests still pass + specific findings addressed |
 | e2e-verify | Playwright/curl output showing user path works |
 | accept | All acceptance criteria checked off with evidence |
+
+In Mission mode, a completed `e2e`/`accept`/`ux-sim` unit produces a receipt:
+
+```json
+{
+  "id": "EV-4",
+  "sliceId": "F1.8",
+  "scenarioId": "SCENARIO-1",
+  "scope": "integrated",
+  "validatorType": "e2e",
+  "validator": "F1.8",
+  "result": "PASS",
+  "satisfies": ["OUT-1", "OUT-2", "FLOOR-1"],
+  "artifactHashes": ["sha256:..."],
+  "strategyEpoch": 1
+}
+```
+
+`scope: integrated` requires a matching scenario and an allowed validator type.
+Local receipts remain useful audit evidence but do not count as global progress
+or final Mission coverage. A reshape/recon/re-bet increments `strategyEpoch`, so
+prior-epoch receipts no longer satisfy the current bet.
+
+Integrated evidence is a current-claim fact, not a reusable file reference. The
+unit must be `in_progress` from `next-tick`; each evidence artifact must be a
+contained regular non-symlink file under the loop session with mtime at or after
+the claim. At least one JSON or harness-owned text result must mechanically show
+a passing, non-vacuous command, and at least one such machine-result hash must
+not appear in any prior receipt. The harness executes the frozen `verify:` line;
+a loop command can prove non-vacuity with `OPC_ORACLE` or non-empty,
+all-passing TAP output. Accepted canonical paths are included in
+`declaredArtifacts`, so ignored
+or non-Git deliverables are still bound into the trajectory packet.
+
+Before every trajectory evaluation and finalization, the harness re-hashes each
+current integrated receipt's path-bound artifacts and revalidates its
+harness-owned PASS proof. Missing or mutated evidence is retained as a stale
+audit record but immediately stops counting toward progress or completion.
 
 If evidence cannot be produced (tool unavailable, test infra broken):
 - Write `status: "blocked"` in loop-state.json
@@ -307,6 +463,28 @@ After each tick, write:
 ```
 
 ### Step 7 — Auto-Termination (with Backlog Drain)
+
+For a Mission loop, `next-tick` opens a non-retryable `before_finalize` Mission
+Gate before backlog drain or `pipeline_complete`. Final termination is allowed
+only after current-epoch integrated PASS receipts cover every active outcome and
+protected floor, and a fresh cold Mission review:
+
+- has matching trigger plus mission/criteria/plan/evidence/epoch bindings;
+- uses the exact harness-issued cold `reviewRequest.runId`, which is not reused
+  by build or ordinary evaluation work;
+- sets classification `NONE`, recommendation `CONTINUE_CURRENT`, and
+  `localFixesIncluded: false`;
+- cites current integrated PASS evidence for every required reality signal;
+- contains no `REFUTES` signal.
+
+The accepted decision writes a bound checkpoint receipt. A pending Mission Gate,
+an `INSUFFICIENT` required signal, a reached `maxRepairCycles` or passed expiry,
+missing criterion coverage, or `STOP_SALVAGE` can never be reported as pipeline success.
+After `STOP_SALVAGE`, the terminal Mission state is absorbing: `next-tick`,
+`complete-tick`, resume, or another Mission decision cannot restart that bet.
+A new run requires explicit reinitialization. `RECON` is also bounded to one
+intent/resume cycle per bet; only a human-approved `HUMAN_REBET` starts a new
+bet and resets that allowance.
 
 When `opc-harness next-tick` returns `terminate: true`:
 

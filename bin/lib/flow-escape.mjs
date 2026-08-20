@@ -18,6 +18,7 @@ import { evaluateFlowBudget, nodeHasBudgetedExit } from "./flow-budget.mjs";
 import { resolveCurrentRun } from "./runaway-guard.mjs";
 import { stoppedFlowError } from "./flow-state-guard.mjs";
 import { resolveExactRunHandshake } from "./flow-evidence.mjs";
+import { guardMissionMutation, sealMissionRuntimeState } from "./mission-contract.mjs";
 
 // ── Shared state loader ──
 
@@ -56,6 +57,24 @@ export function cmdSkip(args) {
     const { state, statePath: sp } = loaded;
     const stopped = stoppedFlowError(state, "skip");
     if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "skip" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        error: missionGuard.reason,
+        allowed: false,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
+    if (missionGuard.enabled) {
+      console.log(JSON.stringify({
+        error: "Mission mode forbids skip because it bypasses sealed evidence and retry accounting; use transition or an audited mission-decision",
+        allowed: false,
+        rebet_required: false,
+      }));
+      return;
+    }
     const resolved = resolveFlowTemplate(args, state);
     if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
     const { template } = resolved;
@@ -148,6 +167,16 @@ export function cmdPass(args) {
   const { state } = loaded;
   const stopped = stoppedFlowError(state, "pass");
   if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+  const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "pass" });
+  if (!missionGuard.allowed) {
+    console.log(JSON.stringify({
+      error: missionGuard.reason,
+      allowed: false,
+      rebet_required: missionGuard.rebet_required,
+      missionIntegrityErrors: missionGuard.errors,
+    }));
+    return;
+  }
   const resolved = resolveFlowTemplate(args, state);
   if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
   const { template, name: templateName } = resolved;
@@ -265,8 +294,21 @@ export function cmdStop(args) {
   try {
     const loaded = loadState(dir);
     if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
-    const { state, statePath: sp } = loaded;
-
+    let { state } = loaded;
+    const sp = loaded.statePath;
+    // Emergency/manual stop remains available while a Mission Gate is pending.
+    // Integrity and terminal-state checks still apply; only the pending-gate
+    // mutation block is bypassed for this non-success terminal action.
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "stop", allowPending: true });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        stopped: false,
+        error: missionGuard.reason,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
     if (state.status === "completed") {
       console.log(JSON.stringify({ stopped: false, reason: "flow already completed" }));
       return;
@@ -286,6 +328,19 @@ export function cmdStop(args) {
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath: sp,
+        reason: "stop",
+      });
+      if (!sealed.ok) {
+        console.log(JSON.stringify({ stopped: false, error: sealed.error }));
+        return;
+      }
+      state = sealed.state;
+    }
     atomicWriteSync(sp, JSON.stringify(state, null, 2) + "\n");
     console.log(JSON.stringify({ stopped: true, currentNode: state.currentNode, totalSteps: state.totalSteps }));
   } finally {
@@ -327,6 +382,24 @@ export function cmdGoto(args) {
     const { state, statePath: sp } = loaded;
     const stopped = stoppedFlowError(state, "goto");
     if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "goto" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        error: missionGuard.reason,
+        allowed: false,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
+    if (missionGuard.enabled) {
+      console.log(JSON.stringify({
+        error: "Mission mode forbids goto because it bypasses trajectory and retry accounting; use the declared flow or an audited mission-decision",
+        allowed: false,
+        rebet_required: false,
+      }));
+      return;
+    }
     const resolved = resolveFlowTemplate(args, state);
     if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
     const { template, name: flowName } = resolved;

@@ -1,8 +1,8 @@
 // Shared helpers for loop commands: plan parsing, git detection, hashing
 // Depends on: util.mjs
 
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync, lstatSync, realpathSync } from "fs";
+import { join, resolve } from "path";
 import { createHash } from "crypto";
 import { execFileSync } from "child_process";
 
@@ -12,15 +12,34 @@ export function parsePlan(planText) {
   const units = [];
   const lines = planText.split("\n");
   const unitPattern = /^\s*[-*]\s+(\w+\.\d+\w*)\s*[:\s]\s*(\S+)\s*[—–-]?\s*(.*)/;
-  const subLinePattern = /^\s+[-*]\s+(verify|eval)\s*:\s*(.*)/i;
+  const subLinePattern = /^\s+[-*]\s+(verify|eval|satisfies|scenario|validator-type)\s*:\s*(.*)/i;
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(unitPattern);
     if (m) {
-      const unit = { id: m[1], type: m[2].toLowerCase(), description: m[3].trim(), verify: null, eval: null };
+      const unit = {
+        id: m[1],
+        type: m[2].toLowerCase(),
+        description: m[3].trim(),
+        verify: null,
+        eval: null,
+        satisfies: null,
+        satisfiesError: null,
+        scenario: null,
+        validatorType: null,
+      };
       for (let j = i + 1; j < lines.length; j++) {
         const sub = lines[j].match(subLinePattern);
         if (sub) {
-          unit[sub[1].toLowerCase()] = sub[2].trim();
+          const field = sub[1].toLowerCase();
+          if (field === "satisfies") {
+            const parsed = parseSatisfiesList(sub[2]);
+            unit.satisfies = parsed.criteria;
+            unit.satisfiesError = parsed.error || null;
+          } else if (field === "validator-type") {
+            unit.validatorType = sub[2].trim();
+          } else {
+            unit[field] = sub[2].trim();
+          }
         } else if (lines[j].match(unitPattern) || lines[j].trim() === "") {
           break;
         }
@@ -29,6 +48,178 @@ export function parsePlan(planText) {
     }
   }
   return units;
+}
+
+/** Parse a frozen Mission criterion mapping without accepting prose labels. */
+export function parseSatisfiesList(raw) {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return { criteria: [], error: "satisfies mapping is empty" };
+  }
+  const normalized = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
+  const criteria = normalized.split(",").map(value =>
+    value.trim().replace(/^['\"]|['\"]$/g, "")
+  ).filter(Boolean);
+  if (criteria.length === 0) return { criteria: [], error: "satisfies mapping is empty" };
+  const invalid = criteria.filter(id => !/^(?:OUT|FLOOR)-\d+$/.test(id));
+  if (invalid.length > 0) {
+    return { criteria: [], error: `satisfies mapping contains invalid criterion IDs: ${invalid.join(", ")}` };
+  }
+  if (new Set(criteria).size !== criteria.length) {
+    return { criteria: [], error: "satisfies mapping contains duplicate criterion IDs" };
+  }
+  return { criteria, error: null };
+}
+
+/** Parse the one top-level mapping in a standard-flow test plan. */
+export function parsePlanSatisfiesMapping(planText) {
+  const matches = [];
+  for (const line of String(planText || "").split("\n")) {
+    const match = line.match(/^\s{0,3}(?:[-*]\s+)?satisfies\s*:\s*(.*)$/i);
+    if (match) matches.push(match[1]);
+  }
+  if (matches.length === 0) return { criteria: [], error: "test plan has no frozen satisfies: mapping" };
+  if (matches.length > 1) return { criteria: [], error: "test plan contains multiple satisfies: mappings" };
+  return parseSatisfiesList(matches[0]);
+}
+
+/** Parse the frozen scenario, validator, and criteria tuple in a standard test plan. */
+export function parsePlanEvidenceMapping(planText) {
+  const values = { scenarioId: [], validatorType: [] };
+  for (const line of String(planText || "").split("\n")) {
+    const scenario = line.match(/^\s{0,3}(?:[-*]\s+)?scenario\s*:\s*(\S.*)$/i);
+    const validator = line.match(/^\s{0,3}(?:[-*]\s+)?validator-type\s*:\s*(\S.*)$/i);
+    if (scenario) values.scenarioId.push(scenario[1].trim());
+    if (validator) values.validatorType.push(validator[1].trim());
+  }
+  if (values.scenarioId.length !== 1) {
+    return { error: `test plan must contain exactly one scenario: mapping (found ${values.scenarioId.length})` };
+  }
+  if (values.validatorType.length !== 1) {
+    return { error: `test plan must contain exactly one validator-type: mapping (found ${values.validatorType.length})` };
+  }
+  const satisfies = parsePlanSatisfiesMapping(planText);
+  if (satisfies.error) return { error: satisfies.error };
+  return {
+    error: null,
+    scenarioId: values.scenarioId[0],
+    validatorType: values.validatorType[0],
+    criteria: satisfies.criteria,
+  };
+}
+
+function proofContentPasses(binding, content) {
+  if (binding?.proof === "opc-loop-verify") {
+    return /^# Harness-owned test execution\s*$/m.test(content)
+      && /^# Command: \S.*$/m.test(content)
+      && /^# Exit code: 0\s*$/m.test(content)
+      && /^# Non-vacuous oracle: true\s*$/m.test(content)
+      && /^# Timestamp: \S.*$/m.test(content);
+  }
+  if (binding?.proof === "opc-test-command") {
+    try {
+      const data = JSON.parse(content);
+      const checks = Array.isArray(data?.checks) ? data.checks : [];
+      const structuredOracle = checks.length > 0 && checks.every(check =>
+        check?.pass === true && Number.isFinite(Number(check.total)) && Number(check.total) > 0
+      );
+      let markerOracle = false;
+      for (const line of String(data?.stdout || "").split(/\r?\n/)) {
+        const marker = line.match(/^OPC_ORACLE\s+(.+)$/);
+        if (!marker) continue;
+        try {
+          const oracle = JSON.parse(marker[1]);
+          const oracleChecks = Array.isArray(oracle?.checks) ? oracle.checks : [];
+          markerOracle = oracleChecks.length > 0 && oracleChecks.every(check =>
+            check?.pass === true && Number.isFinite(Number(check.total)) && Number(check.total) > 0
+          );
+        } catch { /* malformed markers remain non-proving */ }
+        if (markerOracle) break;
+      }
+      const tapTests = String(data?.stdout || "").match(/^# tests\s+(\d+)\s*$/m);
+      const tapFailures = String(data?.stdout || "").match(/^# fail\s+(\d+)\s*$/m);
+      const tapOracle = Number(tapTests?.[1] || 0) > 0 && Number(tapFailures?.[1] || 0) === 0;
+      return data?.provenance?.kind === "opc-test-command"
+        && data.provenance.executionActor === "opc-harness:test-command"
+        && Number(data.exitCode) === 0
+        && Number(data.test_fail_count || 0) === 0
+        && (structuredOracle || markerOracle || tapOracle);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Re-hash the concrete files behind current integrated PASS receipts.
+ * A stale receipt remains in the audit trail but no longer counts as progress.
+ */
+export function revalidateMissionEvidenceReceipts(state, now = new Date().toISOString()) {
+  const next = structuredClone(state);
+  const staleReceiptIds = [];
+  const epoch = next?.mission?.strategyEpoch;
+  if (!Array.isArray(next?.evidenceReceipts)) {
+    return { state: next, changed: false, staleReceiptIds };
+  }
+  for (const receipt of next.evidenceReceipts) {
+    if (receipt?.scope !== "integrated" || receipt?.result !== "PASS" ||
+        receipt?.stale === true || receipt?.strategyEpoch !== epoch) continue;
+    const bindings = Array.isArray(receipt.artifactBindings) ? receipt.artifactBindings : [];
+    let staleReason = null;
+    if (bindings.length === 0) {
+      staleReason = "receipt has no path-bound evidence artifacts";
+    } else {
+      const boundHashes = [];
+      let passProofs = 0;
+      for (const binding of bindings) {
+        if (!binding || typeof binding.path !== "string" || typeof binding.sha256 !== "string") {
+          staleReason = "receipt contains an invalid artifact binding";
+          break;
+        }
+        const artifactPath = resolve(binding.path);
+        try {
+          const stat = lstatSync(artifactPath);
+          if (!stat.isFile() || stat.isSymbolicLink() || realpathSync(artifactPath) !== artifactPath) {
+            staleReason = `evidence artifact is no longer a canonical regular file: ${binding.path}`;
+            break;
+          }
+          const content = readFileSync(artifactPath);
+          const hash = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+          if (hash !== binding.sha256) {
+            staleReason = `evidence artifact content changed: ${binding.path}`;
+            break;
+          }
+          boundHashes.push(hash);
+          if (binding.proof) {
+            passProofs++;
+            if (!proofContentPasses(binding, content.toString("utf8"))) {
+              staleReason = `evidence PASS content is no longer valid: ${binding.path}`;
+              break;
+            }
+          }
+        } catch {
+          staleReason = `evidence artifact is missing or unreadable: ${binding.path}`;
+          break;
+        }
+      }
+      if (!staleReason) {
+        const declared = Array.isArray(receipt.artifactHashes) ? receipt.artifactHashes : [];
+        const actual = [...boundHashes].sort();
+        if (JSON.stringify(actual) !== JSON.stringify([...declared].sort())) {
+          staleReason = "receipt artifact hash set does not match its path bindings";
+        } else if (passProofs === 0) {
+          staleReason = "receipt has no harness-owned PASS proof";
+        }
+      }
+    }
+    if (staleReason) {
+      receipt.stale = true;
+      receipt.staleReason = staleReason;
+      receipt.staleAt = now;
+      staleReceiptIds.push(receipt.id);
+    }
+  }
+  return { state: next, changed: staleReceiptIds.length > 0, staleReceiptIds };
 }
 
 export function validatePlanStructure(units) {
