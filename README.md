@@ -54,6 +54,7 @@ From a **single one-line brief**, OPC's `build-verify` flow ships a complete, pr
 **OPC isn't only for UIs.** The same zero-trust pipeline also handles:
 
 - **Whole products, unattended** — `/opc loop build features F1–F4 from PLAN.md` decomposes the work, schedules a durable cron, and runs **10+ hours** without you.
+- **Long-range work with a global bet** — `/opc mission build the smallest useful billing flow` creates the Mission inputs from that one line, then keeps the global outcome above local review loops.
 - **Code review** — `/opc review the auth changes` dispatches 2–5 independent role agents (security, backend, a11y, devil's advocate) in parallel and computes a mechanical verdict.
 - **Full-stack features** — `/opc implement user auth with email/password` runs build → independent review → test-design → test-execute → gate.
 - **Pre-release audits** — `/opc verify before release` runs acceptance + audit + e2e gates before you ship.
@@ -113,6 +114,15 @@ cp -r opc ~/.claude/skills/opc
 # Build — implements + independent review + gate
 /opc implement user authentication with email/password
 
+# Mission mode — one line; OPC generates and pins the Mission inputs
+/opc mission implement user authentication with email/password
+
+# Mission-aware autonomous loop
+/opc mission loop build features F1-F4 from PLAN.md
+
+# Re-bet an active Mission after a human spots global drift
+/opc rebet the crash-safety scope has exceeded the original appetite
+
 # Autonomous loop — decomposes, schedules cron, runs unattended
 /opc loop build features F1-F4 from PLAN.md
 
@@ -169,6 +179,12 @@ For well-scoped tasks, the system runs **10+ hours continuously** without interv
 
 For long-range work where repeated local fixes can lose sight of the original
 bet, OPC can pin a versioned Mission Contract above the normal flow/loop gates:
+
+The normal entry is just `/opc mission <task>` (or `/opc mission loop <task>`).
+OPC infers and shows a compact Mission card, generates the validated contract,
+criteria, and loop plan when needed, then injects that context automatically for
+the rest of the run. The commands below are the underlying integration API, not
+a prompt the user must type.
 
 ```bash
 opc-harness init-loop --plan .harness/plan.md \
@@ -460,6 +476,15 @@ cp -r opc ~/.claude/skills/opc
 # 构建 —— 实现 + 独立 review + gate
 /opc implement user authentication with email/password
 
+# Mission 模式 —— 只写一句任务；OPC 自动生成并固定 Mission 输入
+/opc mission implement user authentication with email/password
+
+# 带 Mission 的长期自主循环
+/opc mission loop build features F1-F4 from PLAN.md
+
+# 人类发现全局偏航后，对当前 Mission 重新下注
+/opc rebet 跨会话崩溃安全已经超过第一版 appetite
+
 # 自主循环 —— 拆解、调度 cron、无人值守运行
 /opc loop build features F1-F4 from PLAN.md
 
@@ -516,6 +541,11 @@ Mission decision（或 standard flow 的 emergency `stop`）。
 
 当连续局部修补可能偏离原始目标时，可在普通 flow/loop gate 之上固定一份
 版本化 Mission Contract：
+
+通常只需输入 `/opc mission <任务>`（长循环使用 `/opc mission loop <任务>`）。
+OPC 会从这一句话和仓库上下文生成、展示并校验精简 Mission Card；需要 loop 时
+同时生成 plan。初始化后，Mission Context 会自动注入后续节点，无需反复粘贴
+长提示词。下面的命令是编排器使用的底层 API，不是用户必须手写的启动提示。
 
 ```bash
 opc-harness init-loop --plan .harness/plan.md \
