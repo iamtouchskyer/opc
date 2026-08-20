@@ -686,8 +686,23 @@ test("standard transition opens a durable Mission Gate on the second canonical a
       "",
     ].join("\n"));
   };
+  const writeAuthoritativeHandshake = (nodeId, handshake) => {
+    const nodeDir = join(dir, "nodes", nodeId);
+    const runDir = join(nodeDir, handshake.runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(nodeDir, "handshake.json"), JSON.stringify(handshake));
+    writeFileSync(join(runDir, "handshake.json"), JSON.stringify({
+      ...handshake,
+      artifacts: handshake.artifacts.map(artifact => ({
+        ...artifact,
+        path: artifact.path.startsWith(`${handshake.runId}/`)
+          ? artifact.path.slice(handshake.runId.length + 1)
+          : artifact.path,
+      })),
+    }));
+  };
   const writeReviewHandshake = (runId) => {
-    writeFileSync(join(dir, "nodes", "code-review", "handshake.json"), JSON.stringify({
+    const handshake = {
       nodeId: "code-review",
       nodeType: "review",
       runId,
@@ -699,7 +714,8 @@ test("standard transition opens a durable Mission Gate on the second canonical a
         { type: "eval", path: `${runId}/eval-alpha.md` },
         { type: "eval", path: `${runId}/eval-beta.md` },
       ],
-    }));
+    };
+    writeAuthoritativeHandshake("code-review", handshake);
   };
 
   try {
@@ -758,8 +774,7 @@ test("standard transition opens a durable Mission Gate on the second canonical a
     ]);
     assert.equal(first.allowed, true, JSON.stringify(first));
 
-    mkdirSync(join(dir, "nodes", "build"), { recursive: true });
-    writeFileSync(join(dir, "nodes", "build", "handshake.json"), JSON.stringify({
+    writeAuthoritativeHandshake("build", {
       nodeId: "build",
       nodeType: "build",
       runId: "run_1",
@@ -768,16 +783,16 @@ test("standard transition opens a durable Mission Gate on the second canonical a
       summary: "local repair completed",
       timestamp: new Date().toISOString(),
       artifacts: [],
-    }));
+    });
     const returned = runHarness("transition", [
       "--from", "build", "--to", "code-review", "--verdict", "PASS",
       "--flow", "build-verify", "--dir", dir, "--no-extensions",
     ]);
     assert.equal(returned.allowed, true, JSON.stringify(returned));
 
-    writeReview("run_1", "alpha", "The repair still compares values after applying different precision rules.");
-    writeReview("run_1", "beta", "The second review observes the same persisted-versus-displayed invariant failure.");
-    writeReviewHandshake("run_1");
+    writeReview(returned.runId, "alpha", "The repair still compares values after applying different precision rules.");
+    writeReview(returned.runId, "beta", "The second review observes the same persisted-versus-displayed invariant failure.");
+    writeReviewHandshake(returned.runId);
     const second = runHarness("transition", [
       "--from", "code-review", "--to", "build", "--verdict", "FAIL",
       "--flow", "build-verify", "--dir", dir, "--no-extensions",

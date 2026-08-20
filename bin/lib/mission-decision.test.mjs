@@ -463,7 +463,7 @@ test("STOP_SALVAGE works for a human and records terminal state", () => {
     const beforeCommit = readFileSync(fx.statePath);
     const commit = invokeRecordCommit(["--sha", "HEAD", "--dir", fx.session]);
     assert.equal(commit.recorded, false);
-    assert.match(commit.error, /absorbing/);
+    assert.equal(commit.error, "flow is stopped - record-commit cannot mutate state");
     assert.deepEqual(readFileSync(fx.statePath), beforeCommit);
     const stoppedAgain = invokeStop(["--dir", fx.session]);
     assert.equal(stoppedAgain.stopped, false);
