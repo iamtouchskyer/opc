@@ -5,9 +5,68 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
 import { parseEvaluation } from "./eval-parser.mjs";
-import { getFlag, resolveDir } from "./util.mjs";
+import { getFlag, hasFlag, resolveDir } from "./util.mjs";
 import { checkBaselineCoverage, generateTierTestCases, VALID_TIERS, TEST_LAYERS, TEST_LAYER_KEYWORDS, TEST_LAYER_LABELS } from "./tier-baselines.mjs";
 import { anchorIssues as collectAnchorIssues } from "./test-plan-gate.mjs";
+import { compareRunIds, parseRunOrdinal } from "./run-id.mjs";
+
+/**
+ * Resolve the set of changed files that a review's changeScope layer must cover.
+ *
+ * The change scope is defined by the commits the OPC flow actually PRODUCED —
+ * not by a blind `git diff HEAD~1`, which mis-attributes unrelated parallel
+ * commits and cannot see session-local artifacts the flow never committed.
+ *
+ * @param {string} baseDir  git working tree to inspect (the --base directory)
+ * @param {string[]|null} changeCommits
+ *    - null  → flag absent (standalone/legacy caller): fall back to HEAD~1..HEAD
+ *    - []    → flow explicitly produced NO commits: nothing to cover → skip clean
+ *    - [sha] → diff exactly these commits (union of their name-only file lists)
+ * @returns {{ files: string[], skip: boolean, reason: string|null }}
+ *    reason is non-null only when the skip is worth surfacing (non-git base).
+ */
+export function changeScopeDiffFiles(baseDir, changeCommits) {
+  const git = (cmd) =>
+    execSync(cmd, { cwd: baseDir, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"] });
+
+  let baseIsGit = false;
+  try { git("git rev-parse --is-inside-work-tree"); baseIsGit = true; } catch { baseIsGit = false; }
+  if (!baseIsGit) {
+    return { files: [], skip: true, reason: `--base (${baseDir}) is not a git repository — cannot verify the review covers the change scope` };
+  }
+
+  // Flow-scoped mode: caller passed the commits this flow actually produced.
+  if (Array.isArray(changeCommits)) {
+    if (changeCommits.length === 0) {
+      // The flow committed nothing (reviewed a session-local artifact, or HEAD
+      // moved only via unrelated parallel commits). There is no flow-authored
+      // change scope to cover → skip cleanly, no warning, no false ITERATE.
+      return { files: [], skip: true, reason: null };
+    }
+    const files = new Set();
+    for (const sha of changeCommits) {
+      try {
+        const out = git(`git show --name-only --format= ${sha}`);
+        for (const ff of out.trim().split("\n")) if (ff.length > 0) files.add(ff);
+      } catch { /* unknown/invalid sha — skip this commit, keep the rest */ }
+    }
+    return { files: [...files], skip: false, reason: null };
+  }
+
+  // Legacy/standalone mode (flag absent): diff the last commit.
+  try {
+    let diffOut = "";
+    try { diffOut = git("git diff --name-only HEAD~1"); }
+    catch {
+      // Initial commit shows all files; git available but no HEAD~1.
+      try { diffOut = git("git show --name-only --format='' HEAD"); }
+      catch { /* git available but no commits yet */ }
+    }
+    return { files: diffOut.trim().split("\n").filter(ff => ff.length > 0), skip: false, reason: null };
+  } catch {
+    return { files: [], skip: true, reason: null };
+  }
+}
 
 export function cmdVerify(args) {
   const file = args[0];
@@ -154,20 +213,27 @@ export function cmdSynthesize(args) {
       process.exit(1);
     }
 
-    const runFlag = args.indexOf("--run");
+    const runProvided = hasFlag(args, "run");
 
-    if (runFlag !== -1 && args[runFlag + 1]) {
-      targetRunDir = join(dir, "nodes", nodeId, `run_${args[runFlag + 1]}`);
+    if (runProvided) {
+      const runValue = getFlag(args, "run", "");
+      if (!/^[1-9]\d*$/.test(runValue)) {
+        console.log(JSON.stringify({
+          roles: [],
+          totals: { critical: 0, warning: 0, suggestion: 0 },
+          verdict: "BLOCKED",
+          reason: "--run must be a positive numeric ordinal",
+        }));
+        return;
+      }
+      targetRunDir = join(dir, "nodes", nodeId, `run_${runValue}`);
     } else {
       const nodeDir = join(dir, "nodes", nodeId);
       try {
-        const runs = readdirSync(nodeDir)
-          .filter((d) => d.startsWith("run_"))
-          .sort((a, b) => {
-            const na = parseInt(a.replace("run_", ""), 10);
-            const nb = parseInt(b.replace("run_", ""), 10);
-            return nb - na;
-          });
+        const runs = readdirSync(nodeDir, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && /^run_\d+$/.test(entry.name))
+          .map((entry) => entry.name)
+          .sort((a, b) => compareRunIds(b, a));
         if (runs.length === 0) {
           console.log(JSON.stringify({ roles: [], totals: { critical: 0, warning: 0, suggestion: 0 }, verdict: "BLOCKED", reason: `no runs found for node '${nodeId}' in ${nodeDir}` }));
           return;
@@ -231,6 +297,14 @@ export function cmdSynthesize(args) {
 
   // --base <dir> — project root for validating file:line references in findings
   const baseDir = getFlag(args, "base", null);
+
+  // --change-commits <sha,sha,...> — the commits this flow actually produced,
+  // defining the changeScope layer's true scope. Absent → null (legacy HEAD~1
+  // fallback); present-but-empty → [] (flow committed nothing → skip cleanly).
+  const changeCommitsRaw = getFlag(args, "change-commits", null);
+  const changeCommits = changeCommitsRaw === null
+    ? null
+    : changeCommitsRaw.split(",").map(s => s.trim()).filter(s => s.length > 0);
 
   // D1: --base deprecation warning — next version makes this a hard error
   if (!baseDir) {
@@ -400,45 +474,16 @@ export function cmdSynthesize(args) {
     let changeScopeUncovered = false;
     if (requiresCodeGrounding && baseDir && parsed.findings_count > 0) {
       if (_diffFilesCache === null) {
-        // F2: a non-git --base cannot be change-scope verified. Detect it up front
-        // (capturing git's stderr so its "fatal: not a git repository" never leaks to
-        // the terminal) and surface an explicit warning instead of silently skipping —
-        // "verification didn't run" must be visible, not masked as a clean result.
-        let baseIsGit = false;
-        try {
-          execSync("git rev-parse --is-inside-work-tree", {
-            cwd: baseDir, encoding: "utf8", timeout: 15000,
-            stdio: ["ignore", "pipe", "ignore"],
-          });
-          baseIsGit = true;
-        } catch { baseIsGit = false; }
-
-        if (!baseIsGit) {
-          verificationWarnings.push(`changeScopeCoverage skipped: --base (${baseDir}) is not a git repository — cannot verify the review covers the change scope`);
-          _diffFilesCache = [];
-        } else {
-          try {
-            // Try HEAD~1 first (normal case), then HEAD (initial commit shows all files)
-            let diffOut = "";
-            try {
-              diffOut = execSync("git diff --name-only HEAD~1", {
-                cwd: baseDir, encoding: "utf8", timeout: 15000,
-                stdio: ["ignore", "pipe", "ignore"],
-              });
-            } catch {
-              try {
-                diffOut = execSync("git show --name-only --format='' HEAD", {
-                  cwd: baseDir, encoding: "utf8", timeout: 15000,
-                  stdio: ["ignore", "pipe", "ignore"],
-                });
-              } catch { /* git available but no commits yet */ }
-            }
-            _diffFilesCache = diffOut.trim().split("\n").filter(ff => ff.length > 0);
-          } catch {
-            console.error("⚠️  git diff timed out or failed — changeScopeCoverage skipped");
-            _diffFilesCache = [];
-          }
+        // Scope the "changed files" to what the flow actually produced (via
+        // --change-commits), not a blind HEAD~1 diff. This avoids the structural
+        // false-positive where an unrelated parallel commit or a session-local
+        // artifact review gets compared against noise. A non-git base is surfaced
+        // as an explicit warning; an empty flow-produced set skips cleanly.
+        const scope = changeScopeDiffFiles(baseDir, changeCommits);
+        if (scope.reason) {
+          verificationWarnings.push(`changeScopeCoverage skipped: ${scope.reason}`);
         }
+        _diffFilesCache = scope.files;
       }
       if (_diffFilesCache.length > 0) {
         const evalLower = text.toLowerCase();
@@ -806,13 +851,13 @@ export function cmdSynthesize(args) {
     // ── Fix #4: Convergence detection — max-min across last 3 runs ──
     if (rubricScore && nodeId) {
       const runFlag = args.indexOf("--run");
-      const currentRunN = runFlag !== -1 && args[runFlag + 1] ? parseInt(args[runFlag + 1], 10) : null;
-      const iteration = currentRunN || parseInt((targetRunDir.match(/run_(\d+)$/) || [])[1] || "1", 10);
-      if (iteration >= 3) {
+      const explicitRun = runFlag !== -1 ? parseRunOrdinal(args[runFlag + 1]) : null;
+      const iteration = explicitRun ?? parseRunOrdinal(targetRunDir.match(/run_(\d+)$/)?.[1]) ?? 1n;
+      if (iteration >= 3n) {
         const recentScores = [rubricScore.final];
-        for (let i = iteration - 1; i >= Math.max(1, iteration - 2); i--) {
+        for (const previous of [iteration - 1n, iteration - 2n]) {
           try {
-            const prevPath = join(dir, "nodes", nodeId, `run_${i}`, "ext-design-intelligence", "rubric-verdict.json");
+            const prevPath = join(dir, "nodes", nodeId, `run_${previous}`, "ext-design-intelligence", "rubric-verdict.json");
             if (existsSync(prevPath)) {
               const prev = JSON.parse(readFileSync(prevPath, "utf8"));
               if (prev.final != null) recentScores.push(prev.final);

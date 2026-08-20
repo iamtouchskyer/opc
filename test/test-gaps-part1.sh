@@ -66,8 +66,6 @@ echo "=== GAP-1: opc-harness help + unknown command ==="
 # ═══════════════════════════════════════════════════════════════
 
 echo "--- 1.1: No-args shows help ---"
-OUT=$(node "$(cd "$(dirname "$0")/.." 2>/dev/null || echo "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")" 2>&1 || true)
-# Use the HARNESS variable properly
 OUT=$($HARNESS 2>&1 || true)
 assert_contains "help output" "$OUT" "opc-harness"
 assert_contains "flow commands" "$OUT" "Flow commands"
@@ -203,10 +201,11 @@ echo ""
 echo "--- 4.5: finalize with non-completed terminal handshake ---"
 # Use fresh dir — 4.4's successful finalize sets state.status=completed.
 rm -rf .h-fin5 && $HARNESS init --flow review --entry gate --dir .h-fin5 >/dev/null 2>/dev/null
-mkdir -p .h-fin5/nodes/gate
+mkdir -p .h-fin5/nodes/gate/run_1
 cat > .h-fin5/nodes/gate/handshake.json << 'HS'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"failed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
+cp .h-fin5/nodes/gate/handshake.json .h-fin5/nodes/gate/run_1/handshake.json
 OUT=$($HARNESS finalize --dir .h-fin5 2>/dev/null)
 assert_field_eq "finalize bad status" "$OUT" "finalized" "false"
 assert_contains "status not completed" "$OUT" "status is"
@@ -215,11 +214,12 @@ echo ""
 echo "--- 4.6: finalize with corrupt terminal handshake ---"
 # Fresh dir — pre-existing handshake must be corrupted before finalize runs.
 rm -rf .h-fin6 && $HARNESS init --flow review --entry gate --dir .h-fin6 >/dev/null 2>/dev/null
-mkdir -p .h-fin6/nodes/gate
+mkdir -p .h-fin6/nodes/gate/run_1
 echo "not json" > .h-fin6/nodes/gate/handshake.json
+echo "not json" > .h-fin6/nodes/gate/run_1/handshake.json
 OUT=$($HARNESS finalize --dir .h-fin6 2>/dev/null)
 assert_field_eq "finalize corrupt hs" "$OUT" "finalized" "false"
-assert_contains "corrupt hs msg" "$OUT" "cannot parse"
+assert_contains "corrupt hs msg" "$OUT" "parse error"
 
 
 print_results

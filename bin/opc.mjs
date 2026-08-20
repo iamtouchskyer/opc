@@ -5,6 +5,7 @@ import { join, dirname } from "path";
 import { homedir } from "os";
 import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
+import { atomicWriteSync } from "./lib/util.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILL_NAME = "opc";
@@ -35,17 +36,63 @@ const STALE_FILES = [
 const pkg = JSON.parse(readFileSync(join(srcDir, "package.json"), "utf8"));
 const command = process.argv[2];
 
-function validateHookPrereqs(hooksDir) {
-  for (const file of ["opc-pre-compact.sh", "opc-post-compact.sh"]) {
+function validateHookScripts(hooksDir) {
+  for (const file of ["opc-pre-compact.sh", "opc-post-compact.sh", "opc-pre-tool-budget.mjs"]) {
     if (!existsSync(join(hooksDir, file))) {
       return `missing hook script: ${join(hooksDir, file)}. Run 'opc install' first.`;
     }
   }
-  const jq = spawnSync("jq", ["--version"], { encoding: "utf8" });
-  if (jq.error || jq.status !== 0) {
-    return "opc install-hooks requires 'jq'. Install jq, then rerun 'opc install-hooks'.";
-  }
   return null;
+}
+
+function hasJq() {
+  const jq = spawnSync("jq", ["--version"], { encoding: "utf8" });
+  return !jq.error && jq.status === 0;
+}
+
+function removeInstalledHooks(settingsPath) {
+  if (!existsSync(settingsPath)) return 0;
+
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch (error) {
+    throw new Error(`cannot parse ${settingsPath}: ${error.message}`);
+  }
+  if (!settings.hooks || typeof settings.hooks !== "object") return 0;
+
+  const hooksDir = join(skillsDir, "bin", "hooks");
+  const owned = {
+    PreCompact: `bash "${join(hooksDir, "opc-pre-compact.sh")}"`,
+    PostCompact: `bash "${join(hooksDir, "opc-post-compact.sh")}"`,
+    PreToolUse: `node "${join(hooksDir, "opc-pre-tool-budget.mjs")}"`,
+  };
+  let removed = 0;
+
+  for (const [event, ownedCommand] of Object.entries(owned)) {
+    const entries = settings.hooks[event];
+    if (!Array.isArray(entries)) continue;
+    const keptEntries = [];
+    for (const entry of entries) {
+      if (!Array.isArray(entry?.hooks)) {
+        keptEntries.push(entry);
+        continue;
+      }
+      const hooks = entry.hooks.filter(hook => {
+        const isOwned = hook?.type === "command" && hook.command === ownedCommand;
+        if (isOwned) removed++;
+        return !isOwned;
+      });
+      if (hooks.length > 0) keptEntries.push({ ...entry, hooks });
+    }
+    if (keptEntries.length > 0) settings.hooks[event] = keptEntries;
+    else delete settings.hooks[event];
+  }
+
+  if (removed > 0) {
+    atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  }
+  return removed;
 }
 
 switch (command) {
@@ -77,7 +124,7 @@ switch (command) {
     console.log(`✓ OPC v${pkg.version} installed to ${skillsDir}`);
     console.log(`  Use /opc in ${hostConfig.label} to get started.`);
     if (host === "claude") {
-      console.log(`  Run 'opc install-hooks --host claude' to enable Claude Code compression resilience.`);
+      console.log(`  Run 'opc install-hooks --host claude' to enable the Claude auto-flow guard and optional compression resilience.`);
     }
     break;
   }
@@ -101,47 +148,82 @@ switch (command) {
     if (!settings.hooks) settings.hooks = {};
 
     const hooksDir = join(skillsDir, "bin", "hooks");
-    const prereqError = validateHookPrereqs(hooksDir);
-    if (prereqError) {
-      console.error(`✗ ${prereqError}`);
+    const scriptError = validateHookScripts(hooksDir);
+    if (scriptError) {
+      console.error(`✗ ${scriptError}`);
       process.exit(1);
     }
+    const jqAvailable = hasJq();
     const preCmd = `bash "${join(hooksDir, "opc-pre-compact.sh")}"`;
     const postCmd = `bash "${join(hooksDir, "opc-post-compact.sh")}"`;
+    const preToolCmd = `node "${join(hooksDir, "opc-pre-tool-budget.mjs")}"`;
 
-    // Merge PreCompact — preserve existing hooks
-    if (!settings.hooks.PreCompact) settings.hooks.PreCompact = [];
-    const hasPreCompact = settings.hooks.PreCompact.some(
-      entry => entry.hooks?.some(h => h.command?.includes("opc-pre-compact"))
+    if (jqAvailable) {
+      // Merge PreCompact — preserve existing hooks
+      if (!settings.hooks.PreCompact) settings.hooks.PreCompact = [];
+      const hasPreCompact = settings.hooks.PreCompact.some(
+        entry => entry.hooks?.some(h => h.command?.includes("opc-pre-compact"))
+      );
+      if (!hasPreCompact) {
+        settings.hooks.PreCompact.push({
+          hooks: [{ type: "command", command: preCmd, timeout: 10 }]
+        });
+      }
+
+      // Merge PostCompact — preserve existing hooks
+      if (!settings.hooks.PostCompact) settings.hooks.PostCompact = [];
+      const hasPostCompact = settings.hooks.PostCompact.some(
+        entry => entry.hooks?.some(h => h.command?.includes("opc-post-compact"))
+      );
+      if (!hasPostCompact) {
+        settings.hooks.PostCompact.push({
+          hooks: [{ type: "command", command: postCmd, timeout: 10 }]
+        });
+      }
+    }
+
+    // Merge PreToolUse — preserve existing hooks and use a synchronous command decision.
+    if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+    const hasPreToolUse = settings.hooks.PreToolUse.some(
+      entry => (entry.matcher == null || entry.matcher === "") &&
+        entry.hooks?.some(h => h.type === "command" && h.async !== true && h.command === preToolCmd)
     );
-    if (!hasPreCompact) {
-      settings.hooks.PreCompact.push({
-        hooks: [{ type: "command", command: preCmd, timeout: 10 }]
+    if (!hasPreToolUse) {
+      settings.hooks.PreToolUse.push({
+        hooks: [{ type: "command", command: preToolCmd, timeout: 10 }]
       });
     }
 
-    // Merge PostCompact — preserve existing hooks
-    if (!settings.hooks.PostCompact) settings.hooks.PostCompact = [];
-    const hasPostCompact = settings.hooks.PostCompact.some(
-      entry => entry.hooks?.some(h => h.command?.includes("opc-post-compact"))
-    );
-    if (!hasPostCompact) {
-      settings.hooks.PostCompact.push({
-        hooks: [{ type: "command", command: postCmd, timeout: 10 }]
-      });
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    atomicWriteSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    console.log(`✓ OPC hooks registered in ${settingsPath}`);
+    console.log(`  PreToolUse:  enforces active auto-flow node budgets`);
+    if (jqAvailable) {
+      console.log(`  PreCompact:  snapshots active flow state before compaction`);
+      console.log(`  PostCompact: injects resume context after compaction`);
+    } else {
+      console.log(`  WARN: jq not found; skipped optional PreCompact/PostCompact hooks.`);
     }
-
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
-    console.log(`✓ OPC compact hooks registered in ${settingsPath}`);
-    console.log(`  Verified: hook scripts present and jq available.`);
-    console.log(`  PreCompact:  snapshots active flow state before compaction`);
-    console.log(`  PostCompact: injects resume context after compaction`);
     break;
   }
 
   case "uninstall": {
+    if (host === "claude") {
+      const settingsPath = join(homedir(), ".claude", "settings.json");
+      let removedHooks;
+      try {
+        removedHooks = removeInstalledHooks(settingsPath);
+      } catch (error) {
+        console.error(`✗ Cannot safely uninstall OPC: ${error.message}`);
+        process.exit(1);
+      }
+      if (removedHooks > 0) {
+        console.log(`  Removed ${removedHooks} OPC hook(s) from ${settingsPath}`);
+      }
+    }
+
     if (!existsSync(skillsDir)) {
-      console.log(`Nothing to remove — ${skillsDir} does not exist.`);
+      console.log(`Nothing else to remove — ${skillsDir} does not exist.`);
       break;
     }
 
@@ -209,7 +291,7 @@ switch (command) {
     console.log();
     console.log("Usage:");
     console.log("  opc install [--host codex|claude]       Install skill files (default: Codex)");
-    console.log("  opc install-hooks --host claude         Register Claude PreCompact/PostCompact hooks");
+    console.log("  opc install-hooks --host claude         Register Claude PreToolUse and optional compact hooks");
     console.log("  opc uninstall [--host codex|claude]     Remove skill files (preserves custom roles)");
     console.log("  opc version         Show version");
     console.log();

@@ -38,40 +38,34 @@ assert_field_eq() {
 ORIG_DIR=$(pwd)
 
 # ═══════════════════════════════════════════════════════════════════
-echo "=== PART 1: 🔴 HIGH — transition without init (fresh state creation) ==="
-# flow-transition.mjs:73-86 — else branch when flow-state.json doesn't exist
+echo "=== PART 1: 🔴 HIGH — transition without init fails closed ==="
+# A transition may only advance initialized, validated state.
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "── 1.1: transition from gate without init creates fresh state"
-# Gates skip pre-transition handshake check, so this path is reachable
+echo "── 1.1: gate transition without init is rejected without mutation"
 D=$(mktemp -d)
 cd "$D"
-mkdir -p nodes
-# No init! Direct transition from gate node
 OUT=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['allowed']" "True" "1.1a: transition without init succeeds (fresh state created)"
-assert_field_eq "$OUT" "['next']" "brief" "1.1b: next node is brief"
-# Verify state was created with correct structure
-assert_contains "$(cat flow-state.json)" '"version": "1.0"' "1.1c: fresh state has version"
-assert_contains "$(cat flow-state.json)" '"flowTemplate": "build-verify"' "1.1d: fresh state has correct flow"
-assert_contains "$(cat flow-state.json)" '"entryNode": "brief"' "1.1e: fresh state entryNode = first template node"
-assert_contains "$(cat flow-state.json)" '"maxTotalSteps": 25' "1.1f: fresh state has limits from template"
+assert_field_eq "$OUT" "['allowed']" "False" "1.1a: gate transition without init is blocked"
+assert_contains "$OUT" "flow-state.json" "1.1b: error identifies missing state"
+if [ ! -e "flow-state.json" ] && [ ! -e "nodes" ]; then
+  echo "  ✅ 1.1c: rejection leaves no state or node artifacts"; PASS=$((PASS+1))
+else
+  echo "  ❌ 1.1c: rejection mutated the harness directory"; FAIL=$((FAIL+1))
+fi
 
 echo ""
-echo "── 1.2: transition without init — non-gate node blocked by handshake check"
+echo "── 1.2: non-gate transition without init is rejected without mutation"
 D2=$(mktemp -d)
 cd "$D2"
-mkdir -p nodes
 OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['allowed']" "False" "1.2a: non-gate transition without init blocked"
-assert_contains "$OUT" "handshake.json missing" "1.2b: blocked by pre-transition handshake check"
-# Fresh state path (L73-86) IS exercised: mkdirSync creates nodes/ dir even though
-# the function returns before writing flow-state.json to disk.
-if [ -d "nodes" ]; then
-  echo "  ✅ 1.2c: fresh state path exercised (nodes/ dir created at L74)"; PASS=$((PASS+1))
+assert_field_eq "$OUT" "['allowed']" "False" "1.2a: non-gate transition without init is blocked"
+assert_contains "$OUT" "flow-state.json" "1.2b: error identifies missing state"
+if [ ! -e "flow-state.json" ] && [ ! -e "nodes" ]; then
+  echo "  ✅ 1.2c: rejection leaves no state or node artifacts"; PASS=$((PASS+1))
 else
-  echo "  ❌ 1.2c: nodes/ dir not created — fresh state path not exercised"; FAIL=$((FAIL+1))
+  echo "  ❌ 1.2c: rejection mutated the harness directory"; FAIL=$((FAIL+1))
 fi
 cd "$ORIG_DIR"
 rm -rf "$D" "$D2"
@@ -136,8 +130,20 @@ cd "$D"
 $HARNESS init --flow build-verify --entry gate --dir . > /dev/null 2>&1
 # gate checks upstream. For build-verify, upstream of gate is test-execute.
 # Write corrupt handshake for test-execute (upstream of gate)
-mkdir -p nodes/test-execute
+mkdir -p nodes/test-execute/run_1
 echo "NOT VALID JSON {{{" > nodes/test-execute/handshake.json
+echo "NOT VALID JSON {{{" > nodes/test-execute/run_1/handshake.json
+python3 - <<'PY'
+import json
+p = "flow-state.json"
+s = json.load(open(p))
+s["history"] = [
+  {"nodeId": "test-execute", "runId": "run_1", "timestamp": "2024-01-01T00:00:00.000Z"},
+  {"nodeId": "gate", "runId": "run_1", "timestamp": "2024-01-01T00:00:01.000Z"},
+]
+s["totalSteps"] = 2
+json.dump(s, open(p, "w"), indent=2)
+PY
 # Try to transition gate → brief (ITERATE)
 # Wait for idempotency window
 sleep 2

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shim suite that runs Node.js built-in test-runner .test.mjs files under bin/lib/.
+# Shim suite that runs Node.js built-in test-runner .test.mjs files under bin/.
 # These files use `node --test` and live next to their modules so they can be run
 # standalone during development; the shim exists so the shell-level suite
 # (`test/run-all.sh`) counts them as first-class suites too.
@@ -9,7 +9,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 FAIL=0
-for f in bin/lib/*.test.mjs; do
+for f in bin/lib/*.test.mjs bin/hooks/*.test.mjs; do
+  [ -e "$f" ] || continue
   echo "--- node --test $f ---"
   if ! node --test "$f"; then
     FAIL=$((FAIL + 1))

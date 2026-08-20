@@ -1,11 +1,12 @@
 // Shared utilities used across all harness modules.
 // Single source of truth for getFlag, resolveDir, atomicWriteSync, constants.
 
-import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, realpathSync } from "fs";
+import { writeFileSync, renameSync, symlinkSync, unlinkSync, readlinkSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, realpathSync } from "fs";
 import { resolve, join, dirname } from "path";
 import { createHash, randomBytes } from "crypto";
 import { homedir } from "os";
 import { execSync } from "child_process";
+import { lockFile } from "./file-lock.mjs";
 
 // ── CLI flag parsing ────────────────────────────────────────────
 export function getFlag(args, name, fallback = null) {
@@ -14,6 +15,12 @@ export function getFlag(args, name, fallback = null) {
   if (eq) return eq.slice(eqPrefix.length);
   const idx = args.indexOf(`--${name}`);
   return idx !== -1 && args[idx + 1] != null ? args[idx + 1] : fallback;
+}
+
+export function hasFlag(args, name) {
+  const flag = `--${name}`;
+  const eqPrefix = `${flag}=`;
+  return args.includes(flag) || args.some(a => typeof a === "string" && a.startsWith(eqPrefix));
 }
 
 // ── Safe directory resolution with path traversal guard ─────────
@@ -78,7 +85,7 @@ export const VALID_STATUSES = new Set(["completed", "failed", "blocked"]);
 export const VALID_VERDICTS = new Set(["PASS", "ITERATE", "FAIL", "BLOCKED"]);
 export const EVIDENCE_TYPES = new Set(["test-result", "screenshot", "cli-output"]);
 
-export const VALID_LOOP_STATUSES = new Set(["initialized", "in_progress", "pipeline_complete", "terminated", "stalled"]);
+export const VALID_LOOP_STATUSES = new Set(["initialized", "in_progress", "pipeline_complete", "terminated", "stalled", "mission_pending"]);
 export const TERMINAL_LOOP_STATUSES = new Set(["pipeline_complete", "terminated", "stalled"]);
 
 export const WRITER_SIG = "opc-harness";
@@ -178,6 +185,72 @@ export function getLatestSessionDir(cwd = process.cwd()) {
   return null;
 }
 
+export function runtimeRegistryPath(sessionId, home = homedir()) {
+  const key = createHash("sha256").update(String(sessionId)).digest("hex");
+  return join(home, ".opc", "runtime", `${key}.json`);
+}
+
+function deleteRegisteredAutoSession(dir, initialState, cutoff, errors) {
+  if (typeof initialState._claudeSessionId !== "string" || initialState._claudeSessionId.length === 0) {
+    errors.push(`cannot GC auto session '${dir}': missing Claude session ID`);
+    return false;
+  }
+
+  const sessionId = initialState._claudeSessionId;
+  const path = runtimeRegistryPath(sessionId);
+  const statePath = join(dir, "flow-state.json");
+  let lock;
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    lock = lockFile(path, { command: "gc-session-registry", timeout: 0 });
+    if (!lock.acquired) {
+      errors.push(`cannot acquire registry lock for '${dir}'`);
+      return false;
+    }
+
+    // Re-check age and identity under the same lock used by auto init. A
+    // same-directory --force init may have replaced the stale state while GC
+    // was waiting for this lock.
+    if (statSync(statePath).mtimeMs >= cutoff) return false;
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    if (state?.autoMode !== true || state._claudeSessionId !== sessionId) return false;
+
+    let registry;
+    try {
+      registry = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        rmSync(dir, { recursive: true, force: true });
+        return true;
+      }
+      throw error;
+    }
+
+    if (registry?.sessionId !== sessionId || typeof registry.sessionDir !== "string") {
+      errors.push(`cannot GC auto session '${dir}': registry identity is invalid`);
+      return false;
+    }
+    if (resolve(registry.sessionDir) !== resolve(dir)) {
+      rmSync(dir, { recursive: true, force: true });
+      return true;
+    }
+
+    if (state.status !== "completed" && state.status !== "stopped") return false;
+
+    // Keep the lock until both operations finish. Unlinking the registry first
+    // can leave an orphan directory on I/O failure, but never a registry that
+    // points at a deleted flow.
+    unlinkSync(path);
+    rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    errors.push(`cannot clean registry for '${dir}': ${error.message}`);
+    return false;
+  } finally {
+    if (lock?.acquired) lock.release();
+  }
+}
+
 /**
  * Delete session dirs older than maxAgeDays in the given project's sessions base.
  * Returns { deleted: string[], errors: string[] }.
@@ -195,9 +268,21 @@ export function gcSessions(cwd = process.cwd(), { maxAgeDays = 7 } = {}) {
       if (!e.isDirectory() || e.name === "latest") continue;
       const dir = join(base, e.name);
       try {
-        const st = statSync(join(dir, "flow-state.json"));
+        const statePath = join(dir, "flow-state.json");
+        const st = statSync(statePath);
         if (st.mtimeMs < cutoff) {
-          rmSync(dir, { recursive: true, force: true });
+          let state;
+          try {
+            state = JSON.parse(readFileSync(statePath, "utf8"));
+          } catch (error) {
+            errors.push(`cannot read expired session '${dir}': ${error.message}`);
+            continue;
+          }
+          if (state?.autoMode === true) {
+            if (!deleteRegisteredAutoSession(dir, state, cutoff, errors)) continue;
+          } else {
+            rmSync(dir, { recursive: true, force: true });
+          }
           deleted.push(e.name);
         }
       } catch {

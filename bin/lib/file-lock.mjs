@@ -1,9 +1,19 @@
 // Advisory file locking using .lock files with PID + timestamp.
-// Uses O_EXCL for atomic creation; stale lock detection via dead PID.
+// Publishes complete lock records atomically via same-directory hard links;
+// stale lock detection uses the recorded PID.
 // Depends on: (none — self-contained)
 
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import {
+  existsSync,
+  linkSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { randomBytes } from "crypto";
+
+const UNREADABLE_LOCK_GRACE_MS = 1000;
 
 // Synchronous sleep without spawning a shell process.
 // Uses SharedArrayBuffer + Atomics.wait for zero-dependency sync delay.
@@ -47,9 +57,21 @@ export function lockFile(filePath, opts = {}) {
       try {
         holder = JSON.parse(readFileSync(lockPath, "utf8"));
       } catch {
-        // Corrupt lock file — treat as stale
+        // A live writer may have created the path before publishing complete JSON.
+        // Never delete a freshly unreadable lock; fail closed until it ages out.
+        try {
+          if (Date.now() - statSync(lockPath).mtimeMs < UNREADABLE_LOCK_GRACE_MS) {
+            if (Date.now() >= deadline) {
+              return { acquired: false, holder: { pid: -1, timestamp: null, command: "unknown" } };
+            }
+            sleepMs(50);
+            continue;
+          }
+        } catch {
+          // The lock disappeared between read and stat; retry acquisition.
+          continue;
+        }
         try { unlinkSync(lockPath); } catch { /* race — ok */ }
-        // Retry atomic acquire
         continue;
       }
 
@@ -80,13 +102,24 @@ export function lockFile(filePath, opts = {}) {
       command,
     };
 
+    const tempPath = `${lockPath}.tmp.${process.pid}.${nonce}`;
+    let publishError = null;
     try {
-      writeFileSync(lockPath, JSON.stringify(lockData, null, 2) + "\n", { flag: "wx" });
-    } catch (err) {
-      if (err.code === "EEXIST") {
-        // Another process created the lock between our check and write — retry
+      writeFileSync(tempPath, JSON.stringify(lockData, null, 2) + "\n", {
+        flag: "wx",
+        mode: 0o600,
+      });
+      linkSync(tempPath, lockPath);
+    } catch (error) {
+      publishError = error;
+    } finally {
+      try { unlinkSync(tempPath); } catch { /* temp may not have been created */ }
+    }
+
+    if (publishError) {
+      if (publishError.code === "EEXIST") {
+        // Another process published the lock first.
         if (Date.now() >= deadline) {
-          // Try to read who holds it
           try {
             const existing = JSON.parse(readFileSync(lockPath, "utf8"));
             return { acquired: false, holder: existing };
@@ -97,7 +130,6 @@ export function lockFile(filePath, opts = {}) {
         sleepMs(50);
         continue;
       }
-      // Other write error (permissions, etc.)
       if (Date.now() >= deadline) {
         return { acquired: false, holder: { pid: -1, timestamp: null, command: "unknown" } };
       }

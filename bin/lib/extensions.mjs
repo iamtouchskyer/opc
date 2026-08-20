@@ -94,6 +94,7 @@ function appendFailure(registry, entry) {
 }
 
 function recordFailure(registry, ext, hook, kind, message) {
+  ext._successfulHooks?.delete(hook);
   const entry = {
     ext: ext.name,
     hook,
@@ -117,10 +118,18 @@ function recordFailure(registry, ext, hook, kind, message) {
   }
 }
 
-function recordSuccess(ext) {
+function beginHookInvocation(registry, hook) {
+  for (const ext of registry?.extensions || []) {
+    ext?._successfulHooks?.delete(hook);
+  }
+}
+
+function recordSuccess(ext, hook) {
   // Any successful invocation resets the consecutive-failure streak.
   // The breaker only trips on N-in-a-row, not N-total.
   if (ext._failStreak) ext._failStreak = 0;
+  if (!(ext._successfulHooks instanceof Set)) ext._successfulHooks = new Set();
+  ext._successfulHooks.add(hook);
 }
 
 function startupFailureEntry(name, kind, message, meta = {}) {
@@ -762,6 +771,7 @@ export async function loadExtensions(config = {}) {
  */
 export async function firePromptAppend(registry, context) {
   const parts = [];
+  beginHookInvocation(registry, "prompt.append");
   warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
@@ -779,7 +789,7 @@ export async function firePromptAppend(registry, context) {
         `prompt.append timed out after ${HOOK_TIMEOUT_MS}ms`
       );
       if (result === undefined || result === null || result === "") {
-        recordSuccess(ext);
+        recordSuccess(ext, "prompt.append");
         continue;
       }
       if (typeof result !== "string") {
@@ -788,7 +798,7 @@ export async function firePromptAppend(registry, context) {
         continue;
       }
       parts.push(result);
-      recordSuccess(ext);
+      recordSuccess(ext, "prompt.append");
     } catch (err) {
       console.error(`WARN: extension ${ext.name} prompt.append failed:`, err.message);
       const kind = isHookTimeoutError(err) ? "timeout" : "throw";
@@ -817,8 +827,28 @@ export async function firePromptAppend(registry, context) {
  *     `{ version: 1, generatedAt, extensionsLoaded[], findings[] }`. `null`
  *     when `context.runDir` is not set.
  */
+export function readVerdictExtensionState(runDir) {
+  const jsonPath = join(runDir, "eval-extensions.json");
+  if (!existsSync(jsonPath)) return null;
+  let prior;
+  try {
+    prior = JSON.parse(readFileSync(jsonPath, "utf8"));
+  } catch (error) {
+    throw new Error(`eval-extensions.json parse error: ${error.message}`);
+  }
+  if (!prior || typeof prior !== "object" || Array.isArray(prior)) {
+    throw new Error("eval-extensions.json schema error: root must be an object");
+  }
+  return prior;
+}
+
 export async function fireVerdictAppend(registry, context) {
   const allFindings = [];
+  const jsonPath = context.runDir
+    ? join(context.runDir, "eval-extensions.json")
+    : null;
+  if (context.runDir) readVerdictExtensionState(context.runDir);
+  beginHookInvocation(registry, "verdict.append");
   warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
@@ -836,7 +866,7 @@ export async function fireVerdictAppend(registry, context) {
         `verdict.append timed out after ${HOOK_TIMEOUT_MS}ms`
       );
       if (findings === undefined || findings === null) {
-        recordSuccess(ext);
+        recordSuccess(ext, "verdict.append");
         continue;
       }
       if (!Array.isArray(findings)) {
@@ -848,7 +878,7 @@ export async function fireVerdictAppend(registry, context) {
         const normalized = normalizeFinding(raw);
         if (normalized) allFindings.push({ ...normalized, _ext: ext.name });
       }
-      recordSuccess(ext);
+      recordSuccess(ext, "verdict.append");
     } catch (err) {
       console.error(`WARN: extension ${ext.name} verdict.append failed:`, err.message);
       const kind = isHookTimeoutError(err) ? "timeout" : "throw";
@@ -872,7 +902,6 @@ export async function fireVerdictAppend(registry, context) {
   //     `fireVerdictAppend` returns `findings[]._ext` — same concept, two
   //     names: `_ext` for JS callers (pre-F1 contract), `extension` for JSON
   //     consumers (clean schema). Don't rename either without a v2 bump.
-  const jsonPath = join(context.runDir, "eval-extensions.json");
   const jsonDoc = {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -880,6 +909,11 @@ export async function fireVerdictAppend(registry, context) {
       name: e.name,
       enabled: e.enabled !== false,
     })),
+    extensionsApplied: participatingExtensions(
+      registry,
+      context,
+      ["verdict.append"]
+    ),
     findings: allFindings.map((f) => ({
       extension: f._ext,
       severity: f.severity,
@@ -947,6 +981,7 @@ export function renderEvalMarkdown(jsonDoc) {
  */
 export async function fireExecuteRun(registry, context) {
   const results = [];
+  beginHookInvocation(registry, "execute.run");
   warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
@@ -964,7 +999,7 @@ export async function fireExecuteRun(registry, context) {
         `execute.run timed out after ${HOOK_TIMEOUT_MS}ms`
       );
       results.push({ ext: ext.name, result });
-      recordSuccess(ext);
+      recordSuccess(ext, "execute.run");
     } catch (err) {
       console.error(`WARN: extension ${ext.name} execute.run failed:`, err.message);
       const kind = isHookTimeoutError(err) ? "timeout" : "throw";
@@ -990,6 +1025,7 @@ export async function fireExecuteRun(registry, context) {
  */
 export async function fireArtifactEmit(registry, context) {
   const emitted = [];
+  beginHookInvocation(registry, "artifact.emit");
   warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
   if (!context.runDir) return emitted;
@@ -1010,7 +1046,7 @@ export async function fireArtifactEmit(registry, context) {
         HOOK_TIMEOUT_MS,
         `artifact.emit timed out after ${HOOK_TIMEOUT_MS}ms`
       );
-      if (items === undefined || items === null) { recordSuccess(ext); continue; }
+      if (items === undefined || items === null) { recordSuccess(ext, "artifact.emit"); continue; }
       if (!Array.isArray(items)) {
         console.error(`WARN: extension ${ext.name} artifact.emit returned ${typeof items}, expected array — ignoring`);
         recordFailure(registry, ext, "artifact.emit", "bad-return", `returned ${typeof items}, expected array`);
@@ -1064,7 +1100,7 @@ export async function fireArtifactEmit(registry, context) {
     // a per-item write failure would be undone by recordSuccess on the same
     // iteration and the circuit-breaker would never trip on persistent
     // write failures (U1.6r semantics F1 fix-forward).
-    if (!anyItemFailed) recordSuccess(ext);
+    if (!anyItemFailed) recordSuccess(ext, "artifact.emit");
   }
   if (registry._flowDir) saveBreakerState(registry._flowDir, registry);
   return emitted;
@@ -1085,6 +1121,7 @@ export async function fireArtifactEmit(registry, context) {
  */
 export async function fireNodePreflight(registry, context) {
   const results = [];
+  beginHookInvocation(registry, "preflight");
   warnMissingNodeCapsOnce(registry, context);
   const requires = context.nodeCapabilities || [];
 
@@ -1102,7 +1139,7 @@ export async function fireNodePreflight(registry, context) {
         `preflight timed out after ${HOOK_TIMEOUT_MS}ms`
       );
       if (result === undefined || result === null) {
-        recordSuccess(ext);
+        recordSuccess(ext, "preflight");
         continue;
       }
       if (typeof result !== "object" || Array.isArray(result)) {
@@ -1111,7 +1148,7 @@ export async function fireNodePreflight(registry, context) {
         continue;
       }
       results.push({ ...result, _ext: ext.name });
-      recordSuccess(ext);
+      recordSuccess(ext, "preflight");
     } catch (err) {
       console.error(`WARN: extension ${ext.name} preflight failed:`, err.message);
       const kind = isHookTimeoutError(err) ? "timeout" : "throw";
@@ -1216,6 +1253,35 @@ function writeDiStateArtifact(sessionDir, diState) {
  * guards on every failure-bearing run. The orchestrator surfaces this file
  * through a separate path (gate hook), not via synthesize.
  */
+export function readFailureReportState(runDir) {
+  const sidecarPath = join(runDir, "extension-failures.json");
+  if (!existsSync(sidecarPath)) return { entries: [], droppedTotal: 0 };
+
+  let data;
+  try {
+    data = JSON.parse(readFileSync(sidecarPath, "utf8"));
+  } catch (error) {
+    throw new Error(`extension-failures.json parse error: ${error.message}`);
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.failures)) {
+    throw new Error("extension-failures.json schema error: failures must be an array");
+  }
+  if (!Number.isSafeInteger(data.droppedTotal) || data.droppedTotal < 0) {
+    throw new Error("extension-failures.json schema error: droppedTotal must be a non-negative safe integer");
+  }
+  for (const [index, entry] of data.failures.entries()) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`extension-failures.json schema error: failures[${index}] must be an object`);
+    }
+    for (const field of ["ext", "hook", "kind", "message", "at"]) {
+      if (typeof entry[field] !== "string" || entry[field].length === 0) {
+        throw new Error(`extension-failures.json schema error: failures[${index}].${field} must be a non-empty string`);
+      }
+    }
+  }
+  return { entries: data.failures, droppedTotal: data.droppedTotal };
+}
+
 export function writeFailureReport(registry, runDir) {
   if (!runDir) return;
   const failures = Array.isArray(registry.failures) ? registry.failures : [];
@@ -1223,26 +1289,10 @@ export function writeFailureReport(registry, runDir) {
   const reportPath = join(runDir, "extension-failures.md");
   const sidecarPath = join(runDir, "extension-failures.json");
 
-  // U2.8c: Cross-command merge (G3) via JSON sidecar.
-  //
-  // Previous attempt parsed the markdown via regex; that was fragile (missing
-  // /u flag for emoji, ambiguous ext.hook split on dots) and silently
-  // degenerated to overwrite. The structurally correct fix is to keep the
-  // canonical record in a machine-readable JSON sidecar and render the
-  // markdown view from JSON. Parser/writer skew becomes impossible.
-  //
-  // Each CLI invocation reads the sidecar, unions with this run's
-  // registry.failures (dedup on ext|hook|kind|message), then writes BOTH
-  // sidecar + markdown atomically.
-  let priorEntries = [];
-  let priorDropped = 0;
-  if (existsSync(sidecarPath)) {
-    try {
-      const data = JSON.parse(readFileSync(sidecarPath, "utf8"));
-      if (Array.isArray(data.failures)) priorEntries = data.failures;
-      if (typeof data.droppedTotal === "number") priorDropped = data.droppedTotal;
-    } catch { /* corrupt sidecar = treat as empty, will be overwritten */ }
-  }
+  // Parse in a pure helper so lifecycle commands can fail closed before hooks.
+  const prior = readFailureReportState(runDir);
+  const priorEntries = prior.entries;
+  const priorDropped = prior.droppedTotal;
 
   // U2.8e (#2): use JSON.stringify on a tuple instead of `|`-joined string —
   // dedup key is unambiguous even if any field contains `|`.
@@ -1296,6 +1346,19 @@ export function survivingExtensions(registry) {
   return registry.extensions
     .filter((e) => e && e.enabled !== false)
     .map((e) => e.name);
+}
+
+export function participatingExtensions(registry, context, hookNames) {
+  if (!registry || !Array.isArray(registry.extensions)) return [];
+  const requires = context?.nodeCapabilities || [];
+  const hooks = Array.isArray(hookNames) ? hookNames : [];
+  if (hooks.length === 0) return [];
+
+  return registry.extensions
+    .filter((ext) => ext && ext.enabled !== false)
+    .filter((ext) => extensionMatches(requires, ext.meta.provides, ext.meta.compatibleCapabilities))
+    .filter((ext) => hooks.some((hookName) => ext._successfulHooks?.has(hookName)))
+    .map((ext) => ext.name);
 }
 
 // ─── Strict mode (CI enforcement) ────────────────────────────────

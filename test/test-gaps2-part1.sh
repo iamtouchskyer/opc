@@ -140,6 +140,7 @@ cat > nodes/exec-node/handshake.json << 'EOF'
   "verdict": null
 }
 EOF
+sync_run_handshakes .
 # Validate should produce warning (softEvidence) not error
 OUT=$($HARNESS validate nodes/exec-node/handshake.json 2>&1)
 assert_contains "$OUT" "softEvidence" "softEvidence produces warning not error"
@@ -170,9 +171,9 @@ cat > "$D5/nodes/exec-node/handshake.json" << 'EOF'
 }
 EOF
 cd "$D5"
-# Should fall back to strict (soft=false) → produce error not warning
+# State-backed validation fails closed when session authority is corrupt.
 OUT=$($HARNESS validate nodes/exec-node/handshake.json 2>/dev/null)
-assert_contains "$OUT" "executor node missing evidence" "corrupt state → strict mode → error"
+assert_contains "$OUT" "cannot parse flow-state.json" "corrupt state → authority error"
 rm -rf "$D5"
 cd /tmp
 
@@ -207,32 +208,20 @@ rm -rf "$D6"
 cd /tmp
 
 # ─────────────────────────────────────────────────────────────────
-# GAP2-7: transition without prior flow-state.json → fresh state
+# GAP2-7: transition without prior flow-state.json fails closed
 # ─────────────────────────────────────────────────────────────────
 echo ""
-echo "── GAP2-7: transition creates fresh state when no flow-state.json"
+echo "── GAP2-7: transition without init fails closed"
 D7=$(mktemp -d)
-mkdir -p "$D7/nodes/build"
-# Write handshake for 'build' so pre-transition check passes
-cat > "$D7/nodes/build/handshake.json" << 'EOF'
-{
-  "nodeId": "build",
-  "nodeType": "build",
-  "runId": "run_1",
-  "status": "completed",
-  "summary": "built",
-  "timestamp": "2024-01-01T00:00:00Z",
-  "artifacts": [],
-  "verdict": null
-}
-EOF
 cd "$D7"
-# Transition without prior init — should create state
 OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['allowed']" "True" "transition without init creates fresh state"
-# Verify state was created
-test -f flow-state.json
-assert_contains "$(cat flow-state.json)" "code-review" "fresh state has correct currentNode"
+assert_field_eq "$OUT" "['allowed']" "False" "transition without init is rejected"
+assert_contains "$OUT" "flow-state.json" "missing state diagnostic emitted"
+if [ ! -e flow-state.json ] && [ ! -e nodes ]; then
+  echo "✅ rejected transition creates no state or node artifacts"; PASS=$((PASS+1))
+else
+  echo "❌ rejected transition left state or node artifacts"; FAIL=$((FAIL+1))
+fi
 rm -rf "$D7"
 cd /tmp
 

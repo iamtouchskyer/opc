@@ -15,7 +15,10 @@ write_state_history() {
 import json, sys
 path = sys.argv[1]
 data = json.load(open(path))
-data["history"] = [{"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"}]
+data["history"] = [
+  {"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
+  {"nodeId": "gate", "runId": "run_1", "timestamp": "2026-01-01T00:01:00.000Z"},
+]
 data["currentNode"] = "gate"
 json.dump(data, open(path, "w"), indent=2)
 PY
@@ -30,6 +33,7 @@ data = json.load(open(path))
 data["history"] = [
   {"nodeId": "test-execute", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z"},
   {"nodeId": "test-execute", "runId": "run_2", "timestamp": "2026-01-01T00:01:00.000Z"},
+  {"nodeId": "gate", "runId": "run_1", "timestamp": "2026-01-01T00:02:00.000Z"},
 ]
 data["currentNode"] = "gate"
 json.dump(data, open(path, "w"), indent=2)
@@ -38,9 +42,10 @@ PY
 
 write_test_execute_report_handshake() {
   local dir="$1" run_id="$2"
-  python3 - "$dir/nodes/test-execute/handshake.json" "$run_id" <<'PY'
+  echo "ok" > "$dir/nodes/test-execute/$run_id/cli-output.txt"
+  python3 - "$dir/nodes/test-execute/handshake.json" "$dir/nodes/test-execute/$run_id/handshake.json" "$run_id" <<'PY'
 import json, sys
-path, run_id = sys.argv[1], sys.argv[2]
+canonical_path, run_path, run_id = sys.argv[1], sys.argv[2], sys.argv[3]
 data = {
   "nodeId": "test-execute",
   "nodeType": "execute",
@@ -49,9 +54,18 @@ data = {
   "verdict": "PASS",
   "summary": "test execution report available",
   "timestamp": "2026-01-01T00:00:00.000Z",
-  "artifacts": [{"type": "report", "path": f"{run_id}/report.json"}]
+  "artifacts": [
+    {"type": "report", "path": f"{run_id}/report.json"},
+    {"type": "cli-output", "path": f"{run_id}/cli-output.txt"}
+  ]
 }
-open(path, "w").write(json.dumps(data))
+open(canonical_path, "w").write(json.dumps(data))
+run_data = dict(data)
+run_data["artifacts"] = [
+  {"type": "report", "path": "report.json"},
+  {"type": "cli-output", "path": "cli-output.txt"}
+]
+open(run_path, "w").write(json.dumps(run_data))
 PY
 }
 

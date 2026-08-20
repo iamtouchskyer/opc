@@ -89,6 +89,7 @@ EVAL
 cat > nodes/code-review/handshake.json << 'EOF'
 {"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-frontend.md"},{"type":"eval","path":"run_1/eval-backend.md"},{"type":"eval","path":"run_1/eval-skeptic-owner.md"}],"verdict":null}
 EOF
+sync_run_handshakes .
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 # Now viz should show entryNode code-review as ✅ (not ▶)
 OUT=$($HARNESS viz --flow build-verify --dir . 2>/dev/null)

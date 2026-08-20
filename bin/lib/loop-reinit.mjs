@@ -7,6 +7,7 @@ import { join } from "path";
 import { parsePlan, hashContent } from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { createHash } from "crypto";
+import { guardMissionMutation, sealMissionRuntimeState } from "./mission-contract.mjs";
 
 // ─── reinit-loop ───────────────────────────────────────────────
 
@@ -31,6 +32,25 @@ export function cmdReinitLoop(args) {
     state = JSON.parse(readFileSync(statePath, "utf8"));
   } catch (err) {
     console.log(JSON.stringify({ reinitialized: false, errors: [`corrupt loop-state.json: ${err.message}`] }));
+    return;
+  }
+
+  const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "reinit-loop" });
+  if (!missionGuard.allowed) {
+    console.log(JSON.stringify({
+      reinitialized: false,
+      errors: [missionGuard.reason],
+      rebet_required: missionGuard.rebet_required,
+      missionIntegrityErrors: missionGuard.errors,
+    }));
+    return;
+  }
+  if (state.mission) {
+    console.log(JSON.stringify({
+      reinitialized: false,
+      errors: ["mission-enabled plans are pinned; use mission-decision RESHAPE_SMALLER with a validated revised plan"],
+      rebet_required: true,
+    }));
     return;
   }
 
@@ -196,6 +216,19 @@ export function cmdReinitLoop(args) {
   });
 
   // tick history is PRESERVED (plus reinit marker) — not reset
+  if (state.mission) {
+    const sealed = sealMissionRuntimeState({
+      sessionDir: dir,
+      state,
+      statePath,
+      reason: "reinit-loop",
+    });
+    if (!sealed.ok) {
+      console.log(JSON.stringify({ reinitialized: false, errors: [sealed.error] }));
+      return;
+    }
+    state = sealed.state;
+  }
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   console.log(JSON.stringify({

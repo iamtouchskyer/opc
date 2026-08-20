@@ -42,9 +42,9 @@ write_handshake() {
   local run_dir="$dir/nodes/$node/run_1"
   if [ "$node_type" = "review" ] && [ -d "$run_dir" ]; then
     artifacts=$(ls "$run_dir"/eval-*.md 2>/dev/null | python3 -c "
-import sys, json
+import pathlib, sys, json
 files = [l.strip() for l in sys.stdin if l.strip()]
-print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
+print(json.dumps([{'path': 'run_1/' + pathlib.Path(f).name, 'type': 'eval'} for f in files]))
 " 2>/dev/null || echo "[]")
   fi
   if [ "$node_type" = "brief" ]; then
@@ -66,6 +66,7 @@ print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 HSEOF
+  sync_run_handshakes "$dir"
 }
 
 write_good_eval() {

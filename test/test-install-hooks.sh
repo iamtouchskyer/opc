@@ -39,20 +39,27 @@ NO_JQ_PATH="$TMP/no-jq-path"
 mkdir -p "$HOME_NO_JQ" "$NO_JQ_PATH"
 HOME="$HOME_NO_JQ" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install --host claude > /dev/null
 
-set +e
 OUT=$(HOME="$HOME_NO_JQ" PATH="$NO_JQ_PATH" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install-hooks --host claude 2>&1)
-STATUS=$?
-set -e
+assert_contains "$OUT" "PreToolUse" "PreToolUse guard installs without jq"
+assert_contains "$OUT" "jq not found" "missing jq only skips compaction hooks"
 
-if [ "$STATUS" -ne 0 ]; then ok "install-hooks fails when jq is absent"; else fail "install-hooks should fail without jq"; fi
-assert_contains "$OUT" "requires 'jq'" "missing jq error is explicit"
-if [ ! -f "$HOME_NO_JQ/.claude/settings.json" ]; then ok "settings not written after failed prereq"; else fail "settings should not be written when prereq fails"; fi
+NO_JQ_SETTINGS="$HOME_NO_JQ/.claude/settings.json"
+NO_JQ_HOOKS=$(python3 - "$NO_JQ_SETTINGS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("\n".join(d.get("hooks", {}).keys()))
+PY
+)
+assert_contains "$NO_JQ_HOOKS" "PreToolUse" "no-jq settings contain PreToolUse"
+assert_not_contains "$NO_JQ_HOOKS" "PreCompact" "no-jq settings omit PreCompact"
+assert_not_contains "$NO_JQ_HOOKS" "PostCompact" "no-jq settings omit PostCompact"
 
 HOME_OK="$TMP/home-ok"
 mkdir -p "$HOME_OK"
 HOME="$HOME_OK" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install --host claude > /dev/null
 OUT_OK=$(HOME="$HOME_OK" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install-hooks --host claude 2>&1)
-assert_contains "$OUT_OK" "Verified: hook scripts present and jq available" "successful install verifies hook prereqs"
+assert_contains "$OUT_OK" "PreToolUse" "jq-enabled install registers budget guard"
+assert_contains "$OUT_OK" "PreCompact" "jq-enabled install registers compaction hooks"
 
 SETTINGS="$HOME_OK/.claude/settings.json"
 COMMANDS=$(python3 - "$SETTINGS" <<'PY'
@@ -71,6 +78,34 @@ assert_contains "$COMMANDS" "opc-post-compact.sh" "PostCompact hook registered"
 assert_not_contains "$COMMANDS" "|| true" "hook failures are not swallowed"
 assert_not_contains "$COMMANDS" "2>/dev/null" "hook stderr is not hidden"
 
+PRE_TOOL_COMMANDS=$(python3 - "$SETTINGS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+cmds = []
+for entry in d.get("hooks", {}).get("PreToolUse", []):
+    for hook in entry.get("hooks", []):
+        cmds.append(hook.get("command", ""))
+print("\n".join(cmds))
+PY
+)
+assert_contains "$PRE_TOOL_COMMANDS" "opc-pre-tool-budget.mjs" "PreToolUse budget hook registered"
+
+rm -rf "$HOME_OK/.claude/skills/opc"
+HOME="$HOME_OK" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" uninstall --host claude > /dev/null
+REMAINING_OWNED=$(python3 - "$SETTINGS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+owned = 0
+for entries in d.get("hooks", {}).values():
+    for entry in entries:
+        for hook in entry.get("hooks", []):
+            if "opc-" in hook.get("command", ""):
+                owned += 1
+print(owned)
+PY
+)
+if [ "$REMAINING_OWNED" -eq 0 ]; then ok "Claude uninstall removes OPC hooks"; else fail "Claude uninstall should remove OPC hooks"; fi
+
 HOME_CODEX="$TMP/home-codex"
 mkdir -p "$HOME_CODEX"
 OUT_CODEX=$(HOME="$HOME_CODEX" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" install 2>&1)
@@ -83,5 +118,11 @@ STATUS_CODEX_HOOK=$?
 set -e
 if [ "$STATUS_CODEX_HOOK" -eq 2 ]; then ok "Codex install refuses Claude-only hooks"; else fail "Codex install-hooks should exit 2"; fi
 assert_contains "$OUT_CODEX_HOOK" "Claude Code compatibility" "Codex hook refusal is explicit"
+
+HOME_ISOLATION="$TMP/home-host-isolation"
+mkdir -p "$HOME_ISOLATION/.claude"
+printf '%s\n' '{ malformed settings' > "$HOME_ISOLATION/.claude/settings.json"
+OUT_CODEX_UNINSTALL=$(HOME="$HOME_ISOLATION" "$NODE_BIN" "$REPO_ROOT/bin/opc.mjs" uninstall 2>&1)
+assert_contains "$OUT_CODEX_UNINSTALL" ".codex/skills/opc does not exist" "Codex uninstall ignores Claude settings"
 
 print_results

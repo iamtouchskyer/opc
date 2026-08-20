@@ -46,7 +46,7 @@ fi
 # ── Test 4: transition from build → code-review ──
 echo "4. transition build → code-review"
 # Need handshake for build node
-mkdir -p .harness/nodes/build
+mkdir -p .harness/nodes/build/run_1/src
 cat > .harness/nodes/build/handshake.json <<'EOF'
 {
   "nodeId": "build",
@@ -56,10 +56,11 @@ cat > .harness/nodes/build/handshake.json <<'EOF'
   "verdict": "PASS",
   "summary": "Build completed successfully",
   "timestamp": "2026-01-01T00:00:00.000Z",
-  "artifacts": [{"type":"code","path":"src/app.tsx"}]
+  "artifacts": [{"type":"code","path":"run_1/src/app.tsx"}]
 }
 EOF
-mkdir -p .harness/nodes/build/src && touch .harness/nodes/build/src/app.tsx
+touch .harness/nodes/build/run_1/src/app.tsx
+sync_run_handshakes ".harness"
 
 TRANS=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
 ALLOWED=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin)['allowed'])")
@@ -86,30 +87,34 @@ fi
 echo "6. Full path: code-review → test-design → test-execute → gate PASS → null"
 
 # Transition code-review → test-design
-mkdir -p .harness/nodes/code-review
+mkdir -p .harness/nodes/code-review/run_1
 cat > .harness/nodes/code-review/handshake.json <<'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"Review passed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"eval-frontend.md"},{"type":"eval","path":"eval-backend.md"}]}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"Review passed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-frontend.md"},{"type":"eval","path":"run_1/eval-backend.md"}]}
 EOF
-touch .harness/nodes/code-review/eval-frontend.md
-touch .harness/nodes/code-review/eval-backend.md
+touch .harness/nodes/code-review/run_1/eval-frontend.md
+touch .harness/nodes/code-review/run_1/eval-backend.md
+sync_run_handshakes ".harness"
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
 # Transition test-design → test-execute
-mkdir -p .harness/nodes/test-design
+mkdir -p .harness/nodes/test-design/run_1
 cat > .harness/nodes/test-design/handshake.json <<'EOF'
-{"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"Tests designed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"}]}
+{"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"Tests designed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"},{"type":"test-plan","path":"run_1/test-plan.md"},{"type":"test-command","path":"run_1/test-execution.json"}]}
 EOF
-touch .harness/nodes/test-design/eval-a.md
-touch .harness/nodes/test-design/eval-b.md
-write_complete_test_plan .harness/nodes/test-design/test-plan.md
+touch .harness/nodes/test-design/run_1/eval-a.md
+touch .harness/nodes/test-design/run_1/eval-b.md
+write_complete_test_plan .harness/nodes/test-design/run_1/test-plan.md
+printf '%s\n' '{"nodeId":"test-design","runId":"run_1","testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture"]}' > .harness/nodes/test-design/run_1/test-execution.json
+sync_run_handshakes ".harness"
 $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
 # Transition test-execute → gate
-mkdir -p .harness/nodes/test-execute
+mkdir -p .harness/nodes/test-execute/run_1
 cat > .harness/nodes/test-execute/handshake.json <<'EOF'
-{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","verdict":"PASS","summary":"Tests passed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"test-result","path":"output.txt"}]}
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","verdict":"PASS","summary":"Tests passed","timestamp":"2026-01-01T00:00:00.000Z","artifacts":[{"type":"test-result","path":"run_1/output.txt"}]}
 EOF
-touch .harness/nodes/test-execute/output.txt
+touch .harness/nodes/test-execute/run_1/output.txt
+sync_run_handshakes ".harness"
 $HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
 # Gate → null (complete)

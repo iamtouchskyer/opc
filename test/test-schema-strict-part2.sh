@@ -10,8 +10,9 @@ assert_contains() {
   else
     echo "❌ $label — expected '$needle' in output"; FAIL=$((FAIL+1))
     echo "   GOT: $(echo "$haystack" | head -5)"
-  fi
-}
+	  fi
+	  sync_run_handshakes "$dir"
+	}
 
 assert_not_contains() {
   local haystack="$1" needle="$2" label="$3"
@@ -116,6 +117,7 @@ HSEOF
 }
 HSEOF
   fi
+  sync_run_handshakes "$dir"
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -132,8 +134,8 @@ write_handshake "." "review" "review" "completed"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
 # Write completed handshake for gate (terminal node)
 write_handshake "." "gate" "gate" "completed"
-# Now delete review handshake to simulate missing
-rm -f nodes/review/handshake.json
+# Now delete review handshake to simulate missing selected evidence.
+rm -f nodes/review/handshake.json nodes/review/run_1/handshake.json
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "False" "6a: --strict rejects with missing handshake"
 assert_contains "$OUT" "missing handshake" "6b: error mentions missing handshake"
@@ -164,6 +166,7 @@ cat > nodes/review/handshake.json << 'EOF'
   "artifacts": []
 }
 EOF
+cp nodes/review/handshake.json nodes/review/run_1/handshake.json
 # Write completed handshake for gate (terminal)
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
@@ -201,8 +204,8 @@ cd "$D"
 $HARNESS init --flow review --dir . > /dev/null 2>&1
 write_handshake "." "review" "review" "completed"
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir . > /dev/null 2>&1
-# Delete review handshake — should still finalize without --strict
-rm -f nodes/review/handshake.json
+# Delete review handshake — non-strict finalization keeps the compatibility path.
+rm -f nodes/review/handshake.json nodes/review/run_1/handshake.json
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "True" "9a: finalize without --strict succeeds despite missing intermediate handshake"
@@ -222,10 +225,11 @@ $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .
 # Corrupt the review handshake
 mkdir -p nodes/review
 echo "NOT VALID JSON{{{{" > nodes/review/handshake.json
+echo "NOT VALID JSON{{{{" > nodes/review/run_1/handshake.json
 write_handshake "." "gate" "gate" "completed"
 OUT=$($HARNESS finalize --dir . --strict 2>/dev/null || true)
 assert_field_eq "$OUT" "['finalized']" "False" "10a: --strict rejects corrupt handshake"
-assert_contains "$OUT" "cannot parse" "10b: error mentions parse failure"
+assert_contains "$OUT" "parse error" "10b: error mentions parse failure"
 rm -rf "$D"
 cd /tmp
 

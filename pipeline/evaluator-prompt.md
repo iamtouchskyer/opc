@@ -37,7 +37,10 @@ This is Round {R} of evaluation for Node {NODE_ID}.
 
 ## Project Context
 
-{paste relevant CLAUDE.md instructions here — dev workflow, precommit checks, coding conventions, test commands, etc. Subagents don't inherit project instructions automatically, so include anything the evaluator needs to know about how this project works.}
+{paste relevant project instructions here — AGENTS.md and, when present,
+CLAUDE.md; include dev workflow, precommit checks, coding conventions, test
+commands, etc. Subagents don't inherit project instructions automatically, so
+include anything the evaluator needs to know about how this project works.}
 
 ## Your Approach
 

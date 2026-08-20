@@ -82,10 +82,15 @@ echo "═══ Preflight Hook Tests ═══"
 echo "§1 Setup flow state"
 cat > "$HARNESS/flow-state.json" <<EOF
 {
+  "version": "1.0",
   "currentNode": "build",
-  "flow": "preflight-test",
+  "entryNode": "build",
+  "flowTemplate": "preflight-test",
+  "tier": "functional",
+  "flowStartedAt": "2026-01-01T00:00:00.000Z",
   "_flow_file": "$FLOW_FILE",
   "totalSteps": 0,
+  "history": [],
   "edgeCounts": {},
   "reentryCount": {}
 }
@@ -240,14 +245,20 @@ cat > "$NOOP_HARNESS/acceptance-criteria.md" <<'EOF'
 EOF
 cat > "$NOOP_HARNESS/flow-state.json" <<EOF
 {
-  "currentNode": "build",
-  "flow": "noop-flow",
+  "version": "1.0",
+  "currentNode": "code-review",
+  "entryNode": "code-review",
+  "flowTemplate": "noop-flow",
+  "tier": "functional",
+  "flowStartedAt": "2026-01-01T00:00:00.000Z",
   "_flow_file": "$NOOP_FLOW",
   "totalSteps": 0,
+  "history": [],
   "edgeCounts": {},
   "reentryCount": {}
 }
 EOF
+mkdir -p "$NOOP_HARNESS/nodes/code-review/run_1"
 NOOP_OUT=$(OPC_BREAKER_STATE=disabled $HARNESS_BIN node-preflight --node code-review --dir "$NOOP_HARNESS" --flow-file "$NOOP_FLOW" 2>/dev/null)
 if echo "$NOOP_OUT" | grep -q '"preflightResults":0'; then
   ok "no preflight on code-review node (no matching capability)"

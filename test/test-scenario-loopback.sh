@@ -12,35 +12,40 @@ echo ""
 $HARNESS init --flow build-verify --entry build --dir .harness 2>/dev/null
 
 # Advance to gate
-mkdir -p .harness/nodes/build
+mkdir -p .harness/nodes/build/run_1
 cat > .harness/nodes/build/handshake.json <<'EOF'
-{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"x"}]}
+{"nodeId":"build","nodeType":"build","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:01:00.000Z","artifacts":[{"type":"code","path":"run_1/x"}]}
 EOF
-touch .harness/nodes/build/x
+touch .harness/nodes/build/run_1/x
+sync_run_handshakes ".harness"
 $HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
-mkdir -p .harness/nodes/code-review
+mkdir -p .harness/nodes/code-review/run_1
 cat > .harness/nodes/code-review/handshake.json <<'EOF'
-{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"}]}
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:02:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 EOF
-echo "# Eval A" > .harness/nodes/code-review/eval-a.md
-echo "# Eval B" > .harness/nodes/code-review/eval-b.md
+echo "# Eval A" > .harness/nodes/code-review/run_1/eval-a.md
+echo "# Eval B" > .harness/nodes/code-review/run_1/eval-b.md
+sync_run_handshakes ".harness"
 $HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
-mkdir -p .harness/nodes/test-design
+mkdir -p .harness/nodes/test-design/run_1
 cat > .harness/nodes/test-design/handshake.json <<'EOF'
-{"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:03:00.000Z","artifacts":[{"type":"eval","path":"eval-a.md"},{"type":"eval","path":"eval-b.md"}]}
+{"nodeId":"test-design","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:03:00.000Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"},{"type":"test-plan","path":"run_1/test-plan.md"},{"type":"test-command","path":"run_1/test-execution.json"}]}
 EOF
-echo "# Eval A" > .harness/nodes/test-design/eval-a.md
-echo "# Eval B" > .harness/nodes/test-design/eval-b.md
-write_complete_test_plan .harness/nodes/test-design/test-plan.md
+echo "# Eval A" > .harness/nodes/test-design/run_1/eval-a.md
+echo "# Eval B" > .harness/nodes/test-design/run_1/eval-b.md
+write_complete_test_plan .harness/nodes/test-design/run_1/test-plan.md
+printf '%s\n' '{"nodeId":"test-design","runId":"run_1","testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture"]}' > .harness/nodes/test-design/run_1/test-execution.json
+sync_run_handshakes ".harness"
 $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
-mkdir -p .harness/nodes/test-execute
+mkdir -p .harness/nodes/test-execute/run_1
 cat > .harness/nodes/test-execute/handshake.json <<'EOF'
-{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:04:00.000Z","artifacts":[{"type":"test-result","path":"o"}]}
+{"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","verdict":"PASS","summary":"ok","timestamp":"2026-01-01T00:04:00.000Z","artifacts":[{"type":"test-result","path":"run_1/o"}]}
 EOF
-touch .harness/nodes/test-execute/o
+touch .harness/nodes/test-execute/run_1/o
+sync_run_handshakes ".harness"
 $HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null >/dev/null
 
 # ── Test 1: gate FAIL → routes back to brief ──
@@ -75,6 +80,7 @@ cat > .harness/nodes/gate/handshake.json <<'EOF'
 EOF
 # Need backlog.md for FAIL/ITERATE transitions
 echo "- Fix null reference" > .harness/backlog.md
+sync_run_handshakes ".harness"
 TRANS=$($HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .harness 2>/dev/null)
 ALLOWED=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin)['allowed'])")
 if [ "$ALLOWED" = "True" ]; then

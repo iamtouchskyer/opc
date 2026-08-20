@@ -61,6 +61,10 @@ write_handshake() {
   local run_dir
   run_dir=$(ls -d "$dir/nodes/$node"/run_* 2>/dev/null | sort -V | tail -1)
   local artifacts="[]"
+  local extra=""
+  if [ "$node" = "test-design" ]; then
+    extra=', "testCommand": "printf ok"'
+  fi
   if [ -n "$run_dir" ]; then
     artifacts=$(ls "$run_dir"/eval-*.md 2>/dev/null | python3 -c "
 import sys, json
@@ -78,9 +82,10 @@ print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
   "summary": "$summary",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "artifacts": $artifacts,
-  "findings": null
+  "findings": null$extra
 }
 EOF
+  sync_run_handshakes "$dir"
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -115,6 +120,7 @@ setup_at_gate_test() {
   cat > .harness/nodes/test-execute/handshake.json << EOF
 {"nodeId":"test-execute","nodeType":"execute","runId":"run_1","status":"completed","verdict":"PASS","summary":"Tests pass","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","artifacts":[{"type":"test-result","path":"run_1/test-results.json"}]}
 EOF
+  sync_run_handshakes .harness
   $HARNESS transition --from test-execute --to gate-test --verdict PASS --flow full-stack --dir .harness 2>/dev/null
   # Now at gate-test. Write upstream review evals to test-design for synthesize
   # (synthesize looks at the latest non-gate node)
@@ -247,7 +253,7 @@ cd "$DIR"
 $HARNESS init --flow build-verify --entry test-design --dir .harness 2>/dev/null
 write_good_eval .harness test-design tester
 write_good_eval .harness test-design engineer
-write_complete_test_plan .harness/nodes/test-design/test-plan.md
+write_complete_test_plan .harness/nodes/test-design/run_1/test-plan.md
 write_handshake .harness test-design "Test design done" "PASS"
 TRANS=$($HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null)
 if echo "$TRANS" | grep -q "reviews test plan completeness"; then
@@ -314,6 +320,7 @@ mkdir -p .harness/nodes/review
 cat > .harness/nodes/review/handshake.json << EOF
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","verdict":"PASS","summary":"No evals","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","artifacts":[{"type":"code","path":"src/foo.ts"}]}
 EOF
+sync_run_handshakes .harness
 TRANS=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null)
 if echo "$TRANS" | grep -q "no eval-type artifacts\|eval artifacts"; then
   echo "  ✅ transition refused when review has no eval artifacts"; PASS=$((PASS+1))

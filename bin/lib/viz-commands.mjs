@@ -35,7 +35,7 @@ export function cmdViz(args) {
     }
   }
 
-  const resolved = resolveFlowTemplate(args, state);
+  let resolved = resolveFlowTemplate(args, state);
   if (resolved.error) {
     console.error(resolved.error);
     process.exit(1);

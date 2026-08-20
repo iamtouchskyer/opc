@@ -6,14 +6,19 @@ import { join } from "path";
 import { execFileSync } from "child_process";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
-import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
-import { cmdTransition } from "./flow-transition.mjs";
+import { resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
+import { allocateNextRunId, cmdTransition, reserveRunDirectory } from "./flow-transition.mjs";
 import {
   getFlag, resolveDir, atomicWriteSync, getSessionsBaseDir,
   WRITER_SIG,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
 import { resolveCallerIdentity, checkOwnership } from "./driver-owner.mjs";
+import { evaluateFlowBudget, nodeHasBudgetedExit } from "./flow-budget.mjs";
+import { resolveCurrentRun } from "./runaway-guard.mjs";
+import { stoppedFlowError } from "./flow-state-guard.mjs";
+import { resolveExactRunHandshake } from "./flow-evidence.mjs";
+import { guardMissionMutation, sealMissionRuntimeState } from "./mission-contract.mjs";
 
 // ── Shared state loader ──
 
@@ -38,7 +43,6 @@ function loadState(dir) {
 
 export function cmdSkip(args) {
   const dir = resolveDir(args);
-  const flow = getFlag(args, "flow");
   const statePath = join(dir, "flow-state.json");
 
   // Acquire lock
@@ -51,9 +55,29 @@ export function cmdSkip(args) {
     const loaded = loadState(dir);
     if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
     const { state, statePath: sp } = loaded;
-    const templateName = flow || state.flowTemplate;
-    const template = Object.hasOwn(FLOW_TEMPLATES, templateName) ? FLOW_TEMPLATES[templateName] : null;
-    if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${templateName}` })); return; }
+    const stopped = stoppedFlowError(state, "skip");
+    if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "skip" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        error: missionGuard.reason,
+        allowed: false,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
+    if (missionGuard.enabled) {
+      console.log(JSON.stringify({
+        error: "Mission mode forbids skip because it bypasses sealed evidence and retry accounting; use transition or an audited mission-decision",
+        allowed: false,
+        rebet_required: false,
+      }));
+      return;
+    }
+    const resolved = resolveFlowTemplate(args, state);
+    if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
+    const { template } = resolved;
 
     const current = state.currentNode;
     const edges = template.edges[current];
@@ -67,25 +91,17 @@ export function cmdSkip(args) {
       return;
     }
 
+    const sourceRun = resolveCurrentRun(state);
+    if (!sourceRun) {
+      console.log(JSON.stringify({ error: `cannot resolve current run for '${current}'` }));
+      return;
+    }
+
     // ── Cycle limit checks (mirror cmdTransition) ──
-    const limits = {
-      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
-      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
-      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
-    };
-    if (state.totalSteps >= limits.maxTotalSteps) {
-      console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot skip` }));
-      return;
-    }
     const edgeKey = `${current}\u2192${next}`;
-    const edgeCount = state.edgeCounts[edgeKey] || 0;
-    if (edgeCount >= limits.maxLoopsPerEdge) {
-      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot skip` }));
-      return;
-    }
-    const nodeEntries = state.history.filter(h => h.nodeId === next).length;
-    if (nodeEntries >= limits.maxNodeReentry) {
-      console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${next}' — cannot skip` }));
+    const budget = evaluateFlowBudget({ state, template, from: current, to: next, verdict: "PASS" });
+    if (!budget.allowed) {
+      console.log(JSON.stringify({ error: `${budget.reason} — cannot skip` }));
       return;
     }
     // ── maxSkips: prevent skipping through entire flow ──
@@ -96,13 +112,27 @@ export function cmdSkip(args) {
       return;
     }
 
+    let targetRunEntries = [];
+    try {
+      targetRunEntries = readdirSync(join(dir, "nodes", next), { withFileTypes: true });
+    } catch { /* target node has no run directory yet */ }
+    const runId = allocateNextRunId(state.history, targetRunEntries, next);
+    try {
+      reserveRunDirectory(dir, next, runId);
+    } catch (error) {
+      console.log(JSON.stringify({
+        error: `cannot reserve run directory 'nodes/${next}/${runId}': ${error.message}`,
+      }));
+      return;
+    }
+
     // Write a skip handshake so pre-transition won't block
     const nodeDir = join(dir, "nodes", current);
     mkdirSync(nodeDir, { recursive: true });
     const skipHandshake = {
       nodeId: current,
       nodeType: template.nodeTypes?.[current] || "execute",
-      runId: `run_${(state.history.filter(h => h.nodeId === current).length || 0) + 1}`,
+      runId: sourceRun.runId,
       status: "completed",
       verdict: null,
       summary: "SKIPPED via /opc skip",
@@ -112,16 +142,14 @@ export function cmdSkip(args) {
     };
     atomicWriteSync(join(nodeDir, "handshake.json"), JSON.stringify(skipHandshake, null, 2) + "\n");
 
-    const runId = `run_${state.history.filter(h => h.nodeId === next).length + 1}`;
     state.history.push({ nodeId: next, runId, timestamp: new Date().toISOString(), skipped: true });
     state.currentNode = next;
     state.totalSteps++;
-    state.edgeCounts[edgeKey] = (state.edgeCounts[edgeKey] || 0) + 1;
+    state.edgeCounts[edgeKey] = budget.edgeCount + 1;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 
     atomicWriteSync(sp, JSON.stringify(state, null, 2) + "\n");
-    mkdirSync(join(dir, "nodes", next, runId), { recursive: true });
 
     console.log(JSON.stringify({ skipped: current, next, runId }));
   } finally {
@@ -137,9 +165,21 @@ export function cmdPass(args) {
   const loaded = loadState(dir);
   if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
   const { state } = loaded;
-  const templateName = state.flowTemplate;
-  const template = Object.hasOwn(FLOW_TEMPLATES, templateName) ? FLOW_TEMPLATES[templateName] : null;
-  if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${templateName}` })); return; }
+  const stopped = stoppedFlowError(state, "pass");
+  if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+  const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "pass" });
+  if (!missionGuard.allowed) {
+    console.log(JSON.stringify({
+      error: missionGuard.reason,
+      allowed: false,
+      rebet_required: missionGuard.rebet_required,
+      missionIntegrityErrors: missionGuard.errors,
+    }));
+    return;
+  }
+  const resolved = resolveFlowTemplate(args, state);
+  if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
+  const { template, name: templateName } = resolved;
 
   const current = state.currentNode;
   const nodeType = template.nodeTypes?.[current];
@@ -167,13 +207,37 @@ export function cmdPass(args) {
     return nt && nt !== "gate" && Object.values(template.edges[n]).includes(current);
   });
   if (upstreamId) {
-    const upstreamHandshakePath = join(dir, "nodes", upstreamId, "handshake.json");
-    if (existsSync(upstreamHandshakePath)) {
+    const upstreamEntries = (state.history || []).filter(h => h?.nodeId === upstreamId);
+    const upstreamEntry = upstreamEntries.length > 0
+      ? upstreamEntries[upstreamEntries.length - 1]
+      : (upstreamId === state.entryNode ? { nodeId: upstreamId, runId: "run_1", legacyInitial: true } : null);
+    const runMatch = /^run_(\d+)$/.exec(upstreamEntry?.runId || "");
+    if (!runMatch) {
+      console.log(JSON.stringify({
+        error: `Cannot force-pass: upstream history for '${upstreamId}' has missing or invalid runId.`,
+        allowed: false,
+      }));
+      return;
+    }
+    const upstreamExact = resolveExactRunHandshake(dir, upstreamId, upstreamEntry.runId);
+    if (upstreamExact.error) {
+      console.log(JSON.stringify({ error: `Cannot force-pass: ${upstreamExact.error}`, allowed: false }));
+      return;
+    }
+    if (upstreamExact.missing || !upstreamExact.path || !existsSync(upstreamExact.path)) {
+      console.log(JSON.stringify({
+        error: `Cannot force-pass: upstream evidence missing for '${upstreamId}' ${upstreamEntry.runId}.`,
+        allowed: false,
+      }));
+      return;
+    }
+    if (existsSync(upstreamExact.path)) {
       try {
         const harnessPath = join(dirname(fileURLToPath(import.meta.url)), "..", "opc-harness.mjs");
+        const synthArgs = [harnessPath, "synthesize", "--node", upstreamId, "--dir", dir, "--no-strict", "--run", runMatch[1]];
         const synthOutput = execFileSync(
           "node",
-          [harnessPath, "synthesize", "--node", upstreamId, "--dir", dir, "--no-strict"],
+          synthArgs,
           { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
         );
         // synthesize may output pretty-printed JSON; extract from first { to last }
@@ -230,10 +294,32 @@ export function cmdStop(args) {
   try {
     const loaded = loadState(dir);
     if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
-    const { state, statePath: sp } = loaded;
-
+    let { state } = loaded;
+    const sp = loaded.statePath;
+    // Emergency/manual stop remains available while a Mission Gate is pending.
+    // Integrity and terminal-state checks still apply; only the pending-gate
+    // mutation block is bypassed for this non-success terminal action.
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "stop", allowPending: true });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        stopped: false,
+        error: missionGuard.reason,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
     if (state.status === "completed") {
       console.log(JSON.stringify({ stopped: false, reason: "flow already completed" }));
+      return;
+    }
+    if (state.status === "stopped") {
+      console.log(JSON.stringify({
+        stopped: true,
+        alreadyStopped: true,
+        currentNode: state.currentNode,
+        totalSteps: state.totalSteps,
+      }));
       return;
     }
 
@@ -242,6 +328,19 @@ export function cmdStop(args) {
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath: sp,
+        reason: "stop",
+      });
+      if (!sealed.ok) {
+        console.log(JSON.stringify({ stopped: false, error: sealed.error }));
+        return;
+      }
+      state = sealed.state;
+    }
     atomicWriteSync(sp, JSON.stringify(state, null, 2) + "\n");
     console.log(JSON.stringify({ stopped: true, currentNode: state.currentNode, totalSteps: state.totalSteps }));
   } finally {
@@ -281,47 +380,84 @@ export function cmdGoto(args) {
     const loaded = loadState(dir);
     if (!loaded) { console.log(JSON.stringify({ error: "no flow-state.json" })); return; }
     const { state, statePath: sp } = loaded;
-    const template = Object.hasOwn(FLOW_TEMPLATES, state.flowTemplate) ? FLOW_TEMPLATES[state.flowTemplate] : null;
-    if (!template) { console.log(JSON.stringify({ error: `unknown flow: ${state.flowTemplate}` })); return; }
+    const stopped = stoppedFlowError(state, "goto");
+    if (stopped) { console.log(JSON.stringify({ error: stopped })); return; }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "goto" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({
+        error: missionGuard.reason,
+        allowed: false,
+        rebet_required: missionGuard.rebet_required,
+        missionIntegrityErrors: missionGuard.errors,
+      }));
+      return;
+    }
+    if (missionGuard.enabled) {
+      console.log(JSON.stringify({
+        error: "Mission mode forbids goto because it bypasses trajectory and retry accounting; use the declared flow or an audited mission-decision",
+        allowed: false,
+        rebet_required: false,
+      }));
+      return;
+    }
+    const resolved = resolveFlowTemplate(args, state);
+    if (resolved.error) { console.log(JSON.stringify({ error: resolved.error })); return; }
+    const { template, name: flowName } = resolved;
 
     if (!template.nodes.includes(targetNode)) {
-      console.log(JSON.stringify({ error: `'${targetNode}' is not a node in flow '${state.flowTemplate}'` }));
+      console.log(JSON.stringify({ error: `'${targetNode}' is not a node in flow '${flowName}'` }));
       return;
     }
 
-    // Check node reentry limit
-    const limits = {
-      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
-      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
-      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
-    };
-    if (state.totalSteps >= limits.maxTotalSteps) {
-      console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot goto` }));
-      return;
-    }
     const edgeKey = `${state.currentNode}→${targetNode}`;
-    const edgeCount = state.edgeCounts?.[edgeKey] || 0;
-    if (edgeCount >= limits.maxLoopsPerEdge) {
-      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot goto` }));
-      return;
-    }
-    const nodeEntries = state.history.filter(h => h.nodeId === targetNode).length;
-    if (nodeEntries >= limits.maxNodeReentry) {
-      console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${targetNode}'` }));
+    const gotoBudget = evaluateFlowBudget({
+      state,
+      template,
+      from: state.currentNode,
+      to: targetNode,
+      verdict: "GOTO",
+    });
+    if (!gotoBudget.allowed) {
+      console.log(JSON.stringify({ error: `${gotoBudget.reason} — cannot goto` }));
       return;
     }
 
-    const runId = `run_${nodeEntries + 1}`;
+    const projectedState = {
+      ...state,
+      totalSteps: state.totalSteps + 1,
+      history: [...state.history, { nodeId: targetNode }],
+    };
+    const exit = nodeHasBudgetedExit({ state: projectedState, template, node: targetNode });
+    if (!exit.available) {
+      console.log(JSON.stringify({
+        error: `goto target '${targetNode}' has no budgeted exit`,
+        reasons: exit.reasons,
+      }));
+      return;
+    }
+
+    let targetRunEntries = [];
+    try {
+      targetRunEntries = readdirSync(join(dir, "nodes", targetNode), { withFileTypes: true });
+    } catch { /* target node has no run directory yet */ }
+    const runId = allocateNextRunId(state.history, targetRunEntries, targetNode);
+    try {
+      reserveRunDirectory(dir, targetNode, runId);
+    } catch (error) {
+      console.log(JSON.stringify({
+        error: `cannot reserve run directory 'nodes/${targetNode}/${runId}': ${error.message}`,
+      }));
+      return;
+    }
+
     state.history.push({ nodeId: targetNode, runId, timestamp: new Date().toISOString(), goto: true });
     state.currentNode = targetNode;
     state.totalSteps++;
-    if (!state.edgeCounts) state.edgeCounts = {};
-    state.edgeCounts[edgeKey] = (state.edgeCounts[edgeKey] || 0) + 1;
+    state.edgeCounts[edgeKey] = gotoBudget.edgeCount + 1;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 
     atomicWriteSync(sp, JSON.stringify(state, null, 2) + "\n");
-    mkdirSync(join(dir, "nodes", targetNode, runId), { recursive: true });
 
     console.log(JSON.stringify({ goto: targetNode, runId, totalSteps: state.totalSteps }));
   } finally {

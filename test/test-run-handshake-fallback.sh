@@ -29,6 +29,29 @@ write_run_handshake() {
 JSON
 }
 
+write_build_state() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat > "$dir/flow-state.json" <<'JSON'
+{
+  "version": "1.0",
+  "flowTemplate": "build-verify",
+  "currentNode": "build",
+  "entryNode": "build",
+  "totalSteps": 1,
+  "maxTotalSteps": 25,
+  "maxLoopsPerEdge": 3,
+  "maxNodeReentry": 5,
+  "history": [{ "nodeId": "build", "runId": "run_1", "timestamp": "2026-01-01T00:00:00.000Z" }],
+  "edgeCounts": {},
+  "repairEdgeCounts": {},
+  "_written_by": "opc-harness",
+  "_write_nonce": "test-run-handshake-fallback",
+  "_last_modified": "2026-01-01T00:00:00.000Z"
+}
+JSON
+}
+
 write_run_handshake_with_failing_report() {
   local dir="$1"
   mkdir -p "$dir/nodes/test-execute/run_1"
@@ -55,9 +78,10 @@ echo "--- run-level handshake validates through node-level path ---"
 DIR="$PWD/fallback-validate"
 rm -rf "$DIR"
 write_run_handshake "$DIR/.harness"
+write_build_state "$DIR/.harness"
 OUT=$($HARNESS validate "$DIR/.harness/nodes/build/handshake.json" 2>/dev/null)
 if echo "$OUT" | grep -q '"valid":true'; then
-  ok "validate falls back to latest run_N/handshake.json"
+  ok "validate falls back to state-selected run_N/handshake.json"
 else
   bad "validate did not use run fallback: $OUT"
 fi
@@ -69,14 +93,14 @@ $HARNESS init --flow build-verify --entry build --dir fallback-transition/.harne
 write_run_handshake "$DIR/.harness"
 OUT=$($HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir fallback-transition/.harness 2>/dev/null)
 if echo "$OUT" | grep -q '"allowed":true'; then
-  ok "transition falls back to latest run_N/handshake.json"
+  ok "transition falls back to state-selected run_N/handshake.json"
 else
   bad "transition did not use run fallback: $OUT"
 fi
 
 OUT=$($HARNESS validate-chain --dir fallback-transition/.harness 2>/dev/null)
 if echo "$OUT" | grep -q '"valid":true'; then
-  ok "validate-chain accepts latest run_N/handshake.json"
+  ok "validate-chain accepts state-selected run_N/handshake.json"
 else
   bad "validate-chain did not use run fallback: $OUT"
 fi

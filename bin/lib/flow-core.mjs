@@ -1,13 +1,25 @@
 // Flow core commands: route, init, validate, validateHandshakeData, validate-context
 // Depends on: flow-templates.mjs, viz-commands.mjs (getMarker), util.mjs
 
-import { readFileSync, mkdirSync, existsSync, readdirSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  lstatSync,
+} from "fs";
 import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
+import { homedir } from "os";
+import { execFileSync, execSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
-  getFlag, resolveDir, atomicWriteSync, createSessionDir, getProjectRoot,
+  getFlag, hasFlag, resolveDir, atomicWriteSync, createSessionDir, getProjectRoot, getSessionsBaseDir,
   VALID_NODE_TYPES, VALID_STATUSES, VALID_VERDICTS, EVIDENCE_TYPES,
   WRITER_SIG,
 } from "./util.mjs";
@@ -21,9 +33,42 @@ import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
 import { runBriefLint } from "./brief-lint.mjs";
 import { loadExtensions, saveRegistryCache, resolveBypass, clearBreakerState, fireNodePreflight } from "./extensions.mjs";
 import { parseBypassArgs } from "./bypass-args.mjs";
-import { readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
-import { collectTestResultReasons } from "./test-result-gate.mjs";
+import {
+  collectPromptExtensionProvenanceErrors,
+  readTaskFromAC,
+  resolveNodeExtensionContext,
+} from "./ext-commands.mjs";
+import {
+  collectTestEvidenceProvenanceReasons,
+  collectTestResultReasons,
+} from "./test-result-gate.mjs";
 import { loadTestCommandSpec, testCommandHash } from "./test-command-execution.mjs";
+import {
+  AUTO_MODE_REMINDER,
+  readSessionRegistry,
+  registryPath,
+  resolveCurrentRun,
+  writeSessionRegistry,
+} from "./runaway-guard.mjs";
+import { lockFile } from "./file-lock.mjs";
+import { evaluateFlowBudget } from "./flow-budget.mjs";
+import { parseRunOrdinal } from "./run-id.mjs";
+import { stoppedFlowError } from "./flow-state-guard.mjs";
+import {
+  expectedRunForNode,
+  isRunId,
+  isPlainObject,
+  readSessionAuthority,
+  resolveExactRunHandshake,
+  authoritativeEntries,
+  canonicalProjectionErrors,
+} from "./flow-evidence.mjs";
+import {
+  guardMissionMutation,
+  prepareMissionState,
+  sealMissionRuntimeState,
+  verifyMissionIntegrity,
+} from "./mission-contract.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -45,10 +90,19 @@ export function cmdRoute(args) {
   let state = null;
   if (stateDir) {
     const statePath = join(stateDir, "flow-state.json");
-    try {
-      state = JSON.parse(readFileSync(statePath, "utf8"));
-      if (state._flow_file) loadFlowFromFile(state._flow_file);
-    } catch { /* no/corrupt state file — resolve from args alone */ }
+    if (existsSync(statePath)) {
+      try {
+        state = JSON.parse(readFileSync(statePath, "utf8"));
+        if (!state || typeof state !== "object" || Array.isArray(state)) {
+          console.log(JSON.stringify({ next: null, valid: false, error: "corrupt flow-state.json: expected an object" }));
+          return;
+        }
+        if (state._flow_file) loadFlowFromFile(state._flow_file);
+      } catch (error) {
+        console.log(JSON.stringify({ next: null, valid: false, error: `corrupt flow-state.json: ${error.message}` }));
+        return;
+      }
+    }
   }
 
   const resolved = resolveFlowTemplate(args, state);
@@ -69,27 +123,211 @@ export function cmdRoute(args) {
     return;
   }
 
+  const next = nodeEdges[verdict];
+  if (state) {
+    const budget = evaluateFlowBudget({ state, template, from: node, to: next, verdict });
+    if (!budget.allowed) {
+      console.log(JSON.stringify({ next: null, valid: false, error: budget.reason }));
+      return;
+    }
+  }
+
   // Read autoMode from the state loaded above
   let autoReminder;
   if (state && state.autoMode) {
-    autoReminder = "auto mode — do not pause, do not ask user, keep executing";
+    autoReminder = AUTO_MODE_REMINDER;
   }
 
-  console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
+  console.log(JSON.stringify({ next, valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
 }
 
 // ─── init ───────────────────────────────────────────────────────
+
+// Resolve the current git HEAD sha for a working tree, or null if not a repo.
+function gitHeadSha(cwd) {
+  try {
+    return execSync("git rev-parse HEAD", {
+      cwd, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch { return null; }
+}
+
+// ─── record-commit ──────────────────────────────────────────────
+// Record a commit the flow produced into flow-state.producedCommits. The gate's
+// changeScope layer diffs exactly these commits, so a delivered change is
+// coverage-checked while a session-local / no-commit flow is left alone.
+// Usage: opc-harness record-commit [--sha <sha>] [--dir <session>]
+export function cmdRecordCommit(args) {
+  const dir = resolveDir(args);
+  const statePath = join(dir, "flow-state.json");
+  if (!existsSync(statePath)) {
+    console.log(JSON.stringify({ recorded: false, error: "flow-state.json not found" }));
+    return;
+  }
+  const lock = lockFile(statePath, { command: "record-commit" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ recorded: false, error: "could not acquire flow state lock", holder: lock.holder }));
+    return;
+  }
+  try {
+    // The state must be read only after acquiring the same lock used by mission
+    // decisions, otherwise a stale record-commit write can erase a newer gate.
+    let state;
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch (err) {
+      console.log(JSON.stringify({ recorded: false, error: `corrupt flow-state.json: ${err.message}` }));
+      return;
+    }
+    const stopped = stoppedFlowError(state, "record-commit");
+    if (stopped) {
+      console.log(JSON.stringify({ recorded: false, error: stopped }));
+      return;
+    }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "record-commit" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({ recorded: false, error: missionGuard.reason, rebet_required: missionGuard.rebet_required }));
+      return;
+    }
+
+    const root = (typeof state.projectRoot === "string" && state.projectRoot) ? state.projectRoot : getProjectRoot();
+    let sha = getFlag(args, "sha", null);
+    if (!sha) {
+      sha = gitHeadSha(root);
+      if (!sha) {
+        console.log(JSON.stringify({ recorded: false, error: "cannot resolve HEAD — not a git repository" }));
+        return;
+      }
+    }
+
+    let full;
+    try {
+      full = execFileSync("git", ["rev-parse", "--verify", `${sha}^{commit}`], {
+        cwd: root, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      console.log(JSON.stringify({ recorded: false, error: `not a valid commit: ${sha}` }));
+      return;
+    }
+
+    if (!Array.isArray(state.producedCommits)) state.producedCommits = [];
+    const already = state.producedCommits.includes(full);
+    if (!already) state.producedCommits.push(full);
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    state._write_nonce = createHash("sha256")
+      .update(`${state._last_modified}:${full}:${state._write_nonce || ""}`)
+      .digest("hex")
+      .slice(0, 16);
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath,
+        reason: "record-commit",
+      });
+      if (!sealed.ok) {
+        console.log(JSON.stringify({ recorded: false, error: sealed.error }));
+        return;
+      }
+      state = sealed.state;
+    }
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    console.log(JSON.stringify({ recorded: true, sha: full, already, producedCommits: state.producedCommits }));
+  } finally {
+    lock.release();
+  }
+}
+
+function validatePreToolHook(home) {
+  const hookPath = join(home, ".claude", "skills", "opc", "bin", "hooks", "opc-pre-tool-budget.mjs");
+  if (!existsSync(hookPath)) {
+    return `PreToolUse hook script is missing: ${hookPath}. Run 'opc install' and 'opc install-hooks'.`;
+  }
+
+  const settingsPath = join(home, ".claude", "settings.json");
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch (error) {
+    return `PreToolUse hook is not installed: cannot read ${settingsPath}: ${error.message}`;
+  }
+  const entries = settings?.hooks?.PreToolUse;
+  const expectedCommand = `node "${hookPath}"`;
+  const installed = Array.isArray(entries) && entries.some(entry =>
+    (entry?.matcher == null || entry.matcher === "") &&
+    entry?.hooks?.some(hook =>
+      hook?.type === "command" && hook.async !== true && hook.command === expectedCommand
+    )
+  );
+  return installed ? null : `PreToolUse hook is not installed in ${settingsPath}. Run 'opc install-hooks'.`;
+}
+
+function activeRegistryConflict(sessionId, home) {
+  let registry;
+  try {
+    registry = readSessionRegistry(sessionId, home);
+  } catch (error) {
+    return `cannot verify existing session registry: ${error.message}`;
+  }
+  if (!registry) return null;
+
+  let state;
+  try {
+    state = JSON.parse(readFileSync(join(registry.sessionDir, "flow-state.json"), "utf8"));
+  } catch (error) {
+    return `cannot verify existing registered flow: ${error.message}`;
+  }
+  if (state?.status === "completed" || state?.status === "stopped") return null;
+  if (state?.autoMode === true && state?._claudeSessionId === sessionId) {
+    return `Claude session '${sessionId}' is already bound to an active auto flow at ${registry.sessionDir}`;
+  }
+  return `existing session registry for '${sessionId}' is not safely replaceable`;
+}
+
+function restoreLatestAfterFailedInit(latestLink, failedDir, previousTarget) {
+  if (!latestLink) return;
+  try {
+    const currentTarget = readlinkSync(latestLink);
+    if (resolve(dirname(latestLink), currentTarget) !== resolve(failedDir)) return;
+    if (previousTarget === null) {
+      rmSync(latestLink, { force: true });
+      return;
+    }
+    const tempLink = `${latestLink}.rollback.${process.pid}`;
+    rmSync(tempLink, { force: true });
+    symlinkSync(previousTarget, tempLink);
+    renameSync(tempLink, latestLink);
+  } catch {
+    // Best effort: registry failure remains the primary error.
+  }
+}
 
 export async function cmdInit(args) {
   const entry = getFlag(args, "entry");
   const tier = getFlag(args, "tier");
   const autoMode = args.includes("--auto");
+  const claudeSessionId = getFlag(args, "claude-session-id");
   const hasExplicitDir = args.includes("--dir");
-  const dir = hasExplicitDir ? resolveDir(args) : createSessionDir();
+  const missionPath = getFlag(args, "mission", null);
+  const parentSession = getFlag(args, "parent-session", null);
 
   if (tier && !VALID_TIERS.has(tier)) {
     console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
     return;
+  }
+
+  if (autoMode) {
+    if (!claudeSessionId) {
+      console.log(JSON.stringify({ created: false, error: "init --auto requires non-empty --claude-session-id" }));
+      return;
+    }
+    const home = homedir();
+    const hookError = validatePreToolHook(home);
+    if (hookError) {
+      console.log(JSON.stringify({ created: false, error: hookError }));
+      return;
+    }
   }
 
   const resolved = resolveFlowTemplate(args);
@@ -105,14 +343,78 @@ export async function cmdInit(args) {
     return;
   }
 
+  let registryLock = null;
+  if (autoMode) {
+    const home = homedir();
+    const path = registryPath(claudeSessionId, home);
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      registryLock = lockFile(path, { command: "init-auto" });
+    } catch (error) {
+      console.log(JSON.stringify({ created: false, error: `cannot prepare session registry: ${error.message}` }));
+      return;
+    }
+    if (!registryLock.acquired) {
+      console.log(JSON.stringify({ created: false, error: "cannot acquire session registry lock" }));
+      return;
+    }
+    const conflict = activeRegistryConflict(claudeSessionId, home);
+    if (conflict) {
+      registryLock.release();
+      console.log(JSON.stringify({ created: false, error: conflict }));
+      return;
+    }
+  }
+
+  const explicitDir = hasExplicitDir ? resolveDir(args) : null;
+  const removeDirOnRegistryFailure = !hasExplicitDir || !existsSync(explicitDir);
+  const latestLink = hasExplicitDir ? null : join(getSessionsBaseDir(), "latest");
+  let previousLatestTarget = null;
+  if (latestLink) {
+    try { previousLatestTarget = readlinkSync(latestLink); } catch { /* no previous session */ }
+  }
+  const dir = explicitDir || createSessionDir();
+  const nodesPath = join(dir, "nodes");
+  const nodesExistedBefore = existsSync(nodesPath);
   const statePath = join(dir, "flow-state.json");
   const force = args.includes("--force");
   if (existsSync(statePath) && !force) {
+    registryLock?.release();
     console.log(JSON.stringify({ created: false, error: "flow-state.json already exists (use --force to overwrite)" }));
     return;
   }
+  const priorStateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : null;
 
-  mkdirSync(join(dir, "nodes"), { recursive: true });
+  // Initialization must not become an alternate Mission reset command. Check
+  // both state modes explicitly so deleting the active state, deleting its
+  // `mission` marker, or starting the other mode in the same directory cannot
+  // bypass an intact runtime ledger.
+  if (existsSync(dir)) {
+    for (const candidatePath of [statePath, join(dir, "loop-state.json")]) {
+      let candidateState = {};
+      if (existsSync(candidatePath)) {
+        try { candidateState = JSON.parse(readFileSync(candidatePath, "utf8")); } catch { /* verification fails closed */ }
+      }
+      const priorIntegrity = verifyMissionIntegrity({
+        sessionDir: dir,
+        state: candidateState,
+        statePath: candidatePath,
+        allowLegacyCorruptUnsealed: true,
+      });
+      if (!priorIntegrity.enabled) continue;
+      registryLock?.release();
+      console.log(JSON.stringify({
+        created: false,
+        error: priorIntegrity.ok
+          ? "cannot overwrite an authoritative Mission session; use a new session or an audited Mission decision"
+          : `cannot overwrite Mission runtime authority: ${priorIntegrity.errors.join("; ")}`,
+        status: "mission_authority_exists",
+      }));
+      return;
+    }
+  }
+
+  mkdirSync(nodesPath, { recursive: true });
 
   // ─── Resolve bypass state BEFORE writing flow-state.json ────────
   // Record it on flow-state so validate-chain and other downstream
@@ -128,7 +430,41 @@ export async function cmdInit(args) {
         ? { mode: "disable-all", source: bypassDecision.source }
         : { mode: "whitelist", source: bypassDecision.source, names: bypassDecision.names || [] };
 
-  const state = {
+  const projectRoot = getProjectRoot();
+  const flowStartedAt = new Date().toISOString();
+  let preparedMission = { ok: true, enabled: false };
+  if (missionPath || parentSession) {
+    const explicitCriteria = getFlag(args, "criteria", null);
+    const defaultCriteria = join(dir, "acceptance-criteria.md");
+    const criteriaPath = explicitCriteria || defaultCriteria;
+    const explicitPlan = getFlag(args, "plan", null);
+    const defaultPlan = join(dir, "plan.md");
+    const planPath = explicitPlan || (existsSync(defaultPlan) ? defaultPlan : null);
+    preparedMission = prepareMissionState({
+      sessionDir: dir,
+      missionPath,
+      criteriaPath,
+      planPath,
+      parentSession,
+    });
+    if (!preparedMission.ok) {
+      registryLock?.release();
+      if (!hasExplicitDir) {
+        rmSync(dir, { recursive: true, force: true });
+        restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+      } else if (!nodesExistedBefore) {
+        rmSync(nodesPath, { recursive: true, force: true });
+      }
+      console.log(JSON.stringify({
+        created: false,
+        error: preparedMission.error,
+        errors: preparedMission.errors,
+        status: "invalid_mission",
+      }));
+      return;
+    }
+  }
+  let state = {
     version: "1.0",
     flowTemplate: flow,
     currentNode: entryNode,
@@ -140,18 +476,104 @@ export async function cmdInit(args) {
     maxNodeReentry: template.limits.maxNodeReentry,
     history: [],
     edgeCounts: {},
-    projectRoot: getProjectRoot(),
+    repairEdgeCounts: {},
+    projectRoot,
+    // Git floor at flow start + commits the flow produces. changeScope diffs
+    // producedCommits (recorded via `record-commit`), never a blind HEAD~1.
+    baseSha: gitHeadSha(projectRoot),
+    producedCommits: [],
     bypassMode: bypassRecord,
+    flowStartedAt,
     autoMode: autoMode || undefined,
+    ...(autoMode ? {
+      _claudeSessionId: claudeSessionId,
+      autoRepairCounts: {},
+    } : {}),
+    ...(preparedMission.enabled ? {
+      flowStartedAt,
+      mission: preparedMission.mission,
+      trajectory: preparedMission.trajectory,
+      findingRegistry: preparedMission.findingRegistry,
+      evidenceReceipts: preparedMission.evidenceReceipts,
+      checkpointReceipts: preparedMission.checkpointReceipts,
+    } : {}),
     _written_by: WRITER_SIG,
-    _last_modified: new Date().toISOString(),
+    _last_modified: flowStartedAt,
     _flow_file: template._source_file || undefined,
     _write_nonce: createHash("sha256")
       .update(Date.now().toString() + Math.random().toString())
       .digest("hex").slice(0, 16),
   };
 
-  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  // Auto registration can still fail. Delay the first Mission seal/write
+  // until the registry has been published so that rollback never restores old
+  // bytes behind a newer committed runtime seal. Mission-less init keeps its
+  // established ordering and exact rollback behavior.
+  const deferInitialMissionWrite = autoMode && Boolean(state.mission);
+  const persistInitialState = () => {
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath,
+        reason: "init",
+        allowUnsealed: true,
+      });
+      if (!sealed.ok) return sealed;
+      state = sealed.state;
+    }
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    return { ok: true };
+  };
+  if (!deferInitialMissionWrite) {
+    const persisted = persistInitialState();
+    if (!persisted.ok) {
+      registryLock?.release();
+      console.log(JSON.stringify({ created: false, error: persisted.error, status: "invalid_mission_state" }));
+      return;
+    }
+  }
+
+  if (autoMode) {
+    try {
+      writeSessionRegistry({
+        sessionId: claudeSessionId,
+        sessionDir: resolve(dir),
+        projectRoot,
+        registeredAt: flowStartedAt,
+      }, homedir());
+    } catch (error) {
+      if (removeDirOnRegistryFailure) {
+        rmSync(dir, { recursive: true, force: true });
+        restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+      } else {
+        if (priorStateText === null) rmSync(statePath, { force: true });
+        else atomicWriteSync(statePath, priorStateText);
+        if (!nodesExistedBefore) rmSync(nodesPath, { recursive: true, force: true });
+      }
+      registryLock.release();
+      console.log(JSON.stringify({ created: false, error: `cannot write session registry: ${error.message}` }));
+      return;
+    }
+    if (deferInitialMissionWrite) {
+      const persisted = persistInitialState();
+      if (!persisted.ok) {
+        // We still hold the registry lock, so removing the record cannot race
+        // a second owner. The previous active state was never overwritten.
+        try { rmSync(registryPath(claudeSessionId, homedir()), { force: true }); } catch { /* best effort */ }
+        if (removeDirOnRegistryFailure) {
+          rmSync(dir, { recursive: true, force: true });
+          restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+        } else if (!nodesExistedBefore) {
+          rmSync(nodesPath, { recursive: true, force: true });
+        }
+        registryLock.release();
+        console.log(JSON.stringify({ created: false, error: persisted.error, status: "invalid_mission_state" }));
+        return;
+      }
+    }
+    registryLock.release();
+  }
 
   // ─── Persist .ext-registry.json (which extensions this flow will use) ────
   // This is also the observable surface for the benchmark bypass: running
@@ -169,6 +591,16 @@ export async function cmdInit(args) {
     // Pin extension versions into flow-state for rubric freeze rule
     if (registry.extensions && registry.extensions.length > 0) {
       state.extensionVersions = registry.extensions.map(e => ({ name: e.name, version: e.meta?.rubricVersion || e.meta?.version || "unknown" }));
+      if (state.mission) {
+        const sealed = sealMissionRuntimeState({
+          sessionDir: dir,
+          state,
+          statePath,
+          reason: "init-extension-versions",
+        });
+        if (!sealed.ok) throw new Error(sealed.error);
+        state = sealed.state;
+      }
       atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
     }
     try {
@@ -222,23 +654,16 @@ export async function cmdInit(args) {
         template.nodeTypes?.[n] === "brief" || template.nodeTypes?.[n] === "build" || n === "brief" || n === "build"
       );
       preflightNode = firstBriefOrBuild || entryNode;
-      const preflightCaps = template.nodeCapabilities?.[preflightNode] || [];
       const preflightTask = readTaskFromAC(dir);
+      const preflightCtx = resolveNodeExtensionContext(dir, preflightNode, args, {
+        role: "preflight",
+        task: preflightTask,
+        devServerUrl: process.env.DEV_SERVER_URL || "",
+      });
+      const preflightCaps = preflightCtx.nodeCapabilities;
 
       if (preflightCaps.length > 0 && preflightTask.trim()) {
         const preflightRegistry = await loadExtensions(bypassCfg);
-        const preflightCtx = {
-          node: preflightNode,
-          nodeId: preflightNode,
-          nodeType: template.nodeTypes?.[preflightNode] || null,
-          role: "preflight",
-          task: preflightTask,
-          taskDescription: preflightTask,
-          flowDir: resolve(dir),
-          cwd: process.cwd(),
-          devServerUrl: process.env.DEV_SERVER_URL || "",
-          nodeCapabilities: preflightCaps,
-        };
         preflightResult = await fireNodePreflight(preflightRegistry, preflightCtx);
         if (preflightResult?.length) preflightStatus = { node: preflightNode, status: "ok" };
         console.error(`[init] auto-preflight for '${preflightNode}': ${preflightResult?.length ? 'artifacts generated' : 'no output'}`);
@@ -253,6 +678,15 @@ export async function cmdInit(args) {
 
   console.log(JSON.stringify({
     created: true, flow, entry: entryNode, tier: tier || null, dir,
+    mission_enabled: Boolean(state.mission),
+    ...(state.mission ? {
+      mission_version: state.mission.version,
+      strategy_epoch: state.mission.strategyEpoch,
+      mission_contract: join(
+        state.mission.parentSession || dir,
+        state.mission.path || "mission-contract.json",
+      ),
+    } : {}),
     ...(preflightStatus ? { preflight: preflightStatus } : {}),
   }));
 }
@@ -384,11 +818,11 @@ export function validateHandshakeData(data, opts = {}) {
         // '## Iteration Delta' section becomes mandatory. We re-run with
         // hasPriorFindings so this is hard-enforced at validate stage — the brief
         // cannot pass validation on a loopback without listing what changed.
-        const runNum = parseInt(String(data.runId).replace(/^run_/, ""), 10);
-        if (Number.isFinite(runNum) && runNum > 1) {
+        const runOrdinal = parseRunOrdinal(data.runId);
+        if (runOrdinal !== null && runOrdinal > 1n) {
           const deltaResult = runBriefLint(briefText, { tier: lintTier, hasPriorFindings: true });
           if (deltaResult.failures.some(f => f.check === "iteration-delta")) {
-            errors.push("brief re-entered after gate loopback (run_" + runNum + ") but has no '## Iteration Delta' section — list specific changes from prior findings");
+            errors.push("brief re-entered after gate loopback (" + data.runId + ") but has no '## Iteration Delta' section — list specific changes from prior findings");
           }
         }
       } catch {
@@ -501,19 +935,47 @@ export function validateHandshakeData(data, opts = {}) {
   return { errors, warnings };
 }
 
+function selectedRunHandshakeForNodePath(direct) {
+  if (basename(direct) !== "handshake.json") return null;
+  const nodeDir = dirname(direct);
+  const harnessDir = dirname(dirname(nodeDir));
+  const statePath = join(harnessDir, "flow-state.json");
+  if (!existsSync(statePath)) return null;
+  let state;
+  try {
+    state = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (state.currentNode !== basename(nodeDir)) return null;
+  const selected = resolveCurrentRun(state);
+  if (!selected) return null;
+  const selectedPath = join(nodeDir, selected.runId, "handshake.json");
+  return existsSync(selectedPath) ? selectedPath : null;
+}
+
 function resolveHandshakeForValidate(file) {
   const direct = resolve(file);
-  if (existsSync(direct)) return direct;
-  if (basename(direct) !== "handshake.json") return direct;
-  const latestRun = findLatestRunDir(dirname(direct));
-  const fallback = latestRun ? join(latestRun, "handshake.json") : null;
-  return fallback && existsSync(fallback) ? fallback : direct;
+  if (!existsSync(direct)) {
+    const selected = selectedRunHandshakeForNodePath(direct);
+    if (selected) return selected;
+  }
+  return direct;
 }
 
 function harnessDirForHandshake(file) {
   const dir = dirname(resolve(file));
   if (/^run_\d+$/.test(basename(dir))) return dirname(dirname(dirname(dir)));
   return dirname(dirname(dir));
+}
+
+function handshakeBaseDir(file, data = null) {
+  const dir = dirname(resolve(file));
+  if (!/^run_\d+$/.test(basename(dir))) return dir;
+  const artifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
+  return artifacts.some((artifact) =>
+    typeof artifact?.path === "string" && !/^run_\d+\//.test(artifact.path)
+  ) ? dir : dirname(dir);
 }
 
 function firstPositionalArg(args) {
@@ -543,9 +1005,60 @@ function resolveDefaultHandshakeForValidate(args) {
   if (!state.currentNode) {
     return { error: "flow-state.json has no currentNode" };
   }
+  const currentRun = resolveCurrentRun(state);
+  if (currentRun) {
+    const exact = resolveExactRunHandshake(dir, state.currentNode, currentRun.runId);
+    if (exact.error) return { error: exact.error };
+    if (!exact.missing && exact.path && existsSync(exact.path)) return { file: exact.path };
+    return { error: `missing exact selected-run handshake for node '${state.currentNode}' run '${currentRun.runId}'` };
+  }
   return {
     file: resolveHandshakeForValidate(join(dir, "nodes", state.currentNode, "handshake.json")),
   };
+}
+
+function sessionExactEvidenceErrors(dir, state) {
+  const errors = [];
+  for (const entry of authoritativeEntries(state, { includeCurrent: true })) {
+    const exact = resolveExactRunHandshake(dir, entry.nodeId, entry.runId);
+    if (exact.error) errors.push(exact.error);
+    else if (exact.missing || !existsSync(exact.path)) {
+      errors.push(`missing exact selected/history handshake for node '${entry.nodeId}' run '${entry.runId}'`);
+    }
+  }
+  return errors;
+}
+
+function nodeAndRunFromHandshakePath(file) {
+  const abs = resolve(file);
+  const parent = dirname(abs);
+  const maybeRun = basename(parent);
+  if (/^run_\d+$/.test(maybeRun)) {
+    return { nodeId: basename(dirname(parent)), pathRunId: maybeRun };
+  }
+  return { nodeId: basename(parent), pathRunId: null };
+}
+
+function stateBackedValidateIdentityErrors(file, data) {
+  if (!isPlainObject(data)) return [];
+  const harnessDir = harnessDirForHandshake(file);
+  const authority = readSessionAuthority(harnessDir);
+  if (!authority.exists) return [];
+  if (authority.error) return [authority.error];
+  const state = authority.state;
+  const { nodeId, pathRunId } = nodeAndRunFromHandshakePath(file);
+  const expectedRun = expectedRunForNode(state, nodeId);
+  const errors = sessionExactEvidenceErrors(harnessDir, state);
+  if (!expectedRun) {
+    errors.push(`no authoritative selected/history run for node '${nodeId}'`);
+    return errors;
+  }
+  if (pathRunId && pathRunId !== expectedRun) {
+    errors.push(`handshake path run is '${pathRunId}', expected '${expectedRun}'`);
+  }
+  if (data.nodeId !== nodeId) errors.push(`handshake nodeId is '${data.nodeId}', expected '${nodeId}'`);
+  if (data.runId !== expectedRun) errors.push(`handshake runId is '${data.runId}', expected '${expectedRun}'`);
+  return errors;
 }
 
 export function cmdValidate(args) {
@@ -572,29 +1085,55 @@ export function cmdValidate(args) {
 
   let soft = false;
   let tier = null;
+  let authorityState = null;
+  let authorityTemplate = null;
   try {
     const harnessDir = harnessDirForHandshake(file);
-    const statePath = join(harnessDir, "flow-state.json");
-    if (existsSync(statePath)) {
-      const state = JSON.parse(readFileSync(statePath, "utf8"));
+    const authority = readSessionAuthority(harnessDir);
+    if (authority.exists && authority.error) {
+      console.log(JSON.stringify({ valid: false, errors: [authority.error] }));
+      return;
+    }
+    if (authority.exists) {
+      const state = authority.state;
+      authorityState = state;
       // Auto-restore flow template from _flow_file if needed
       if (state._flow_file) {
         loadFlowFromFile(state._flow_file); // injects into FLOW_TEMPLATES
       }
       if (state.flowTemplate) {
         const tmpl = FLOW_TEMPLATES[state.flowTemplate];
+        authorityTemplate = tmpl || null;
         if (tmpl && tmpl.softEvidence) soft = true;
       }
       if (state.tier && VALID_TIERS.has(state.tier)) tier = state.tier;
     }
-  } catch { /* flow-state.json unreadable — treat as strict */ }
+  } catch (error) {
+    console.log(JSON.stringify({ valid: false, errors: [`state-backed validation failed: ${error.message}`] }));
+    return;
+  }
 
   const { errors, warnings } = validateHandshakeData(data, {
     checkEvidence: true,
     softEvidence: soft,
-    baseDir: dirname(file),
+    baseDir: handshakeBaseDir(file, data),
     tier,
   });
+  if (data?.testEvidenceProvenance != null) {
+    errors.push(...collectTestEvidenceProvenanceReasons(data));
+  }
+  errors.push(...stateBackedValidateIdentityErrors(file, data));
+  if (authorityState) {
+    const harnessDir = harnessDirForHandshake(file);
+    errors.push(...canonicalProjectionErrors(harnessDir, authorityState, (canonical, path, nodeId, runId) =>
+      canonicalHandshakeErrors(canonical, nodeId, runId, {
+        nodeType: authorityTemplate?.nodeTypes?.[nodeId],
+        softEvidence: soft,
+        baseDir: handshakeBaseDir(path, canonical),
+        tier,
+      })
+    ));
+  }
 
   for (const w of warnings) {
     console.error(`\u26a0\ufe0f  ${w}`);
@@ -609,7 +1148,9 @@ export function cmdValidate(args) {
 function testEvidenceContext(dir, handshake) {
   const sourceNode = handshake?.testEvidenceProvenance?.sourceNode;
   if (!sourceNode) return {};
-  const spec = loadTestCommandSpec(dir, sourceNode);
+  const sourceRunId = handshake?.testEvidenceProvenance?.sourceRunId;
+  if (!/^run_\d+$/.test(sourceRunId || "")) return {};
+  const spec = loadTestCommandSpec(dir, sourceNode, sourceRunId);
   if (!spec) return {};
   return {
     expectedCommandHash: testCommandHash(spec.testCommand),
@@ -618,7 +1159,7 @@ function testEvidenceContext(dir, handshake) {
   };
 }
 
-function collectFilesRecursive(root, prefix = "") {
+export function collectFilesRecursive(root, prefix = "") {
   const out = [];
   let entries = [];
   try { entries = readdirSync(root, { withFileTypes: true }); } catch { return out; }
@@ -634,9 +1175,10 @@ function collectFilesRecursive(root, prefix = "") {
   return out;
 }
 
-function classifyArtifact(relPath, nodeType) {
+export function classifyArtifact(relPath, nodeType) {
   const name = basename(relPath);
   const lower = name.toLowerCase();
+  if (lower === "handshake.json" || lower === "flow-state.json") return null;
   if (lower === "build-brief.md") return "brief";
   if (lower === "test-plan.md") return "test-plan";
   if (lower === "test-execution.json") return "test-plan";
@@ -646,9 +1188,23 @@ function classifyArtifact(relPath, nodeType) {
   if ((nodeType === "execute" && /^test-.*\.json$/i.test(name)) || lower === "test-command-result.json") return "test-result";
   if (/^test-.*\.json$/i.test(name) && /execute/i.test(relPath)) return "test-result";
   if (/^(.*-)?lint-result\.json$/i.test(name) || /^(.*-)?report\.json$/i.test(name) || /^(.*-)?result\.json$/i.test(name)) return "report";
+  // Every non-reserved JSON file inside run_N is a machine-readable report artifact.
+  if (lower.endsWith(".json")) return "report";
   if (/\.(ts|tsx|js|jsx|css|html|mjs|cjs)$/i.test(name)) return "source";
   if (lower.endsWith(".md") || lower.endsWith(".txt")) return "source";
   return null;
+}
+
+export function scanNodeArtifacts(nodeDir, runDir, nodeType) {
+  const runId = basename(runDir);
+  const files = collectFilesRecursive(runDir).map((file) => `${runId}/${file}`);
+  for (const nodeLevel of ["build-brief.md", "test-plan.md", "test-execution.json"]) {
+    if (existsSync(join(nodeDir, nodeLevel))) files.push(nodeLevel);
+  }
+  return files
+    .sort()
+    .map((path) => ({ type: classifyArtifact(path, nodeType), path }))
+    .filter((artifact) => artifact.type);
 }
 
 function normalizeEvalVerdict(raw) {
@@ -682,7 +1238,34 @@ function inferEvalVerdict(evalArtifacts, nodeDir) {
 }
 
 function readJsonFile(path) {
-  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; }
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function canonicalHandshakeErrors(data, nodeId, runId, options = {}) {
+  if (!isPlainObject(data)) return ["canonical handshake.json root must be a non-null object"];
+  const errors = [];
+  const validation = validateHandshakeData(data, {
+    checkEvidence: true,
+    softEvidence: !!options.softEvidence,
+    baseDir: options.baseDir,
+    tier: options.tier,
+  });
+  errors.push(...validation.errors.map((error) => `canonical handshake.json: ${error}`));
+  if (data.nodeId !== nodeId) errors.push(`canonical handshake.json nodeId is '${data.nodeId}', expected '${nodeId}'`);
+  if (data.runId !== runId) errors.push(`canonical handshake.json runId is '${data.runId}', expected '${runId}'`);
+  if (options.nodeType && data.nodeType !== options.nodeType) {
+    errors.push(`canonical handshake.json nodeType is '${data.nodeType}', expected '${options.nodeType}'`);
+  }
+  if (typeof data.status !== "string" || data.status.length === 0) {
+    errors.push("canonical handshake.json status missing or invalid");
+  }
+  if (!Array.isArray(data.artifacts)) errors.push("canonical handshake.json artifacts must be an array");
+  if (data.testEvidenceProvenance != null) {
+    errors.push(...collectTestEvidenceProvenanceReasons(data)
+      .map((error) => `canonical handshake.json: ${error}`));
+  }
+  return errors;
 }
 
 function preserveHarnessTestEvidence(target, existing) {
@@ -695,14 +1278,70 @@ function preserveHarnessTestEvidence(target, existing) {
     "prerequisites",
     "testEvidenceProvenance",
     "testEvidencePolicy",
+    // These claims were validated against the frozen source test-plan before
+    // harness execution. Re-sealing artifacts must not erase that coverage
+    // mapping while retaining only its provenance shell.
+    "evidence",
+    "scenarioId",
+    "validatorType",
+    "satisfies",
   ]) {
     if (Object.hasOwn(existing, key)) target[key] = existing[key];
   }
 }
 
+const NODE_LEVEL_SEAL_ARTIFACTS = new Set([
+  "build-brief.md",
+  "test-plan.md",
+  "test-execution.json",
+]);
+
+function exactArtifactPathFromCanonical(path, runId) {
+  if (typeof path !== "string") return path;
+  if (path.startsWith(`${runId}/`)) return path.slice(runId.length + 1);
+  if (NODE_LEVEL_SEAL_ARTIFACTS.has(path)) return `../${path}`;
+  return path;
+}
+
+function exactHandshakeFromCanonical(handshake, runId) {
+  const exact = JSON.parse(JSON.stringify(handshake));
+  if (Array.isArray(exact.artifacts)) {
+    exact.artifacts = exact.artifacts.map((artifact) => ({
+      ...artifact,
+      path: exactArtifactPathFromCanonical(artifact.path, runId),
+    }));
+  }
+  return exact;
+}
+
+function isPriorRun(priorRunId, currentRunId) {
+  const prior = parseRunOrdinal(priorRunId);
+  const current = parseRunOrdinal(currentRunId);
+  return prior !== null && current !== null && prior < current;
+}
+
+function staleCanonicalAuthorityErrors(dir, state, template, nodeId, runId) {
+  const authorized = Array.isArray(state.history) &&
+    state.history.some((entry) => (entry?.nodeId || entry?.node) === nodeId && (entry?.runId || entry?.run) === runId);
+  if (!authorized) return [`stale canonical ${nodeId}/${runId} is not recorded in authoritative history`];
+  const exact = resolveExactRunHandshake(dir, nodeId, runId);
+  if (exact.error) return [`stale canonical ${nodeId}/${runId} exact ${exact.error}`];
+  if (exact.missing || !existsSync(exact.path || "")) {
+    return [`stale canonical ${nodeId}/${runId} exact handshake missing at ${exact.path}`];
+  }
+  return canonicalProjectionErrors(dir, state, (canonical, path, projectionNodeId, projectionRunId) =>
+    canonicalHandshakeErrors(canonical, projectionNodeId, projectionRunId, {
+      nodeType: template.nodeTypes?.[projectionNodeId],
+      softEvidence: !!template.softEvidence,
+      baseDir: handshakeBaseDir(path, canonical),
+      tier: state.tier && VALID_TIERS.has(state.tier) ? state.tier : null,
+    }), { entries: [{ nodeId, runId }] });
+}
+
 export function cmdSeal(args) {
   const nodeId = getFlag(args, "node");
-  const runOverride = getFlag(args, "run");
+  const runOverrideProvided = hasFlag(args, "run");
+  const runOverride = getFlag(args, "run", "");
   const dir = resolveDir(args);
 
   if (!nodeId) {
@@ -724,14 +1363,42 @@ export function cmdSeal(args) {
     console.log(JSON.stringify({ sealed: false, error: `corrupt flow-state.json: ${err.message}` }));
     return;
   }
-
-  // Resolve template for nodeType lookup
-  if (state._flow_file) loadFlowFromFile(state._flow_file);
-  const template = FLOW_TEMPLATES[state.flowTemplate];
-  if (!template) {
-    console.log(JSON.stringify({ sealed: false, error: `unknown flow template: ${state.flowTemplate}` }));
+  const stopped = stoppedFlowError(state, "seal");
+  if (stopped) {
+    console.log(JSON.stringify({ sealed: false, error: stopped }));
     return;
   }
+  if (state.currentNode !== nodeId) {
+    console.log(JSON.stringify({
+      sealed: false,
+      error: `cannot seal node '${nodeId}': current node is '${state.currentNode}'`,
+    }));
+    return;
+  }
+  const selectedRun = resolveCurrentRun(state);
+  if (!selectedRun) {
+    console.log(JSON.stringify({ sealed: false, error: `cannot resolve selected run for '${nodeId}'` }));
+    return;
+  }
+  if (runOverrideProvided && !/^[1-9]\d*$/.test(runOverride)) {
+    console.log(JSON.stringify({ sealed: false, error: "--run must be a positive numeric ordinal" }));
+    return;
+  }
+  if (runOverrideProvided && `run_${runOverride}` !== selectedRun.runId) {
+    console.log(JSON.stringify({
+      sealed: false,
+      error: `--run ${runOverride} does not match selected run '${selectedRun.runId}'`,
+    }));
+    return;
+  }
+
+  // Resolve template for nodeType lookup
+  const resolved = resolveFlowTemplate(args, state);
+  if (resolved.error) {
+    console.log(JSON.stringify({ sealed: false, error: resolved.error }));
+    return;
+  }
+  const { template } = resolved;
 
   const nodeType = template.nodeTypes?.[nodeId] || (nodeId.startsWith("gate") ? "gate" : "build");
 
@@ -742,47 +1409,90 @@ export function cmdSeal(args) {
     return;
   }
 
-  let runDir;
-  if (runOverride) {
-    runDir = join(nodeDir, `run_${runOverride}`);
-  } else {
-    // Find latest run_N
-    const runs = readdirSync(nodeDir, { withFileTypes: true })
-      .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
-      .sort((a, b) => {
-        const na = parseInt(a.name.split("_")[1]);
-        const nb = parseInt(b.name.split("_")[1]);
-        return nb - na;
-      });
-    if (runs.length === 0) {
-      console.log(JSON.stringify({ sealed: false, error: `no run_N directories found in nodes/${nodeId}` }));
-      return;
-    }
-    runDir = join(nodeDir, runs[0].name);
-  }
+  const runDir = join(nodeDir, selectedRun.runId);
 
-  if (!existsSync(runDir)) {
+  if (!existsSync(runDir) || !lstatSync(runDir).isDirectory()) {
     console.log(JSON.stringify({ sealed: false, error: `run dir not found: ${runDir}` }));
     return;
   }
 
   const runId = runDir.split("/").pop();
   const handshakePath = join(nodeDir, "handshake.json");
-  const existingHandshake = readJsonFile(handshakePath);
+  let existingHandshake;
+  const canonicalExists = existsSync(handshakePath);
+  try {
+    existingHandshake = canonicalExists ? readJsonFile(handshakePath) : null;
+  } catch (error) {
+    console.log(JSON.stringify({
+      sealed: false,
+      handshakePath,
+      artifacts: 0,
+      verdict: null,
+      validationErrors: [`canonical handshake.json parse error — fail-closed: ${error.message}`],
+      warnings: [],
+    }));
+    return;
+  }
+  const staleCanonical = canonicalExists && isPlainObject(existingHandshake) &&
+    isRunId(existingHandshake.runId) && isPriorRun(existingHandshake.runId, runId);
+  if (staleCanonical) {
+    const canonicalErrors = staleCanonicalAuthorityErrors(dir, state, template, nodeId, existingHandshake.runId);
+    if (canonicalErrors.length > 0) {
+      console.log(JSON.stringify({
+        sealed: false,
+        handshakePath,
+        artifacts: 0,
+        verdict: null,
+        validationErrors: canonicalErrors,
+        warnings: [],
+      }));
+      return;
+    }
+  }
+  if (canonicalExists && !staleCanonical) {
+    const canonicalErrors = canonicalHandshakeErrors(existingHandshake, nodeId, runId, {
+      nodeType,
+      softEvidence: !!template.softEvidence,
+      baseDir: handshakeBaseDir(handshakePath, existingHandshake),
+      tier: state.tier && VALID_TIERS.has(state.tier) ? state.tier : null,
+    });
+    canonicalErrors.push(...canonicalProjectionErrors(dir, state, (canonical, path, projectionNodeId, projectionRunId) =>
+      canonicalHandshakeErrors(canonical, projectionNodeId, projectionRunId, {
+        nodeType: template.nodeTypes?.[projectionNodeId],
+        softEvidence: !!template.softEvidence,
+        baseDir: handshakeBaseDir(path, canonical),
+        tier: state.tier && VALID_TIERS.has(state.tier) ? state.tier : null,
+      }), { entries: [{ nodeId, runId }] }));
+    if (canonicalErrors.length > 0) {
+      console.log(JSON.stringify({
+        sealed: false,
+        handshakePath,
+        artifacts: 0,
+        verdict: null,
+        validationErrors: canonicalErrors,
+        warnings: [],
+      }));
+      return;
+    }
+  }
+  const selectedRunHandshakePath = join(runDir, "handshake.json");
+  let selectedRunHandshake = null;
+  let selectedRunHandshakeError = null;
+  if (existsSync(selectedRunHandshakePath)) {
+    try {
+      selectedRunHandshake = JSON.parse(readFileSync(selectedRunHandshakePath, "utf8"));
+      if (!selectedRunHandshake || typeof selectedRunHandshake !== "object" || Array.isArray(selectedRunHandshake)) {
+        selectedRunHandshakeError = `${runId}/handshake.json schema error: root must be an object`;
+        selectedRunHandshake = null;
+      }
+    } catch (error) {
+      selectedRunHandshakeError = `${runId}/handshake.json parse error: ${error.message}`;
+    }
+  }
 
   // Scan files and classify artifacts
-  const files = collectFilesRecursive(runDir).map(f => `${runId}/${f}`);
-  for (const nodeLevel of ["build-brief.md", "test-plan.md", "test-execution.json"]) {
-    if (existsSync(join(nodeDir, nodeLevel))) files.push(nodeLevel);
-  }
-  const artifacts = [];
+  const artifacts = scanNodeArtifacts(nodeDir, runDir, nodeType);
   const warnings = [];
-
-  for (const f of files.sort()) {
-    const type = classifyArtifact(f, nodeType);
-    if (!type) continue;
-    artifacts.push({ type, path: f });
-  }
 
   // Infer verdict from eval files
   const evalFiles = artifacts.filter(a => a.type === "eval");
@@ -807,47 +1517,104 @@ export function cmdSeal(args) {
     findings: null,
   };
 
-  if (nodeType === "execute") preserveHarnessTestEvidence(handshake, existingHandshake);
+  const selectedParticipants = selectedRunHandshake?.extensionsApplied;
+  if (
+    Array.isArray(selectedParticipants) &&
+    selectedParticipants.every((name) => typeof name === "string" && name.length > 0)
+  ) {
+    handshake.extensionsApplied = selectedParticipants.slice();
+  }
+
+  if (nodeType === "execute" && existingHandshake?.runId === runId) {
+    preserveHarnessTestEvidence(handshake, existingHandshake);
+  }
 
   const { critical, warning, suggestion } = inferred.findings;
   if (critical + warning + suggestion > 0) {
     handshake.findings = { critical, warning, suggestion };
   }
 
-  // Write handshake
-  atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2) + "\n");
-
-  // Validate
+  // Validate before sealing. Invalid machine-readable evidence must not rewrite
+  // the canonical handshake.
   const { errors } = validateHandshakeData(handshake, {
     checkEvidence: nodeType === "execute",
     baseDir: nodeDir,
   });
-  if (nodeType === "execute") {
-    const evidenceContext = testEvidenceContext(dir, handshake);
-    for (const art of artifacts) {
-      if (art.type !== "test-result" || !/\.json$/i.test(art.path)) continue;
-      try {
-        const text = readFileSync(join(nodeDir, art.path), "utf8");
-        const data = JSON.parse(text);
-        errors.push(...collectTestResultReasons(data, {
-          handshake,
-          nodeId,
-          runId: handshake.runId,
-          artifact: art,
-          artifactHash: createHash("sha256").update(text).digest("hex"),
-          sessionDir: dir,
-          ...evidenceContext,
-        }));
-      } catch {
-        errors.push(`artifact ${art.path} unreadable — fail-closed`);
-      }
+  const exactHandshake = exactHandshakeFromCanonical(handshake, runId);
+  const exactValidation = validateHandshakeData(exactHandshake, {
+    checkEvidence: nodeType === "execute",
+    baseDir: runDir,
+  });
+  errors.push(...exactValidation.errors.map((error) => `selected run handshake: ${error}`));
+  if (selectedRunHandshakeError) errors.push(selectedRunHandshakeError);
+  if (
+    (nodeType === "brief" || nodeType === "build") &&
+    Array.isArray(handshake.extensionsApplied) &&
+    handshake.extensionsApplied.length > 0
+  ) {
+    errors.push(...collectPromptExtensionProvenanceErrors(runDir, {
+      nodeId,
+      runId,
+      extensionsApplied: handshake.extensionsApplied,
+    }));
+  }
+  const parsedJsonArtifacts = new Map();
+  for (const art of artifacts) {
+    if (!/\.json$/i.test(art.path)) continue;
+    try {
+      const text = readFileSync(join(nodeDir, art.path), "utf8");
+      parsedJsonArtifacts.set(art.path, { text, data: JSON.parse(text) });
+    } catch (error) {
+      errors.push(`artifact ${art.path} is not valid JSON — fail-closed: ${error.message}`);
     }
   }
+  if (nodeType === "execute") {
+    const evidenceContext = testEvidenceContext(dir, handshake);
+    const testResultArtifacts = artifacts.filter((art) =>
+      art.type === "test-result" && /\.json$/i.test(art.path || ""));
+    if (handshake.testEvidenceProvenance && testResultArtifacts.length === 0) {
+      errors.push("testEvidenceProvenance requires a test-result JSON artifact");
+    }
+    for (const art of artifacts) {
+      if (art.type !== "test-result" || !/\.json$/i.test(art.path)) continue;
+      const parsed = parsedJsonArtifacts.get(art.path);
+      if (!parsed) continue;
+      errors.push(...collectTestEvidenceProvenanceReasons(handshake, {
+        sessionDir: dir,
+        artifact: art,
+        artifactHash: createHash("sha256").update(parsed.text).digest("hex"),
+      }));
+      errors.push(...collectTestResultReasons(parsed.data, {
+        handshake,
+        nodeId,
+        runId: handshake.runId,
+        artifact: art,
+        artifactHash: createHash("sha256").update(parsed.text).digest("hex"),
+        sessionDir: dir,
+        ...evidenceContext,
+      }));
+    }
+  }
+
+  if (errors.length > 0) {
+    for (const w of warnings) console.error(`⚠️  ${w}`);
+    console.log(JSON.stringify({
+      sealed: false,
+      handshakePath,
+      artifacts: artifacts.length,
+      verdict,
+      validationErrors: errors,
+      warnings,
+    }));
+    return;
+  }
+  atomicWriteSync(selectedRunHandshakePath, JSON.stringify(exactHandshake, null, 2) + "\n");
+  atomicWriteSync(handshakePath, JSON.stringify(handshake, null, 2) + "\n");
 
   for (const w of warnings) console.error(`⚠️  ${w}`);
 
   console.log(JSON.stringify({
-    sealed: true,
+    sealed: errors.length === 0,
     handshakePath,
     artifacts: artifacts.length,
     verdict,

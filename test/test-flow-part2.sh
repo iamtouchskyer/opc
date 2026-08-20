@@ -99,6 +99,7 @@ cat > .h-trans/nodes/brief/handshake.json << 'HS'
   "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
+sync_run_handshakes .h-trans
 sleep 1
 OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null)
 assert_field_eq "transition ok" "$OUT" "allowed" "true"
@@ -135,7 +136,7 @@ echo "--- 4.5: Pre-transition handshake missing ---"
 rm -rf .h-trans2 && $HARNESS init --flow build-verify --dir .h-trans2 >/dev/null 2>/dev/null
 OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans2 2>/dev/null)
 assert_field_eq "hs missing" "$OUT" "allowed" "false"
-assert_contains "handshake missing" "$OUT" "handshake.json missing"
+assert_contains "handshake missing" "$OUT" "missing handshake for node 'brief' run 'run_1'"
 
 echo ""
 echo "--- 4.6: Pre-transition status not completed ---"
@@ -148,6 +149,7 @@ cat > .h-trans3/nodes/brief/handshake.json << 'HS'
   "artifacts": []
 }
 HS
+sync_run_handshakes .h-trans3
 OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans3 2>/dev/null)
 assert_field_eq "status not completed" "$OUT" "allowed" "false"
 assert_contains "expected completed" "$OUT" "expected 'completed'"
@@ -171,6 +173,7 @@ cat > .h-trans4/nodes/brief/handshake.json << 'HS'
   "artifacts": [{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]
 }
 HS
+sync_run_handshakes .h-trans4
 OUT=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans4 2>/dev/null)
 assert_field_eq "tamper detected" "$OUT" "allowed" "false"
 assert_contains "direct edit" "$OUT" "direct edit"
@@ -188,6 +191,7 @@ mkdir -p .h-limit/nodes/review
 cat > .h-limit/nodes/review/handshake.json << 'HS'
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
+sync_run_handshakes .h-limit
 OUT=$($HARNESS transition --from review --to gate --verdict PASS --flow review --dir .h-limit 2>/dev/null)
 assert_field_eq "steps limit" "$OUT" "allowed" "false"
 assert_contains "maxTotalSteps" "$OUT" "maxTotalSteps"
@@ -244,12 +248,14 @@ printf '# Review B\nPerspective: Performance\nVERDICT: PASS FINDINGS[0]\n' > .h-
 cat > .h-fin/nodes/review/handshake.json << 'HS'
 {"nodeId":"review","nodeType":"review","runId":"run_1","status":"completed","summary":"ok","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"eval","path":"run_1/eval-a.md"},{"type":"eval","path":"run_1/eval-b.md"}]}
 HS
+sync_run_handshakes .h-fin
 sleep 1
 $HARNESS transition --from review --to gate --verdict PASS --flow review --dir .h-fin >/dev/null 2>/dev/null
 mkdir -p .h-fin/nodes/gate
 cat > .h-fin/nodes/gate/handshake.json << 'HS'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"completed","summary":"passed","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
+sync_run_handshakes .h-fin
 OUT=$($HARNESS finalize --dir .h-fin)
 assert_field_eq "finalized" "$OUT" "finalized" "true"
 STATUS=$(python3 -c "import json; print(json.load(open('.h-fin/flow-state.json'))['status'])")
@@ -273,16 +279,20 @@ rm -rf .h-strict && $HARNESS init --flow review --entry gate --dir .h-strict >/d
 python3 -c "
 import json
 d = json.load(open('.h-strict/flow-state.json'))
-d['history'].append({'nodeId': 'review', 'runId': 'run_1', 'timestamp': '2024-01-01T00:00:00Z'})
+d['history'] = [
+  {'nodeId': 'review', 'runId': 'run_1', 'timestamp': '2024-01-01T00:00:00.000Z'},
+  {'nodeId': 'gate', 'runId': 'run_1', 'timestamp': '2024-01-01T00:01:00.000Z'},
+]
 json.dump(d, open('.h-strict/flow-state.json', 'w'), indent=2)
 "
 mkdir -p .h-strict/nodes/gate
 cat > .h-strict/nodes/gate/handshake.json << 'HS'
 {"nodeId":"gate","nodeType":"gate","runId":"run_1","status":"completed","summary":"x","timestamp":"2024-01-01T00:00:00Z","artifacts":[]}
 HS
+sync_run_handshakes .h-strict
 OUT=$($HARNESS finalize --dir .h-strict --strict)
 assert_field_eq "strict fails" "$OUT" "finalized" "false"
-assert_contains "missing upstream handshake" "$OUT" "handshake for review is missing"
+assert_contains "missing upstream handshake" "$OUT" "missing handshake for node 'review' run 'run_1'"
 
 echo ""
 echo "--- 6.5: Finalize no state ---"

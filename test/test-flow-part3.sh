@@ -6,8 +6,28 @@ source "$(dirname "$0")/test-helpers.sh"
 setup_tmpdir
 setup_git
 
-mkdir -p "$HOME/.claude/flows"
-cat > "$HOME/.claude/flows/idea-factory.json" << 'FIXTURE'
+FLOW_DIR="$HOME/.claude/flows"
+IDEA_FLOW="$FLOW_DIR/idea-factory.json"
+IDEA_BACKUP="$TMPDIR/idea-factory.json.backup"
+IDEA_EXISTED=0
+mkdir -p "$FLOW_DIR"
+if [ -e "$IDEA_FLOW" ] || [ -L "$IDEA_FLOW" ]; then
+  mv "$IDEA_FLOW" "$IDEA_BACKUP"
+  IDEA_EXISTED=1
+fi
+cleanup() {
+  rm -f "$IDEA_FLOW"
+  if [ "$IDEA_EXISTED" -eq 1 ]; then
+    mv "$IDEA_BACKUP" "$IDEA_FLOW"
+  fi
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+cat > "$IDEA_FLOW" << 'FIXTURE'
 {
   "nodes": ["discover", "validate", "build", "gate", "synthesize", "pitch"],
   "edges": {
@@ -30,6 +50,9 @@ cat > "$HOME/.claude/flows/idea-factory.json" << 'FIXTURE'
   }
 }
 FIXTURE
+if [ "${OPC_TEST_ABORT_AFTER_FLOW_FIXTURE:-0}" = "1" ]; then
+  exit 97
+fi
 
 jq_field() {
   echo "$1" | python3 -c "import sys,json; d=json.load(sys.stdin); v=d.get('$2'); print('__NULL__' if v is None else json.dumps(v))" 2>/dev/null
@@ -168,11 +191,11 @@ assert_contains "node not found" "$OUT" "not a node"
 echo ""
 echo "--- 7.10: goto reentry limit ---"
 rm -rf .h-reentry && $HARNESS init --flow build-verify --dir .h-reentry >/dev/null 2>/dev/null
-for i in 1 2 3; do
+for i in 1 2 3 4 5; do
   $HARNESS goto brief --dir .h-reentry >/dev/null
 done
 OUT=$($HARNESS goto brief --dir .h-reentry)
-assert_contains "edge limit" "$OUT" "maxLoopsPerEdge"
+assert_contains "node reentry limit" "$OUT" "maxNodeReentry"
 
 echo ""
 echo "--- 7.11: ls ---"
@@ -220,6 +243,7 @@ echo '{"pass":true}' > .h-trans/nodes/brief/run_1/brief-lint-result.json
 cat > .h-trans/nodes/brief/handshake.json << 'HS'
 {"nodeId":"brief","nodeType":"brief","runId":"run_1","status":"completed","summary":"brief done","timestamp":"2024-01-01T00:00:00Z","artifacts":[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]}
 HS
+sync_run_handshakes ".h-trans"
 sleep 1
 $HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .h-trans 2>/dev/null
 OUT=$($HARNESS viz --flow build-verify --dir .h-trans)

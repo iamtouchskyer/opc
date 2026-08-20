@@ -5,7 +5,7 @@
 
 import { cmdVerify, cmdSynthesize, cmdTierBaseline } from "./lib/eval-commands.mjs";
 import { cmdReport, cmdDiff } from "./lib/eval-report.mjs";
-import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal } from "./lib/flow-core.mjs";
+import { cmdRoute, cmdInit, cmdValidate, cmdValidateContext, cmdSeal, cmdRecordCommit } from "./lib/flow-core.mjs";
 import { cmdTransition, cmdValidateChain, cmdFinalize, cmdAdvance } from "./lib/flow-transition.mjs";
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact, cmdNodePreflight } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
@@ -15,6 +15,7 @@ import { cmdInitLoop } from "./lib/loop-init.mjs";
 import { cmdCompleteTick } from "./lib/loop-tick.mjs";
 import { cmdNextTick } from "./lib/loop-advance.mjs";
 import { cmdReinitLoop } from "./lib/loop-reinit.mjs";
+import { cmdMissionDecision, cmdRecordMissionReview } from "./lib/mission-decision.mjs";
 import { cmdViz, cmdReplayData } from "./lib/viz-commands.mjs";
 import { cmdUxVerdict, cmdUxFrictionAggregate } from "./lib/ux-verdict.mjs";
 import { cmdCriteriaLint } from "./lib/criteria-lint.mjs";
@@ -34,6 +35,7 @@ switch (command) {
   case "diff":         cmdDiff(args);          break;
   case "route":        cmdRoute(args);         break;
   case "init":         await cmdInit(args);      break;
+  case "record-commit": cmdRecordCommit(args);   break;
   case "validate":     cmdValidate(args);      break;
   case "transition":   await cmdTransition(args);    break;
   case "validate-chain": cmdValidateChain(args); break;
@@ -45,6 +47,8 @@ switch (command) {
   case "replay":       cmdReplayData(args);    break;
   case "init-loop":    cmdInitLoop(args);      break;
   case "reinit-loop":  cmdReinitLoop(args);    break;
+  case "record-mission-review": await cmdRecordMissionReview(args); break;
+  case "mission-decision": await cmdMissionDecision(args); break;
   case "complete-tick": cmdCompleteTick(args);  break;
   case "next-tick":    cmdNextTick(args);      break;
   case "skip":         cmdSkip(args);          break;
@@ -72,7 +76,7 @@ switch (command) {
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
     console.log("Flow commands:");
-    console.log("  init --flow <tpl> [--flow-file <p>] [--entry <node>] [--dir <p>]");
+    console.log("  init --flow <tpl> [--flow-file <p>] [--entry <node>] [--mission <json> | --parent-session <dir>] [--criteria <md>] [--plan <md>] [--dir <p>]");
     console.log("                                                     Init flow state");
     console.log("  route --node <id> --verdict <V> --flow <tpl> [--flow-file <p>]");
     console.log("                                                     Get next node from graph");
@@ -88,12 +92,16 @@ switch (command) {
     console.log("  viz --flow <tpl> [--flow-file <p>] [--dir <p>] [--json]");
     console.log("                                                     Visualize flow graph");
     console.log("  replay [--dir <p>]                                 Export replay data as JSON");
+    console.log("  record-commit [--sha <sha>] [--dir <p>]            Record a flow-produced Git commit");
     console.log();
     console.log("Escape hatches:");
     console.log("  skip [--dir <p>]                                   Skip current node via PASS");
     console.log("  pass [--dir <p>]                                   Force-pass current gate");
     console.log("  stop [--dir <p>]                                   Terminate flow, preserve state");
     console.log("  goto <nodeId> [--dir <p>]                          Jump to a node");
+    console.log("  mission-decision --action <action> --actor <agent|human> [--review <json>] [--approval <file>] [--phase <intent|resume>] [--intent <id>] [--mission <json>] [--criteria <md>] [--plan <md>] [--evidence <json>] [--resume-unit <id>] [--dir <p>]");
+    console.log("                                                     Resolve a pending Mission Gate with an audited decision");
+    console.log("  record-mission-review --review <json> [--dir <p>] Sign and seal a cold Mission review");
     console.log("  ls [--base <p>]                                    List active flows");
     console.log();
     console.log("Eval commands:");
@@ -130,11 +138,11 @@ switch (command) {
     console.log("  node-preflight --node <id> --dir <p>            Fire preflight → write design artifacts to session dir");
     console.log();
     console.log("Loop commands (Layer 2 — zero trust):");
-    console.log("  init-loop [--plan <file>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]");
+    console.log("  init-loop [--plan <file>] [--mission <json> | --parent-session <dir>] [--flow-template <name>] [--flow-file <p>] [--handlers <json>] [--dir <p>]");
     console.log("                                                     Init loop state");
     console.log("  reinit-loop --unit <id> --sub-units <csv> [--dir <p>]");
     console.log("                                                     Decompose stalled unit into sub-units");
-    console.log("  complete-tick --unit <id> --artifacts <a,b> --description <text> [--dir <p>]");
+    console.log("  complete-tick --unit <id> --artifacts <a,b> --description <text> [--scenario <id>] [--validator-type <type>] [--satisfies <OUT-N,FLOOR-N>] [--dir <p>]");
     console.log("                                                     Complete tick with evidence");
     console.log("  next-tick [--dir <p>]                              Get next unit or terminate");
     console.log();

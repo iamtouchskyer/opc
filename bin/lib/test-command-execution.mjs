@@ -3,6 +3,7 @@ import { spawnSync } from "child_process";
 import { createHash } from "crypto";
 import { join, resolve } from "path";
 import { appendProvenanceEvent } from "./provenance-ledger.mjs";
+import { compareRunIds } from "./run-id.mjs";
 
 const EXECUTION_ACTOR = "opc-harness:test-command";
 
@@ -18,8 +19,14 @@ function latestRunDir(nodeDir) {
   if (!existsSync(nodeDir)) return null;
   const runs = readdirSync(nodeDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && /^run_\d+$/.test(entry.name))
-    .sort((a, b) => Number(b.name.slice(4)) - Number(a.name.slice(4)));
+    .sort((a, b) => compareRunIds(b.name, a.name));
   return runs[0] ? join(nodeDir, runs[0].name) : null;
+}
+
+function runDirFor(nodeDir, runId) {
+  if (typeof runId !== "string" || !/^run_\d+$/.test(runId)) return null;
+  const dir = join(nodeDir, runId);
+  return existsSync(dir) ? dir : null;
 }
 
 function commandSpecFrom(data) {
@@ -55,15 +62,27 @@ function planPathFromHandshake(nodeDir, handshake) {
   return art ? join(nodeDir, art.path) : null;
 }
 
-function sourcePlanHash(sessionDir, nodeId) {
+function readRunBoundJson(path, runId) {
+  const data = readJson(path);
+  if (!data) return null;
+  if (runId && data.runId !== runId) return null;
+  return data;
+}
+
+function sourcePlanHash(sessionDir, nodeId, runId = null) {
   const nodeDir = join(sessionDir, "nodes", nodeId);
-  const runDir = latestRunDir(nodeDir);
-  const handshake = readJson(join(nodeDir, "handshake.json"));
-  const candidates = [
-    planPathFromHandshake(nodeDir, handshake),
-    runDir ? join(runDir, "test-plan.md") : null,
-    join(nodeDir, "test-plan.md"),
-  ].filter(Boolean);
+  const runDir = runId ? runDirFor(nodeDir, runId) : latestRunDir(nodeDir);
+  const handshake = readRunBoundJson(join(nodeDir, "handshake.json"), runId);
+  const candidates = runId
+    ? [
+      runDir ? join(runDir, "test-plan.md") : null,
+      planPathFromHandshake(nodeDir, handshake),
+    ].filter(Boolean)
+    : [
+      runDir ? join(runDir, "test-plan.md") : null,
+      planPathFromHandshake(nodeDir, handshake),
+      join(nodeDir, "test-plan.md"),
+    ].filter(Boolean);
   for (const path of candidates) {
     const text = readText(path);
     if (text != null) return sha256(text);
@@ -71,20 +90,52 @@ function sourcePlanHash(sessionDir, nodeId) {
   return null;
 }
 
-export function loadTestCommandSpec(sessionDir, nodeId) {
+export function loadTestCommandSpec(sessionDir, nodeId, runId = null) {
   const nodeDir = join(sessionDir, "nodes", nodeId);
-  const runDir = latestRunDir(nodeDir);
-  const candidates = [
-    join(nodeDir, "test-execution.json"),
-    join(nodeDir, "handshake.json"),
-    runDir ? join(runDir, "test-execution.json") : null,
-    runDir ? join(runDir, "handshake.json") : null,
-  ].filter(Boolean);
+  const runDir = runId ? runDirFor(nodeDir, runId) : latestRunDir(nodeDir);
+  const candidates = runId
+    ? [
+      runDir ? join(runDir, "test-execution.json") : null,
+      runDir ? join(runDir, "handshake.json") : null,
+      join(nodeDir, "test-execution.json"),
+      join(nodeDir, "handshake.json"),
+    ].filter(Boolean)
+    : [
+      join(nodeDir, "test-execution.json"),
+      runDir ? join(runDir, "test-execution.json") : null,
+      runDir ? join(runDir, "handshake.json") : null,
+      join(nodeDir, "handshake.json"),
+    ].filter(Boolean);
   for (const path of candidates) {
-    const spec = commandSpecFrom(readJson(path));
-    if (spec) return { ...spec, sourcePlanHash: sourcePlanHash(sessionDir, nodeId) };
+    const spec = commandSpecFrom(readRunBoundJson(path, runId));
+    if (spec) return { ...spec, sourcePlanHash: sourcePlanHash(sessionDir, nodeId, runId) };
   }
   return null;
+}
+
+export function collectTestCommandBindingReasons(sessionDir, nodeId, runId) {
+  if (!runId) return [];
+  const nodeDir = join(sessionDir, "nodes", nodeId);
+  const reasons = [];
+  const spec = loadTestCommandSpec(sessionDir, nodeId, runId);
+  if (!spec) {
+    reasons.push(`${nodeId}/${runId}: testCommand spec not found`);
+  } else if (typeof spec.sourcePlanHash !== "string" || spec.sourcePlanHash.length === 0) {
+    reasons.push(`${nodeId}/${runId}: source test-plan hash missing`);
+  }
+  for (const name of ["test-execution.json", "handshake.json"]) {
+    const path = join(nodeDir, name);
+    if (!existsSync(path)) continue;
+    const data = readJson(path);
+    if (!data || !commandSpecFrom(data)) continue;
+    if (data.nodeId && data.nodeId !== nodeId) {
+      reasons.push(`${nodeId}/${name} nodeId '${data.nodeId}' does not match '${nodeId}'`);
+    }
+    if (data.runId !== runId) {
+      reasons.push(`${nodeId}/${name} runId '${data.runId}' does not match selected source run '${runId}'`);
+    }
+  }
+  return reasons;
 }
 
 function trimOutput(value) {
@@ -139,7 +190,7 @@ function commandCwd(spec) {
     : { cwd: base, source: "process-cwd" };
 }
 
-function writeResultFiles(runDir, spec, result, cwdInfo) {
+function writeResultFiles(runDir, spec, result, cwdInfo, sourceNode, sourceRunId) {
   const stdout = trimOutput(result.stdout);
   const stderrText = result.error?.message ? `${result.stderr || ""}\n${result.error.message}` : result.stderr;
   const stderr = trimOutput(stderrText);
@@ -152,6 +203,8 @@ function writeResultFiles(runDir, spec, result, cwdInfo) {
     cwdSource: cwdInfo.source,
     provenance: {
       kind: "opc-test-command",
+      sourceNode,
+      sourceRunId,
       commandHash,
       sourcePlanHash: spec.sourcePlanHash,
       executionActor: EXECUTION_ACTOR,
@@ -184,14 +237,15 @@ function runTestCommand(spec, cwd) {
   }
 }
 
-export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
-  const spec = loadTestCommandSpec(sessionDir, sourceNode);
+export function executeTestCommand(sessionDir, targetNode, runId, sourceNode, sourceRunId = null) {
+  if (!/^run_\d+$/.test(sourceRunId || "")) return null;
+  const spec = loadTestCommandSpec(sessionDir, sourceNode, sourceRunId);
   if (!spec) return null;
   const runDir = join(sessionDir, "nodes", targetNode, runId);
   mkdirSync(runDir, { recursive: true });
   const cwdInfo = commandCwd(spec);
   const result = runTestCommand(spec, cwdInfo.cwd);
-  const summary = writeResultFiles(runDir, spec, result, cwdInfo);
+  const summary = writeResultFiles(runDir, spec, result, cwdInfo, sourceNode, sourceRunId);
   const verdict = summary.exitCode === 0 ? "PASS" : "FAIL";
   const commandHash = testCommandHash(spec.testCommand);
   const ledger = appendProvenanceEvent(sessionDir, {
@@ -199,6 +253,7 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
     nodeId: targetNode,
     runId,
     sourceNode,
+    sourceRunId,
     commandHash,
     sourcePlanHash: spec.sourcePlanHash,
     resultHash: summary.resultHash,
@@ -208,6 +263,7 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
   const testEvidenceProvenance = {
     kind: "opc-test-command",
     sourceNode,
+    sourceRunId,
     commandHash,
     sourcePlanHash: spec.sourcePlanHash,
     resultHash: summary.resultHash,
@@ -236,5 +292,12 @@ export function executeTestCommand(sessionDir, targetNode, runId, sourceNode) {
     },
   };
   writeFileSync(join(sessionDir, "nodes", targetNode, "handshake.json"), JSON.stringify(handshake, null, 2) + "\n");
+  writeFileSync(join(runDir, "handshake.json"), JSON.stringify({
+    ...handshake,
+    artifacts: [
+      { type: "test-result", path: "test-command-result.json" },
+      { type: "cli-output", path: "test-command-output.txt" },
+    ],
+  }, null, 2) + "\n");
   return { executed: true, verdict, exitCode: summary.exitCode, cwd: cwdInfo.cwd, cwdSource: cwdInfo.source, resultPath: join(runDir, "test-command-result.json") };
 }

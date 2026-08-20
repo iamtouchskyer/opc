@@ -50,7 +50,10 @@ All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-sc
 
 ## Project Context
 
-{paste relevant CLAUDE.md instructions here — dev workflow, precommit checks, coding conventions, test commands, etc. Subagents don't inherit project instructions automatically, so include anything the implementer needs to follow.}
+{paste relevant project instructions here — AGENTS.md and, when present,
+CLAUDE.md; include dev workflow, precommit checks, coding conventions, test
+commands, etc. Subagents don't inherit project instructions automatically, so
+include anything the implementer needs to follow.}
 
 ## Context
 

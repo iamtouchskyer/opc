@@ -1,8 +1,8 @@
 ---
 name: opc
-description: "OPC — native-first, token-aware digraph task pipeline. Codex-native subagents use role-appropriate Codex model routing by default; external CLI adapters are opt-in for explicitly requested third-party platforms. Use for /opc tasks, interactive runs, autonomous loops, and independent multi-role reviews."
+description: "OPC — native-first, token-aware digraph task pipeline with independent multi-role evaluation. Use for /opc tasks, explicit or inferred flows, autonomous loops, and optional --mission global-bet governance. Codex-native subagents use role-appropriate model routing by default; external CLI adapters are explicit third-party opt-ins."
 metadata:
-  version: "0.12.0"
+  version: "0.12.1"
 ---
 
 # OPC — One Person Company
@@ -41,15 +41,69 @@ OPC_HARNESS="$HOME/.codex/skills/opc/bin/opc-harness.mjs"
 All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a shell variable and reuse it throughout the session.
 
 ```
-/opc <task>              # auto mode — infer flow and roles from the task
-/opc -i <task>           # interactive mode — ask questions before dispatch
-/opc <role> [role...]    # explicit roles — skip role selection, dispatch directly
-/opc loop <task>         # autonomous loop — decompose, schedule cron, run 24h unattended
-/opc skip                # skip current node, advance via PASS edge
-/opc pass                # force-pass current gate
-/opc stop                # terminate flow, preserve session state
-/opc goto <nodeId>       # manual jump to a node (cycle limits still enforced)
+/opc [<flow>] [--mission] [-i] <task> # composable invocation grammar
+/opc <task>                           # infer flow and roles from the task
+/opc build-verify <task>              # explicit flow, Mission disabled
+/opc build-verify --mission <task>    # explicit flow + Mission
+/opc --mission <task>                 # infer flow + Mission
+/opc loop --mission <task>            # Mission-aware autonomous loop
+/opc <role> [role...]                 # explicit roles when no flow is named
+/opc rebet <observation>              # active Mission only; audited human re-bet
+/opc skip                             # mission-less only; skip via PASS edge
+/opc pass                             # force-pass current gate
+/opc stop                             # terminate flow, preserve session state
+/opc goto <nodeId>                    # mission-less only; manual jump
 ```
+
+Valid explicit flow tokens are `review`, `build-verify`, `quick`, `full-stack`,
+`pre-release`, and `loop`. `--mission` and `-i` are order-independent modifiers;
+they never consume or replace the flow token. If no flow token is present, infer
+the flow normally. If a flow token is present but the task is missing, ask for
+the task instead of treating the flow name as a role or task.
+
+### One-line Mission trigger
+
+The user does not need to write a Mission Contract or repeat a long steering
+prompt. Treat these natural-language forms as exact aliases:
+
+- `用 Mission Gate 做：<task>` or `开启 Mission：<task>` → `/opc --mission <task>`
+- `用 Mission Gate 长跑：<task>` → `/opc loop --mission <task>`
+- `重新下注：<observation>` → `/opc rebet <observation>`
+
+For backward compatibility, normalize `/opc mission <task>` to `/opc --mission
+<task>` and `/opc mission loop <task>` to `/opc loop --mission <task>` before
+parsing. The positional `mission` alias is not a flow name.
+
+`--mission` is an orchestration modifier, not a new runtime state machine.
+Before normal init, inspect the task and repository, read the Mission Contract
+schema in `CONTRACTS.md`, stage the validated Mission Contract and acceptance
+criteria in a temporary directory, and pass their paths to the existing `init
+--mission` API. For the `loop` flow, also generate the scoped `plan.md` and use
+the existing `init-loop --mission` API. If the user already supplied any of
+these artifacts, preserve them instead of regenerating them.
+
+Show one compact preflight card with the mission, outcomes, protected floors,
+appetite, reality signal, and exit/salvage rule. In auto mode, continue after
+showing it unless a missing choice would materially change the requested scope
+or authorize an irreversible action. In interactive mode, ask for confirmation.
+After init, the pinned Mission Context is injected automatically; never ask the
+user to repeat it in later prompts.
+
+A requested Mission run is armed only when the successful `init` or `init-loop`
+receipt contains `mission_enabled: true`. Display that receipt as `✅ Mission
+Gate: ON`, including `mission_version`, `strategy_epoch`, and `mission_contract`.
+If the field is false or missing, stop before dispatch and report that the run is
+mission-less; a prompt-level claim or the presence of `--mission` alone is not
+proof that Mission authority was created.
+
+`/opc rebet` is only valid in an active Mission session. Record the observation
+as the note for `mission-decision --action HUMAN_REBET --actor human --phase
+intent`; if no gate is pending, the existing command snapshots a
+`HUMAN_INTERVENTION` gate first. Then present the compact decision packet and
+prepare revised contract options. Resuming the re-bet still requires the
+existing explicit human approval and validated revised Mission/criteria files.
+Do not attach Mission authority retroactively to an active mission-less session;
+start a fresh `/opc --mission ...` run instead.
 
 ## Task Inference + Flow Selection
 
@@ -80,6 +134,14 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
 **Priority rules:**
+- Normalize the legacy positional `mission` alias, then parse `--mission` and
+  `-i` as order-independent modifiers before task/role inference.
+- After removing modifiers, an exact built-in flow token selects that flow and
+  is removed from the task. A named flow always wins over inferred flow.
+- If no flow token remains, infer the flow from the task as before. Mission
+  enablement never changes the selected flow.
+- `/opc rebet ...` = begin the audited human re-bet for the active Mission; it is
+  not a generic task or role name.
 - `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: first check `.opc/runbooks/` for a matching runbook, otherwise decompose task into units. Initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
 - `/opc <role> [role...]` without a task = review of current codebase using review flow with named roles.
 - `/opc` with no arguments = prompt user to describe their task.
@@ -89,6 +151,7 @@ Show triage result:
 ```
 📌 Flow: {flow template name}
 📍 Entry: {entry node}
+🧭 Mission: enabled / disabled
 ⚡ Interaction: auto / interactive
 Rationale: {1 sentence}
 ```
@@ -189,11 +252,23 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 2. If `.harness/` has `wave-*` files but no `flow-state.json` → **legacy v0.4.x format detected**. Print: "Detected v0.4.x .harness/ format. Please delete .harness/ and re-run, or manually migrate." Do not proceed.
 3. Otherwise → fresh start.
 
-After flow selection, initialize:
+After flow selection, initialize through the current Codex-native lifecycle:
 
 ```bash
 opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE}
 ```
+
+Claude Code compatibility runs may additionally enable its host-specific auto-flow
+guard, after installing hooks with `opc install-hooks --host claude`:
+
+```bash
+opc-harness init --auto --claude-session-id "${CLAUDE_SESSION_ID}" --flow {TEMPLATE} --entry {ENTRY_NODE}
+```
+
+That Claude auto init requires the installed synchronous `PreToolUse` hook.
+Interactive Claude runs use normal `init`, do not create a Claude session
+registry, and are not subject to the node or repair-edge circuit breaker. Codex
+owns its native context lifecycle and does not install Claude hooks.
 
 Init auto-creates `~/.opc/sessions/{project-hash}/{session-id}/` and updates the `latest` symlink. **All subsequent harness commands automatically resolve to the latest session dir** — you do NOT need to pass `--dir` or capture the output. Just run commands normally:
 
@@ -206,6 +281,81 @@ opc-harness viz --flow {TEMPLATE}
 **Multi-window safety:** Each `init` creates a new session dir. If multiple OPC windows run on the same project, the last one to `init` becomes `latest`. To pin a specific session, pass `--dir <path>` explicitly.
 
 **Backward compat:** Pass `--dir .harness` to init for a project-local harness dir.
+
+### Mission-aware long-range runs (opt-in)
+
+For a long-range flow or autonomous loop where repeated local repair could hide a bad global bet, initialize with a versioned Mission Contract:
+
+The normal user-facing entry is `/opc [flow] --mission ...`; omit the flow to
+infer it. The legacy `/opc mission ...` shorthand remains accepted.
+The explicit harness commands below are the mechanical expansion used by the
+orchestrator and by integrations; users do not need to type them or author the
+three input files by hand.
+
+```bash
+opc-harness init --flow {TEMPLATE} --entry {ENTRY_NODE} \
+  --mission /absolute/path/mission.json \
+  --criteria /absolute/path/acceptance-criteria.md \
+  [--plan /absolute/path/plan.md] [--dir "$SESSION_DIR"]
+
+opc-harness init-loop --plan "$SESSION_DIR/plan.md" \
+  --mission /absolute/path/mission.json --dir "$SESSION_DIR"
+```
+
+Mission support is additive and optional. Without `--mission`, flow and loop behavior remains unchanged. With it, the harness validates and copies the exact contract bytes to `mission-contract.json`, requires exact `OUT-N` parity with `acceptance-criteria.md`, pins the criteria hash and any supplied plan hash, and injects a compact Mission Context into worker/reviewer prompts. It also seals the entire active runtime state with generation-linked signed prepare/commit events, covering trajectory, evidence, checkpoints, graph/loop cursor and history, limits, status, and ownership—not just the contract pins. On resume, the harness recovers an interrupted staged write before trusting whether Mission mode exists. The seal detects edits/rollback while the HMAC ledger is intact; it is not protection from a hostile process that holds the key. Bootstrap is one-way: `init --force`, `init-loop`, and `reinit-loop` cannot reset a session that already has Mission authority. A nested flow launched for a loop unit uses `--parent-session <loop-session-dir>` so the loop remains the canonical mission authority.
+
+Mission-enabled red and yellow findings MUST declare `class`, `criterion`, and `finding_ref`. The classes are:
+
+- `ARTIFACT` — a local implementation defect under the frozen mission; one local repair is allowed.
+- `PLAN` — the current decomposition or test strategy cannot satisfy the mission.
+- `GOAL_SPEC` — the outcome, protected floor, appetite, or oracle must change.
+- `ENVIRONMENT` — measured repository/runtime/policy assumptions changed.
+
+If `finding_ref` names an existing `FIND-N`, repeat that registry entry's
+canonical `fingerprint` and `invariant` exactly. An omitted or changed identity
+is non-routing review-quality failure; a genuinely new invariant uses `NEW`.
+
+Mission review quality also requires a valid `VERDICT`, an exact
+`FINDINGS [N]` count when findings exist, structured findings, and non-empty
+`reasoning:` and `fix:` lines. Invalid review output is retained only as
+non-routing claims. One fresh reevaluation must disposition every claim hash in
+run-local `review-claim-dispositions.json` as `CONFIRM`, evidence-backed
+`REJECT`, or `SUPERSEDE`; a second invalid attempt opens non-retryable
+`REVIEW_QUALITY_STALL`. Ordinary `UNLINKED` findings do not route. Only an
+explicitly evidenced `GOAL_SPEC` + `UNLINKED` protected-floor risk can open a
+gate, and it allows only `HUMAN_REBET` or `STOP_SALVAGE`.
+
+`PLAN`, `GOAL_SPEC`, and `ENVIRONMENT` findings open a Mission Gate immediately. The gate also opens for a repeated canonical artifact finding, a repeated repair edge without new integrated evidence, `appetite.maxRepairCycles` being reached, `appetite.maxWallTimeHours` elapsing, `appetite.expiresAt` passing, a frozen assumption reaching `freshUntil`, a declared checkpoint, a second consecutive invalid review-metadata pass, or finalization without a current cold Mission pass. `maxTokens` opens the same non-retryable appetite gate only when an embedding runtime supplies finite `trajectory.measuredTokens`; normal OPC runs report it as unknown. A trigger writes `trajectory-review-request.json`, leaves the normal graph/cursor in place, and returns `rebet_required: true`.
+
+When `rebet_required` is true:
+
+1. Stop normal dispatch. Do not call `transition`, `advance`, `finalize`, `pass`, `skip`, `goto`, `complete-tick`, `next-tick`, or `reinit-loop` again.
+2. Dispatch exactly one fresh reviewer with only the trajectory packet, the pinned Mission Contract it names, and current evidence—not the local repair transcript. The packet binds stable finding details, current validator receipts, Git plus declared/ignored artifacts, and an exact `allowedDecisions` list. It is hash-bound to a signed gate-opening event and supplies the only valid cold `reviewRequest.runId`. Retryable non-checkpoint packets expose all six actions so the cold reviewer can correct the local classification; its fresh classification then constrains the action. Non-retryable packets expose only re-bet/stop, and final packets only continue/stop. The review must copy that issued run ID, use `contextMode: "cold"`, match every packet binding, set `localFixesIncluded: false`, settle reality signals as `SUPPORTS`, `REFUTES`, or `INSUFFICIENT`, and recommend only an allowed action.
+3. Seal the review with `record-mission-review`. The harness accepts exactly one sealed cold review for each trigger; a second attempt returns `recorded: false` and the existing sealed path.
+4. Record one audited `mission-decision`. Available actions are `CONTINUE_CURRENT`, `RESHAPE_SMALLER`, `RESTORE`, `RECON`, `HUMAN_REBET`, and `STOP_SALVAGE`; see `pipeline/gate-protocol.md` for the schemas and authority rules.
+
+A named perspective such as “What would 37signals think?” may be added as an advisory lens for the cold reviewer. It may challenge the bet, scope, appetite, and salvage value, but it is never decision authority and cannot override evidence, protected floors, or the mission owner.
+
+`CONTINUE_CURRENT` grants at most one retry bound to the same trigger, epoch, canonical `FIND-N`/edge, transition source, and loop unit. The first matching standard transition or loop `next-tick` claim consumes it, even if the attempt later fails. An agent may `RESHAPE_SMALLER` only once for a canonical finding; if that invariant recurs, only `HUMAN_REBET` or `STOP_SALVAGE` is accepted. `RESTORE`, `RECON`, and `HUMAN_REBET` are two-phase (`intent`, then `resume`) with action/intent/trigger/mission/plan/epoch-bound evidence. RESTORE accepts a current bound checkpoint or a current clean Git tree that actually differs from its signed intent baseline; a no-op is rejected. RECON requires a reproducible `environment_baseline` probe at intent, the same probe with an actual measured delta at resume, and is limited to once per bet. Contract changes require `actor=human`, a verbatim approval artifact, matched revised mission/criteria files, an incremented mission version, a preserved original-request hash, and immutable history for every retired criterion ID. Mission mode always forbids `skip` and `goto`. Standard flows may still use emergency `stop` while pending; `STOP_SALVAGE` is the audited, absorbing termination action for both standard and loop sessions and may supersede a pending two-phase intent. Neither reports success.
+
+Mission evidence is current-run evidence. In standard flows, only built-in,
+harness-run `test-execute` currently mints integrated receipts; custom execute,
+`e2e-user`, and `post-launch-sim` remain local until a comparable trusted
+execution record exists. Its artifacts must be relative, contained regular
+non-symlink files from the sealed latest run, and its non-empty TAP must show at
+least one test and zero failures with signed `testCommand`, source-plan, result,
+and node/run provenance. Loop integrated evidence must be produced after
+the current `next-tick` claim inside the session and cannot reuse every machine
+result hash from an earlier receipt.
+
+For Mission coverage, freeze the scenario, validator type, and `satisfies` IDs
+in the test plan or loop unit before execution; runtime flags/handshake metadata
+must match exactly. The harness owns the execution handshake and requires a
+non-vacuous `OPC_ORACLE` or non-empty, all-passing TAP result. Before trajectory decisions
+and finalization it re-hashes path-bound evidence and marks missing, changed, or
+no-longer-passing receipts stale, so they cannot preserve apparent success.
+
+Explicit human steering may invoke any action except `CONTINUE_CURRENT` even when no gate is pending. The harness snapshots a `HUMAN_INTERVENTION` gate before recording the decision, so the intervention is still bound to a trigger and audit manifest.
 
 **Show flow graph** — immediately after init, run `opc-harness viz --flow {TEMPLATE}` and display the ASCII output to the user. This gives them a visual map of the entire flow before execution begins.
 
@@ -256,7 +406,11 @@ Before dispatching ANY work, the orchestrator MUST establish a clear definition 
    - Compatibility? ("works in Safari")
    - Edge cases? ("handles empty input, 10k items, unicode")
 
-**In auto mode**: infer answers from the task description + codebase context (package.json scripts, existing tests, CLAUDE.md rules). Show inferred answers to user for confirmation. If task is too vague to infer concrete verification methods → **ask, even in auto mode.** A vague task is worse than a 30-second clarification.
+**In auto mode**: infer answers from the task description + codebase context
+(package.json scripts, existing tests, `AGENTS.md`, and `CLAUDE.md` when present).
+Show inferred answers to user for confirmation. If task is too vague to infer
+concrete verification methods → **ask, even in auto mode.** A vague task is
+worse than a 30-second clarification.
 
 **In interactive mode (`-i`)**: ask directly, grouped with role-specific questions.
 
@@ -269,7 +423,7 @@ Write the finalized acceptance criteria to `acceptance-criteria.md` (in the sess
 1. **Detect reference image** — user provides a path (e.g., `/Users/.../ref.jpg`). Confirm the file exists.
 2. **Extract design spec** — run `analyze_reference.py` to generate a structured spec:
    ```bash
-   python3 ~/.claude/skills/image-x/scripts/analyze_reference.py <ref_image> --output <session_dir>/spec.json
+   python3 ~/.codex/skills/image-x/scripts/analyze_reference.py <ref_image> --output <session_dir>/spec.json
    ```
 3. **Write `## Reference` section** in `acceptance-criteria.md`:
    ```markdown
@@ -347,7 +501,11 @@ The orchestrator searches for role definitions in this order (later sources over
 2. **Flow template roles** — if the active flow template specifies `rolesDir`, scan `_resolvedRolesDir/<name>.md`. Custom roles with the same name as a built-in one take precedence for this flow.
 3. **Dynamic roles** — created on-the-fly during execution (see below)
 
-**How to check for custom roles:** After `opc-harness init`, if the flow template was loaded from `~/.claude/flows/`, check `FLOW_TEMPLATES[template]._resolvedRolesDir`. If it exists and is a directory, scan it for `.md` files and merge into the role pool.
+**How to check for custom roles:** After `opc-harness init`, if the flow template
+was loaded with `--flow-file` (or through the deprecated Claude compatibility
+directory `~/.claude/flows/`), check
+`FLOW_TEMPLATES[template]._resolvedRolesDir`. If it exists and is a directory,
+scan it for `.md` files and merge into the role pool.
 
 **Protocol discovery** works the same way: if the flow template specifies `protocolDir`, protocols in `_resolvedProtocolDir/<name>.md` supplement or override built-in protocols in `pipeline/`.
 
@@ -389,12 +547,13 @@ Launching {N} agents...
 
 ## Node Execution
 
-**Auto mode = no pause.** In auto mode, the orchestrator MUST NOT pause to ask "should I continue?", "this will take a while", or "want to stop here?". The only acceptable reasons to stop are:
-- Escape hatch triggered (cycle limit hit, stall detected, blocked transition)
-- Tool failure after retry
-- Context critically low (write state to disk, tell user to re-invoke)
+**Auto mode is bounded.** Continue without confirmation only while node and repair-edge budgets remain. Normal graph limits and validation failures still apply; in Mission mode, a reached legacy graph limit opens a non-retryable `LEGACY_FLOW_LIMIT_REACHED` gate before mutation and no retry grant bypasses it.
 
-Anything else = keep executing. The user chose auto mode precisely because they don't want interruptions. If the pipeline has 14 nodes, run all 14 nodes. Do not ask permission at node 4.
+When the circuit breaker trips, stop and report immediately. Do not retry or
+attempt recovery from the current orchestration session. In a mission-less flow,
+recovery may use the existing `stop`, `goto`, `skip`, or `pass` commands from an
+external terminal. Mission mode rejects `goto`/`skip` and requires the audited
+Mission route (or standard-flow emergency `stop`).
 
 The orchestrator uses **cursor-based execution** — `flow-state.json.currentNode` is the single pointer. No topological sort.
 
@@ -430,6 +589,7 @@ Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 2. **Single agent** → agent writes its own handshake.json.
 3. **Multiple agents** (parallel, with `isolation: "worktree"`) → orchestrator merges artifacts and writes handshake.json.
 4. With superpowers: invoke `superpowers:subagent-driven-development`.
+5. **After committing delivered code**, run `opc-harness record-commit --sha <sha>` (or bare, defaulting to HEAD) so the terminal gate's changeScopeCoverage layer scopes to what this flow produced instead of a blind `HEAD~1` diff. The command locks and rereads flow state before append, so it cannot overwrite a concurrent Mission decision. Skip only if the build committed nothing.
 
 ### Node Type: review
 
@@ -488,12 +648,14 @@ Gate nodes produce verdicts via `opc-harness synthesize` (code, not LLM judgment
 **Oscillation detection:** After a loopback, run `opc-harness diff` on consecutive evaluations. If `oscillation: true`, surface to user.
 
 **Escape hatches:**
-- `/opc skip` — skip current node, advance via PASS edge
+- `/opc skip` — mission-less only; skip current node, advance via PASS edge
 - `/opc pass` — force gate to PASS
 - `/opc stop` — terminate flow, preserve state
-- `/opc goto <nodeId>` — manual jump (cycle limits still enforced via `transition`)
+- `/opc goto <nodeId>` — mission-less only; manual jump (cycle limits enforced)
 
-When transition returns `allowed: false` → show the user why (which limit hit) and offer escape options. Never continue without user consent.
+When a mission-less transition returns `allowed: false`, show which limit hit and
+offer legacy escape options. In Mission mode, follow the non-retryable gate's
+human re-bet or stop/salvage route. Never continue without user consent.
 
 ---
 
@@ -502,7 +664,13 @@ When transition returns `allowed: false` → show the user why (which limit hit)
 ```
 $SESSION_DIR/                    # ~/.opc/sessions/{hash}/{id}/ or .harness/ if --dir used
 ├── flow-state.json              # Current node, execution history, edge counts, limits
+├── {flow-state|loop-state}.json.mission-runtime-stage # Ephemeral crash candidate (normally absent)
+├── .opc-provenance.jsonl        # Signed packet, runtime-state, review, and decision records
 ├── progress.md                  # Human-readable narrative log
+├── mission-contract.json         # Optional exact pinned Mission Contract copy
+├── trajectory-review-request.json # Optional current Mission Gate packet
+├── mission-reviews/              # Harness-sealed cold reviews
+├── decisions/                    # Immutable Mission decision inputs + manifests
 └── nodes/
     └── {nodeId}/
         ├── handshake.json       # Machine-readable envelope (summary + verdict + artifact paths)
@@ -548,7 +716,11 @@ All templates live in `./pipeline/`:
 
 ## External Flow Templates
 
-Custom flows can be defined as JSON files in `~/.claude/flows/`. The harness loads them at startup and merges them into the template registry. Built-in templates take precedence (external cannot override).
+Prefer `--flow-file <path>` so each caller owns its flow JSON in its own skill or
+project directory. The harness persists that absolute path in state and restores
+it for later commands. For Claude Code backward compatibility only,
+`~/.claude/flows/*.json` is still scanned at startup with a deprecation warning.
+Built-in templates take precedence and cannot be overridden.
 
 **JSON schema:**
 ```json
@@ -604,7 +776,8 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `init` | `--flow <tpl> [--entry <node>] [--dir <p>]` | Initialize flow state. Creates `flow-state.json` and node directories. |
+| `init` | `--flow <tpl> [--entry <node>] [--mission <json> \| --parent-session <dir>] [--criteria <md>] [--plan <md>] [--dir <p>]` | Initialize flow state. Mission options are additive; `--mission` and `--parent-session` are mutually exclusive. |
+| `record-commit` | `[--sha <sha>] [--dir <p>]` | Under the flow-state lock, reread state and record a full commit SHA in `flow-state.producedCommits`. Defaults to HEAD; dedups; fail-closed on invalid sha or pending/terminal Mission state. |
 | `route` | `--node <id> --verdict <V> --flow <tpl>` | Get next node from graph edges. Returns `{next, allowed}`. |
 | `transition` | `--from <n> --to <n> --verdict <V> --flow <tpl> --dir <p>` | Execute state transition. Validates edge, checks limits, writes gate handshake, enforces backlog. |
 | `validate` | `<handshake.json>` | Validate handshake schema (required fields, evidence check for execute nodes). |
@@ -618,10 +791,12 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `skip` | `[--dir <p>] [--flow <tpl>]` | Skip current node, advance via PASS edge. Writes skip handshake. |
+| `skip` | `[--dir <p>] [--flow <tpl>]` | Mission-less only: skip current node and advance via PASS edge. Mission mode rejects it. |
 | `pass` | `[--dir <p>]` | Force-pass current gate node. Only works on gate-type nodes. |
 | `stop` | `[--dir <p>]` | Terminate flow, preserve state. Sets status to "stopped". |
-| `goto` | `<nodeId> [--dir <p>]` | Manual jump to any node. Cycle limits still enforced. |
+| `goto` | `<nodeId> [--dir <p>]` | Mission-less only: manual jump with cycle limits. Mission mode rejects it. |
+| `record-mission-review` | `--review <json> [--dir <p>]` | Validate current bindings, sign the cold review claims, and return an immutable sealed review path. |
+| `mission-decision` | `--action <action> --actor <agent\|human> [--review <json>] [--approval <file>] [--phase <intent\|resume>] [--intent <id>] [--mission <json>] [--criteria <md>] [--plan <md>] [--evidence <json>] [--resume-unit <id>] [--dir <p>]` | Record an audited canonical steering decision; explicit human steering can snapshot a gate first. |
 | `ls` | `[--base <p>]` | List all active flows (scans `~/.opc/sessions/` and project-local `.harness*` directories). |
 
 ### Eval Commands
@@ -637,8 +812,8 @@ All commands output JSON to stdout. Errors go to stderr. All output is machine-p
 
 | Command | Usage | Description |
 |---------|-------|-------------|
-| `init-loop` | `[--plan <file>] [--dir <p>]` | Initialize loop state from plan.md. Validates plan structure, detects test/lint scripts. |
-| `complete-tick` | `--unit <id> --artifacts <a,b> [--description <text>] [--dir <p>]` | Complete tick with evidence. Validates artifacts per unit type, checks plan hash, overlap detection. |
+| `init-loop` | `[--plan <file>] [--mission <json>\|--parent-session <dir>] [--dir <p>]` | Initialize loop state from plan.md. Mission mode also pins the contract, criteria, and plan. |
+| `complete-tick` | `--unit <id> --artifacts <a,b> [--scenario <id>] [--validator-type <type>] [--satisfies <ids>] [--description <text>] [--dir <p>]` | Complete a tick. Mission evidence flags must exactly match the unit's frozen tuple; the harness runs its `verify:` command and binds a non-vacuous receipt to the current epoch. |
 | `next-tick` | `[--dir <p>]` | Get next unit. Checks stall/oscillation, returns `{ready, unit, terminate}`. |
 
 ### Transition Details
@@ -657,12 +832,17 @@ The `transition` command enforces:
 
 **Agent spawn failures:** Retry once. If it fails again, surface to user.
 
-**Context compaction resilience:** OPC provides PreCompact/PostCompact hooks that automatically snapshot state and inject resume context after compaction. Run `opc install-hooks` to register them. These optional shell hooks require `jq`. When auto-compact fires:
+**Host-specific context resilience:** Codex owns its native Agent and context
+lifecycle, so no CLI hook installation is required. For Claude Code compatibility,
+`opc install-hooks --host claude` always registers the synchronous Node-based
+`PreToolUse` guard required by Claude auto flows. When `jq` is available, it also
+registers optional PreCompact/PostCompact shell hooks that snapshot state and
+inject resume context after compaction. When Claude auto-compact fires:
 1. **PreCompact** writes a resume brief to `$SESSION_DIR/resume-brief.md`
 2. **PostCompact** injects the brief as `additionalContext` into the new context
 3. The orchestrator sees the injection and resumes the flow automatically
 
-If hooks are not installed, the fallback behavior is: flow-state.json persists on disk, but the orchestrator must be manually re-invoked via `/opc` (which runs `opc-harness ls` to discover active flows).
+If the optional compaction hooks are unavailable, flow-state.json still persists on disk, but the orchestrator must be manually re-invoked via `/opc` (which runs `opc-harness ls` to discover active flows).
 
 **State recovery:** On resume, run `opc-harness validate-chain`. If inconsistent → surface to user, do not auto-repair.
 

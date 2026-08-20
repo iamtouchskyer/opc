@@ -17,6 +17,7 @@ echo ""
 # ── 1: init built-in flow persists flowTemplate (name), no _flow_file ──
 echo "--- 1: built-in flow state has flowTemplate, no _flow_file ---"
 $HARNESS init --flow build-verify --entry brief --dir .harness 2>/dev/null
+mkdir -p .harness/nodes/brief/run_1
 STATE=$(cat .harness/flow-state.json)
 TPL=$(echo "$STATE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('flowTemplate',''))" 2>/dev/null)
 FF=$(echo "$STATE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('_flow_file',''))" 2>/dev/null)
@@ -54,7 +55,9 @@ fi
 
 # ── 4: build node caps differ from brief node caps (per-node routing intact) ──
 echo "--- 4: per-node capabilities (build ≠ brief) ---"
-OUT=$($HARNESS prompt-context --node build --role implementer --dir .harness 2>/dev/null)
+$HARNESS init --flow build-verify --entry build --dir .harness-build >/dev/null 2>/dev/null
+mkdir -p .harness-build/nodes/build/run_1
+OUT=$($HARNESS prompt-context --node build --role implementer --dir .harness-build 2>/dev/null)
 BUILD_CAPS=$(echo "$OUT" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('nodeCapabilities',[])))" 2>/dev/null)
 # build has design-system-injection@1 but NOT design-spec-conformance@1 (that's brief-only)
 if echo "$BUILD_CAPS" | grep -q "design-system-injection@1" && ! echo "$BUILD_CAPS" | grep -q "design-spec-conformance@1"; then
@@ -110,15 +113,17 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── 5: unknown node → empty caps (no crash) ──
-echo "--- 5: unknown node → empty caps ---"
-OUT=$($HARNESS prompt-context --node nonexistent --role implementer --dir .harness 2>/dev/null)
-CAPS=$(echo "$OUT" | python3 -c "import sys,json; print(','.join(json.load(sys.stdin).get('nodeCapabilities',[])))" 2>/dev/null)
-if [ -z "$CAPS" ]; then
-  echo "  ✅ unknown node → empty caps (no crash)"
+# ── 5: unknown node is rejected before capability routing ──
+echo "--- 5: unknown node → fail closed ---"
+set +e
+OUT=$($HARNESS prompt-context --node nonexistent --role implementer --dir .harness 2>&1)
+RC=$?
+set -e
+if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "nonexistent"; then
+  echo "  ✅ unknown node rejected with diagnostic"
   PASS=$((PASS + 1))
 else
-  echo "  ❌ unexpected caps: '$CAPS'"
+  echo "  ❌ expected unknown-node rejection, got rc=$RC: $OUT"
   FAIL=$((FAIL + 1))
 fi
 
@@ -172,7 +177,25 @@ fi
 # `--auto` init still produces the reminder field on a route call.
 echo "--- 9: autoMode init → route emits reminder ---"
 rm -rf .auto-harness
-$HARNESS init --flow build-verify --entry brief --dir .auto-harness --auto >/dev/null 2>&1
+AUTO_HOME="$TMPDIR/auto-home"
+AUTO_HOOK="$AUTO_HOME/.claude/skills/opc/bin/hooks/opc-pre-tool-budget.mjs"
+mkdir -p "$(dirname "$AUTO_HOOK")"
+printf '#!/usr/bin/env node\n' > "$AUTO_HOOK"
+mkdir -p "$AUTO_HOME/.claude"
+cat > "$AUTO_HOME/.claude/settings.json" <<EOF
+{
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "node \"$AUTO_HOOK\"",
+        "timeout": 10
+      }]
+    }]
+  }
+}
+EOF
+HOME="$AUTO_HOME" $HARNESS init --flow build-verify --entry brief --dir .auto-harness --auto --claude-session-id test-resolve-flowtemplate >/dev/null 2>&1
 OUT=$($HARNESS route --node brief --verdict PASS --dir .auto-harness 2>/dev/null)
 if echo "$OUT" | grep -q "auto mode"; then
   echo "  ✅ reminder present under autoMode: $OUT"

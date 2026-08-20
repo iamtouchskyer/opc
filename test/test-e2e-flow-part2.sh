@@ -45,18 +45,60 @@ assert_not_contains() {
   fi
 }
 
+assert_transition_allowed() {
+  local desc="$1"
+  shift
+  local out
+  out=$("$HARNESS" transition "$@" 2>/dev/null)
+  if echo "$out" | grep -q '"allowed":true'; then
+    echo "  ✅ $desc"
+    PASS=$((PASS + 1))
+  else
+    echo "  ❌ $desc — $out"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 write_handshake() {
   local dir="$1" node="$2" summary="$3" verdict="$4" node_type="${5:-review}"
   local path="$dir/nodes/$node/handshake.json"
   mkdir -p "$(dirname "$path")"
   local artifacts="[]"
+  local extra=""
   local run_dir="$dir/nodes/$node/run_1"
   if [ "$node_type" = "review" ] && [ -d "$run_dir" ]; then
     artifacts=$(ls "$run_dir"/eval-*.md 2>/dev/null | python3 -c "
-import sys, json
+import pathlib, sys, json
 files = [l.strip() for l in sys.stdin if l.strip()]
-print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
+print(json.dumps([{'path': 'run_1/' + pathlib.Path(f).name, 'type': 'eval'} for f in files]))
 " 2>/dev/null || echo "[]")
+  fi
+  if [ "$node_type" = "brief" ]; then
+    mkdir -p "$run_dir"
+    write_golden_brief "$dir/nodes/$node/build-brief.md"
+    echo '{"pass":true}' > "$run_dir/brief-lint-result.json"
+    artifacts='[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]'
+  fi
+  if [ "$node_type" = "execute" ]; then
+    mkdir -p "$run_dir"
+    echo "tests passed" > "$run_dir/command-output.txt"
+    artifacts='[{"type":"cli-output","path":"run_1/command-output.txt"}]'
+  fi
+  if [ "$node" = "test-design" ]; then
+    mkdir -p "$run_dir"
+    write_complete_test_plan "$run_dir/test-plan.md"
+    printf '%s\n' '{"nodeId":"test-design","runId":"run_1","testCommand":"node -e \"process.exit(0)\"","prerequisites":["fixture"]}' > "$run_dir/test-execution.json"
+    artifacts=$(python3 - "$artifacts" <<'PY'
+import json, sys
+items = json.loads(sys.argv[1])
+items.extend([
+  {"type": "test-plan", "path": "run_1/test-plan.md"},
+  {"type": "test-command", "path": "run_1/test-execution.json"},
+])
+print(json.dumps(items))
+PY
+)
+    extra=', "testCommand": "node -e \"process.exit(0)\"", "prerequisites": ["fixture"]'
   fi
   cat > "$path" << HSEOF
 {
@@ -66,10 +108,11 @@ print(json.dumps([{'path': f, 'type': 'eval'} for f in files]))
   "status": "completed",
   "summary": "$summary",
   "verdict": "$verdict",
-  "artifacts": $artifacts,
+  "artifacts": $artifacts$extra,
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 HSEOF
+  sync_run_handshakes "$dir"
 }
 
 write_good_eval() {
@@ -151,8 +194,9 @@ rm -rf .harness
 $HARNESS init --flow review --entry review --dir .harness 2>/dev/null
 write_critical_eval .harness review senior
 write_good_eval .harness review tester
-write_handshake .harness review "Review found critical" "FAIL"
-$HARNESS transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null
+write_good_eval .harness review skeptic-owner
+write_handshake .harness review "Review found critical" "PASS"
+assert_transition_allowed "3.0: review → gate" --from review --to gate --verdict PASS --flow review --dir .harness
 SYNTH=$($HARNESS synthesize .harness --node review)
 assert_field_eq "3.1: critical → FAIL" "$SYNTH" "verdict" '"FAIL"'
 write_handshake .harness gate "Gate fails" "FAIL" gate
@@ -174,13 +218,13 @@ write_handshake .harness brief "Brief complete" "PASS" brief
 ROUTE=$($HARNESS route --node brief --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
 assert_contains "4.1b: brief → build" "$NEXT" "build"
-$HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "4.1c: transition brief → build" --from brief --to build --verdict PASS --flow build-verify --dir .harness
 
 write_handshake .harness build "Implementation complete" "PASS" build
 ROUTE=$($HARNESS route --node build --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
 assert_contains "4.2: build → code-review" "$NEXT" "code-review"
-$HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "4.2b: transition build → code-review" --from build --to code-review --verdict PASS --flow build-verify --dir .harness
 
 write_good_eval .harness code-review frontend
 write_good_eval .harness code-review backend
@@ -189,19 +233,21 @@ write_handshake .harness code-review "Code review done" "PASS"
 ROUTE=$($HARNESS route --node code-review --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
 assert_contains "4.3: code-review → test-design" "$NEXT" "test-design"
-$HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "4.3b: transition code-review → test-design" --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness
 
+write_good_eval .harness test-design tester
+write_good_eval .harness test-design skeptic-owner
 write_handshake .harness test-design "Test cases designed" "PASS"
 ROUTE=$($HARNESS route --node test-design --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
 assert_contains "4.4: test-design → test-execute" "$NEXT" "test-execute"
-$HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "4.4b: transition test-design → test-execute" --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness
 
 write_handshake .harness test-execute "Tests pass" "PASS" execute
 ROUTE=$($HARNESS route --node test-execute --verdict PASS --flow build-verify)
 NEXT=$(jq_field "$ROUTE" "next")
 assert_contains "4.5: test-execute → gate" "$NEXT" "gate"
-$HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "4.5b: transition test-execute → gate" --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness
 
 SYNTH=$($HARNESS synthesize .harness --node code-review)
 assert_field_eq "4.6: gate verdict PASS" "$SYNTH" "verdict" '"PASS"'
@@ -218,15 +264,18 @@ echo "=== E2E TEST 5: build-verify — gate FAIL loopback to brief ==="
 rm -rf .harness
 $HARNESS init --flow build-verify --entry build --dir .harness 2>/dev/null
 write_handshake .harness build "Built" "PASS" build
-$HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "5.0a: build → code-review" --from build --to code-review --verdict PASS --flow build-verify --dir .harness
 write_critical_eval .harness code-review security
 write_good_eval .harness code-review frontend
-write_handshake .harness code-review "Found critical" "FAIL"
-$HARNESS transition --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+write_good_eval .harness code-review skeptic-owner
+write_handshake .harness code-review "Found critical" "PASS"
+assert_transition_allowed "5.0b: code-review → test-design" --from code-review --to test-design --verdict PASS --flow build-verify --dir .harness
+write_good_eval .harness test-design tester
+write_good_eval .harness test-design skeptic-owner
 write_handshake .harness test-design "Test design" "PASS"
-$HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "5.0c: test-design → test-execute" --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness
 write_handshake .harness test-execute "Tests" "PASS" execute
-$HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness 2>/dev/null
+assert_transition_allowed "5.0d: test-execute → gate" --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness
 SYNTH=$($HARNESS synthesize .harness --node code-review)
 assert_field_eq "5.1: gate FAIL on critical" "$SYNTH" "verdict" '"FAIL"'
 write_handshake .harness gate "Gate fails" "FAIL" gate
