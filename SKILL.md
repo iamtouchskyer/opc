@@ -1,6 +1,6 @@
 ---
 name: opc
-description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Use /opc for ordinary work, /opc mission for global-bet governance, /opc -i for interactive setup, or explicit roles for focused review."
+description: "OPC — One Person Company. Digraph-based task pipeline with independent multi-role evaluation. Builds, reviews, analyzes, and brainstorms with specialist agents. Use an explicit flow when desired, add --mission for global-bet governance, or let /opc infer the flow."
 metadata:
   version: "0.10.2"
 ---
@@ -20,33 +20,44 @@ OPC_HARNESS="$HOME/.claude/skills/opc/bin/opc-harness.mjs"
 All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a shell variable and reuse it throughout the session.
 
 ```
-/opc <task>              # auto mode — infer flow and roles from the task
-/opc -i <task>           # interactive mode — ask questions before dispatch
-/opc <role> [role...]    # explicit roles — skip role selection, dispatch directly
-/opc loop <task>         # autonomous loop — decompose, schedule cron, run 24h unattended
-/opc mission <task>      # one-line Mission mode — infer and persist Mission inputs
-/opc mission loop <task> # one-line Mission-aware autonomous loop
-/opc rebet <observation> # active Mission only — begin an audited human re-bet
-/opc skip                # mission-less only; skip current node via PASS edge
-/opc pass                # force-pass current gate
-/opc stop                # terminate flow, preserve session state
-/opc goto <nodeId>       # mission-less only; manual jump (cycle limits enforced)
+/opc [<flow>] [--mission] [-i] <task> # composable invocation grammar
+/opc <task>                           # infer flow and roles from the task
+/opc build-verify <task>              # explicit flow, Mission disabled
+/opc build-verify --mission <task>    # explicit flow + Mission
+/opc --mission <task>                 # infer flow + Mission
+/opc loop --mission <task>            # Mission-aware autonomous loop
+/opc <role> [role...]                 # explicit roles when no flow is named
+/opc rebet <observation>              # active Mission only; audited human re-bet
+/opc skip                             # mission-less only; skip via PASS edge
+/opc pass                             # force-pass current gate
+/opc stop                             # terminate flow, preserve session state
+/opc goto <nodeId>                    # mission-less only; manual jump
 ```
+
+Valid explicit flow tokens are `review`, `build-verify`, `quick`, `full-stack`,
+`pre-release`, and `loop`. `--mission` and `-i` are order-independent modifiers;
+they never consume or replace the flow token. If no flow token is present, infer
+the flow normally. If a flow token is present but the task is missing, ask for
+the task instead of treating the flow name as a role or task.
 
 ### One-line Mission trigger
 
 The user does not need to write a Mission Contract or repeat a long steering
 prompt. Treat these natural-language forms as exact aliases:
 
-- `用 Mission Gate 做：<task>` or `开启 Mission：<task>` → `/opc mission <task>`
-- `用 Mission Gate 长跑：<task>` → `/opc mission loop <task>`
+- `用 Mission Gate 做：<task>` or `开启 Mission：<task>` → `/opc --mission <task>`
+- `用 Mission Gate 长跑：<task>` → `/opc loop --mission <task>`
 - `重新下注：<observation>` → `/opc rebet <observation>`
 
-`/opc mission` is an orchestration shortcut, not a new runtime state machine.
+For backward compatibility, normalize `/opc mission <task>` to `/opc --mission
+<task>` and `/opc mission loop <task>` to `/opc loop --mission <task>` before
+parsing. The positional `mission` alias is not a flow name.
+
+`--mission` is an orchestration modifier, not a new runtime state machine.
 Before normal init, inspect the task and repository, read the Mission Contract
 schema in `CONTRACTS.md`, stage the validated Mission Contract and acceptance
 criteria in a temporary directory, and pass their paths to the existing `init
---mission` API. For `mission loop`, also generate the scoped `plan.md` and use
+--mission` API. For the `loop` flow, also generate the scoped `plan.md` and use
 the existing `init-loop --mission` API. If the user already supplied any of
 these artifacts, preserve them instead of regenerating them.
 
@@ -64,7 +75,7 @@ intent`; if no gate is pending, the existing command snapshots a
 prepare revised contract options. Resuming the re-bet still requires the
 existing explicit human approval and validated revised Mission/criteria files.
 Do not attach Mission authority retroactively to an active mission-less session;
-start a fresh `/opc mission ...` run instead.
+start a fresh `/opc --mission ...` run instead.
 
 ## Task Inference + Flow Selection
 
@@ -95,9 +106,12 @@ The orchestrator reads the task, selects a flow template, and determines the ent
 | Everything done, needs acceptance | acceptance (if ∈ template) |
 
 **Priority rules:**
-- `/opc mission ...` = parse the Mission modifier before ordinary task/role
-  inference, then follow the one-line Mission trigger above. `/opc mission loop`
-  selects loop mode.
+- Normalize the legacy positional `mission` alias, then parse `--mission` and
+  `-i` as order-independent modifiers before task/role inference.
+- After removing modifiers, an exact built-in flow token selects that flow and
+  is removed from the task. A named flow always wins over inferred flow.
+- If no flow token remains, infer the flow from the task as before. Mission
+  enablement never changes the selected flow.
 - `/opc rebet ...` = begin the audited human re-bet for the active Mission; it is
   not a generic task or role name.
 - `/opc loop <task>` = enter autonomous loop mode. Follow `./pipeline/loop-protocol.md`: first check `.opc/runbooks/` for a matching runbook, otherwise decompose task into units. Initialize loop state, start cron, execute ticks. Each tick runs the appropriate OPC flow for that unit type.
@@ -109,6 +123,7 @@ Show triage result:
 ```
 📌 Flow: {flow template name}
 📍 Entry: {entry node}
+🧭 Mission: enabled / disabled
 ⚡ Interaction: auto / interactive
 Rationale: {1 sentence}
 ```
@@ -234,7 +249,8 @@ opc-harness viz --flow {TEMPLATE}
 
 For a long-range flow or autonomous loop where repeated local repair could hide a bad global bet, initialize with a versioned Mission Contract:
 
-The normal user-facing entry is the one-line `/opc mission ...` shorthand above.
+The normal user-facing entry is `/opc [flow] --mission ...`; omit the flow to
+infer it. The legacy `/opc mission ...` shorthand remains accepted.
 The explicit harness commands below are the mechanical expansion used by the
 orchestrator and by integrations; users do not need to type them or author the
 three input files by hand.
