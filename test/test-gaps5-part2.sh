@@ -138,7 +138,7 @@ echo "=== PART 9: 🔵 LOW — validate-chain currentNode skip ==="
 # ═══════════════════════════════════════════════════════════════════
 
 echo ""
-echo "── 9.1: validate-chain rejects missing currentNode handshake"
+echo "── 9.1: validate-chain skips the unfinished currentNode handshake"
 D=$(mktemp -d)
 cd "$D"
 $HARNESS init --flow build-verify --entry build --dir . > /dev/null 2>&1
@@ -152,8 +152,8 @@ build complete
 EOF
 $HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
 OUT=$($HARNESS validate-chain --dir . 2>/dev/null)
-assert_field_eq "$OUT" "['valid']" "False" "9.1a: currentNode without handshake fails closed"
-assert_contains "$OUT" "code-review/run_1: .*status missing or invalid" "9.1b: error names exact selected run"
+assert_field_eq "$OUT" "['valid']" "True" "9.1a: unfinished currentNode is not treated as completed evidence"
+assert_not_contains "$OUT" "code-review/run_1" "9.1b: no exact-run error is emitted for unfinished currentNode"
 cd "$ORIG_DIR"
 rm -rf "$D"
 
