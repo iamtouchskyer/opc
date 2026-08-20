@@ -2114,13 +2114,13 @@ function collectGateAuthorityReasons(dir, state, template, currentNode) {
       reasons.push(exact.error);
       continue;
     }
-    reasons.push(...collectHandshakeSchemaReasons(dir, template, entry.nodeId, exact.path, exact.data)
+    reasons.push(...collectHandshakeSchemaReasons(dir, template, entry.nodeId, exact.path, exact.data, state.tier)
       .map((reason) => `gate authority check for ${entry.nodeId}: ${reason}`));
   }
   reasons.push(...canonicalProjectionErrors(
     dir,
     state,
-    canonicalProjectionValidator(dir, template),
+    canonicalProjectionValidator(dir, template, state.tier),
     { entries: [...upstreamByNode.values()] },
   ));
   return reasons;
@@ -2177,12 +2177,13 @@ function collectHandshakeStructuredReasons(dir, nodeId, hsPath, handshake) {
   return reasons;
 }
 
-function collectHandshakeSchemaReasons(dir, template, nodeId, hsPath, handshake) {
+function collectHandshakeSchemaReasons(dir, template, nodeId, hsPath, handshake, tier = null) {
   const reasons = [];
   const { errors } = validateHandshakeData(handshake, {
     checkEvidence: true,
     softEvidence: !!template?.softEvidence,
     baseDir: handshakeValidationBaseDir(hsPath, handshake),
+    tier,
   });
   reasons.push(...errors);
   const nodeType = template?.nodeTypes?.[nodeId] || null;
@@ -2202,8 +2203,8 @@ function collectHandshakeSchemaReasons(dir, template, nodeId, hsPath, handshake)
   return reasons;
 }
 
-function canonicalProjectionValidator(dir, template) {
-  return (data, path, nodeId) => collectHandshakeSchemaReasons(dir, template, nodeId, path, data);
+function canonicalProjectionValidator(dir, template, tier = null) {
+  return (data, path, nodeId) => collectHandshakeSchemaReasons(dir, template, nodeId, path, data, tier);
 }
 
 // ─── Step 1.5: Structured result check (extracted for testability) ───
@@ -2643,6 +2644,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
       checkEvidence: true,
       softEvidence: softEv,
       baseDir: handshakeValidationBaseDir(fromHandshakePath, hsData),
+      tier: state.tier,
     });
     if (hsData.status !== "completed") {
       hsErrors.push(`status is '${hsData.status}', expected 'completed'`);
@@ -3038,6 +3040,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
           checkEvidence: true,
           softEvidence: !!template.softEvidence,
           baseDir: fromNodeDir,
+          tier: state.tier,
         });
         for (const artifact of artifacts) {
           if (!/\.json$/i.test(artifact.path)) continue;
@@ -3495,7 +3498,7 @@ export function cmdValidateChain(args) {
       errors.push(`missing handshake for node '${nd}' run '${entry.runId}'`);
       continue;
     }
-    const hsErrors = collectHandshakeSchemaReasons(dir, chainTemplate, nd, exact.path, exact.data);
+    const hsErrors = collectHandshakeSchemaReasons(dir, chainTemplate, nd, exact.path, exact.data, state.tier);
     if (hsErrors.length > 0) {
       errors.push(...hsErrors.map((error) => `${nd}/${entry.runId}: ${error}`));
     }
@@ -3507,7 +3510,7 @@ export function cmdValidateChain(args) {
       errors.push(...collectExtensionProvenanceReasons(dir, chainTemplate, requiredExtensions, nd, exact.data));
     }
   }
-  errors.push(...canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, chainTemplate)));
+  errors.push(...canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, chainTemplate, state.tier)));
 
   console.log(JSON.stringify({
     valid: errors.length === 0,
@@ -3865,12 +3868,12 @@ export function cmdFinalize(args) {
         chainErrors.push(exact.error);
         continue;
       }
-      const hsErrors = collectHandshakeSchemaReasons(dir, template, nodeId, exact.path, exact.data);
+      const hsErrors = collectHandshakeSchemaReasons(dir, template, nodeId, exact.path, exact.data, state.tier);
       for (const e of hsErrors) {
         chainErrors.push(`${nodeId}/${entry.runId}: ${e}`);
       }
     }
-    chainErrors.push(...canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, template)));
+    chainErrors.push(...canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, template, state.tier)));
     if (chainErrors.length > 0) {
       console.log(JSON.stringify({
         finalized: false,
@@ -3932,8 +3935,9 @@ export function cmdFinalize(args) {
     checkEvidence: true,
     softEvidence: !!template.softEvidence,
     baseDir: handshakeValidationBaseDir(terminalExact.path, hsData),
+    tier: state.tier,
   });
-  const projectionErrors = canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, template));
+  const projectionErrors = canonicalProjectionErrors(dir, state, canonicalProjectionValidator(dir, template, state.tier));
   const terminalErrors = [
     ...terminalValidation.errors,
     ...collectHandshakeStructuredReasons(dir, currentNode, terminalExact.path, hsData),
