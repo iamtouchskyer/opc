@@ -68,6 +68,13 @@ or authorize an irreversible action. In interactive mode, ask for confirmation.
 After init, the pinned Mission Context is injected automatically; never ask the
 user to repeat it in later prompts.
 
+A requested Mission run is armed only when the successful `init` or `init-loop`
+receipt contains `mission_enabled: true`. Display that receipt as `✅ Mission
+Gate: ON`, including `mission_version`, `strategy_epoch`, and `mission_contract`.
+If the field is false or missing, stop before dispatch and report that the run is
+mission-less; a prompt-level claim or the presence of `--mission` alone is not
+proof that Mission authority was created.
+
 `/opc rebet` is only valid in an active Mission session. Record the observation
 as the note for `mission-decision --action HUMAN_REBET --actor human --phase
 intent`; if no gate is pending, the existing command snapshots a

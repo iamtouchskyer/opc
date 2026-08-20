@@ -224,6 +224,10 @@ function fixture(entry = "gate", mutateContract = null, flow = "build-verify") {
   }
   if (result.created !== true) cleanup(initializing);
   assert.equal(result.created, true, result.error || JSON.stringify(result));
+  assert.equal(result.mission_enabled, true);
+  assert.equal(result.mission_version, contract.version);
+  assert.equal(result.strategy_epoch, 1);
+  assert.equal(realpathSync(result.mission_contract), realpathSync(join(session, "mission-contract.json")));
   const initializedState = JSON.parse(readFileSync(join(session, "flow-state.json"), "utf8"));
   assert.equal(new Date(initializedState.flowStartedAt).toISOString(), initializedState.flowStartedAt);
   assert.equal(realpathSync(initializedState.projectRoot), realpathSync(root));

@@ -678,6 +678,12 @@ export async function cmdInit(args) {
 
   console.log(JSON.stringify({
     created: true, flow, entry: entryNode, tier: tier || null, dir,
+    mission_enabled: Boolean(state.mission),
+    ...(state.mission ? {
+      mission_version: state.mission.version,
+      strategy_epoch: state.mission.strategyEpoch,
+      mission_contract: join(dir, state.mission.path || "mission-contract.json"),
+    } : {}),
     ...(preflightStatus ? { preflight: preflightStatus } : {}),
   }));
 }

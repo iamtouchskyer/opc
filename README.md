@@ -194,6 +194,10 @@ needed, then injects that context automatically for the rest of the run. The
 commands below are the underlying integration API, not a prompt the user must
 type.
 
+Successful initialization returns `mission_enabled: true` together with the
+Mission version, strategy epoch, and pinned contract path. If that field is
+false or absent, the run is mission-less regardless of the prompt wording.
+
 ```bash
 opc-harness init-loop --plan .harness/plan.md \
   --mission /absolute/path/mission.json --dir .harness
@@ -562,6 +566,10 @@ OPC 自动推断 flow 时使用 `/opc --mission <任务>`。旧写法 `/opc miss
 Card；需要 loop 时同时生成 plan。初始化后，Mission Context 会自动注入后续
 节点，无需反复粘贴长提示词。下面的命令是编排器使用的底层 API，不是用户
 必须手写的启动提示。
+
+初始化成功后会返回 `mission_enabled: true`，并同时给出 Mission 版本、strategy
+epoch 和固定后的 contract 路径。如果该字段为 false 或缺失，此次运行就是
+mission-less，不能只凭提示词判断已经启用。
 
 ```bash
 opc-harness init-loop --plan .harness/plan.md \

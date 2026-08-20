@@ -210,6 +210,10 @@ test("loop opens the Mission Gate on the second canonical finding before claim o
   try {
     const initialized = run(fx.dir, ["init-loop", "--mission", fx.missionPath]);
     assert.equal(initialized.initialized, true, initialized.errors?.join("\n"));
+    assert.equal(initialized.mission_enabled, true);
+    assert.equal(initialized.mission_version, 1);
+    assert.equal(initialized.strategy_epoch, 1);
+    assert.equal(realpathSync(initialized.mission_contract), realpathSync(join(fx.dir, "mission-contract.json")));
 
     const firstClaim = run(fx.dir, ["next-tick"]);
     assert.equal(firstClaim.ready, true);
@@ -830,6 +834,7 @@ test("missionless init-loop creates a brand-new explicit session directory", () 
       "init-loop", "--skip-scope", "--plan", planPath,
     ], { cwd: project });
     assert.equal(initialized.initialized, true, initialized.errors?.join("\n"));
+    assert.equal(initialized.mission_enabled, false);
     assert.equal(initialized.total_units, 2);
     assert.equal(existsSync(join(sessionDir, "loop-state.json")), true);
   } finally {

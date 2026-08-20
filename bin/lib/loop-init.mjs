@@ -391,6 +391,12 @@ export function cmdInitLoop(args) {
 
   console.log(JSON.stringify({
     initialized: true,
+    mission_enabled: Boolean(state.mission),
+    ...(state.mission ? {
+      mission_version: state.mission.version,
+      strategy_epoch: state.mission.strategyEpoch,
+      mission_contract: join(dir, state.mission.path || "mission-contract.json"),
+    } : {}),
     units: units.map(u => `${u.id}: ${u.type}`),
     first_unit: units[0].id,
     total_units: units.length,
