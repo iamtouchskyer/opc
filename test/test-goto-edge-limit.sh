@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test: goto audit counts and maxNodeReentry enforcement
+# Test: goto budget semantics — manual goto edges are not limited by
+# maxLoopsPerEdge (repair-only); reentry is bounded by maxNodeReentry.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HARNESS="node $SCRIPT_DIR/bin/opc-harness.mjs"
@@ -42,7 +43,7 @@ setup_flow() {
 EOF
 }
 
-echo "=== TEST GROUP 1: goto ignores repair-edge limits but respects node reentry ==="
+echo "=== TEST GROUP 1: manual goto edges are not limited by maxLoopsPerEdge; reentry bounded by maxNodeReentry ==="
 
 setup_flow "run1"
 
@@ -68,6 +69,25 @@ setup_flow "run2"
 H goto code-review --dir run2 > /dev/null
 EDGE_COUNT=$(node -e "const s=JSON.parse(require('fs').readFileSync('$TMPD/run2/flow-state.json','utf8')); console.log(s.edgeCounts['build→code-review'] || 0)")
 check "edge count is 1" '[ "$EDGE_COUNT" = "1" ]'
+
+echo ""
+echo "=== TEST GROUP 3: goto refuses nodes with no legal exit ==="
+
+setup_flow "run3"
+node - << EOF
+const fs = require('fs');
+const path = '$TMPD/run3/flow-state.json';
+const s = JSON.parse(fs.readFileSync(path, 'utf8'));
+s.maxNodeReentry = 5;
+s.history = [
+  { nodeId: 'build', runId: 'run_1' },
+  ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'gate', runId: 'run_' + (i + 1) })),
+  ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'hotfix', runId: 'run_' + (i + 1) })),
+];
+fs.writeFileSync(path, JSON.stringify(s, null, 2));
+EOF
+R8=$(H goto test-execute --dir run3)
+check "goto blocked when target exits are exhausted" 'echo "$R8" | grep -q "no budgeted exit"'
 
 echo ""
 echo "==========================================="
