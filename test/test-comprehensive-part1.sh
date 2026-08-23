@@ -70,18 +70,20 @@ opc init --flow review --entry review --dir .harness 2>/dev/null
 
 # Cycle 1-3: review → gate (PASS) then gate → review (FAIL)
 for i in 1 2 3; do
-  write_review_hs ".harness" "review" "FAIL"
+  write_review_hs ".harness" "review" "PASS"
   sleep 1
   opc transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null > /dev/null
   sleep 1
   opc transition --from gate --to review --verdict FAIL --flow review --dir .harness 2>/dev/null > /dev/null
 done
 
-# 4th cycle should be blocked
-write_review_hs ".harness" "review" "FAIL"
+# Final forward review should be allowed; 4th repair edge should be blocked.
+write_review_hs ".harness" "review" "PASS"
 sleep 1
 R=$(opc transition --from review --to gate --verdict PASS --flow review --dir .harness 2>/dev/null)
-check_json "maxLoopsPerEdge blocks 4th cycle" "d['allowed']==False" "$R"
+check_json "forward PASS after 3 repairs allowed" "d['allowed']==True" "$R"
+R=$(opc transition --from gate --to review --verdict FAIL --flow review --dir .harness 2>/dev/null)
+check_json "maxLoopsPerEdge blocks 4th repair" "d['allowed']==False" "$R"
 
 # Synthesize FAIL verdict
 T1F="$TESTBASE/u1-fail"

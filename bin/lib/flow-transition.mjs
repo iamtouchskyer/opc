@@ -25,6 +25,7 @@ import { collectExtensionStartupReasons } from "./extension-startup-gate.mjs";
 import { collectTestDesignPlanReasons } from "./test-plan-gate.mjs";
 import { readCumulativeFindingsAppend, writeCumulativeFindings } from "./cumulative-findings.mjs";
 import { collectTestResultReasons } from "./test-result-gate.mjs";
+import { transitionBudgetVerdict } from "./flow-budget.mjs";
 
 function nodeHandshakePath(dir, nodeId) {
   const nodeDir = join(dir, "nodes", nodeId);
@@ -447,29 +448,12 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
     };
   }
 
-  const limits = {
-    maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
-    maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
-    maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
-  };
-
-  if (state.totalSteps >= limits.maxTotalSteps) {
-    console.log(JSON.stringify({ allowed: false, reason: `maxTotalSteps (${limits.maxTotalSteps}) reached` }));
+  const budget = transitionBudgetVerdict({ state, template, from, to, verdict });
+  if (!budget.allowed) {
+    console.log(JSON.stringify({ allowed: false, reason: budget.reason }));
     return;
   }
-
-  const edgeKey = `${from}\u2192${to}`;
-  const edgeCount = state.edgeCounts[edgeKey] || 0;
-  if (edgeCount >= limits.maxLoopsPerEdge) {
-    console.log(JSON.stringify({ allowed: false, reason: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for edge '${edgeKey}'` }));
-    return;
-  }
-
-  const nodeEntries = state.history.filter((h) => h.nodeId === to).length;
-  if (nodeEntries >= limits.maxNodeReentry) {
-    console.log(JSON.stringify({ allowed: false, reason: `maxNodeReentry (${limits.maxNodeReentry}) reached for node '${to}'` }));
-    return;
-  }
+  const { edgeKey, edgeCount } = budget;
 
   // ── Gate detection ──
   const fromNodeType = template.nodeTypes ? template.nodeTypes[from] : null;
@@ -777,6 +761,7 @@ async function _cmdTransitionLocked(from, to, verdict, flow, dir, template, stat
   state.history.push({ nodeId: to, runId, timestamp: new Date().toISOString() });
   state.currentNode = to;
   state.totalSteps++;
+  if (!state.edgeCounts) state.edgeCounts = {};
   state.edgeCounts[edgeKey] = edgeCount + 1;
   state._written_by = WRITER_SIG;
   state._last_modified = new Date().toISOString();

@@ -24,6 +24,7 @@ import { parseBypassArgs } from "./bypass-args.mjs";
 import { readTaskFromAC, findLatestRunDir } from "./ext-commands.mjs";
 import { collectTestResultReasons } from "./test-result-gate.mjs";
 import { loadTestCommandSpec, testCommandHash } from "./test-command-execution.mjs";
+import { transitionBudgetVerdict } from "./flow-budget.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -68,6 +69,14 @@ export function cmdRoute(args) {
     console.log(JSON.stringify({ next: null, valid: false, error: `no edge for verdict '${verdict}' from node '${node}' in flow '${flow}'` }));
     return;
   }
+  const next = nodeEdges[verdict];
+  if (state) {
+    const budget = transitionBudgetVerdict({ state, template, from: node, to: next, verdict });
+    if (!budget.allowed) {
+      console.log(JSON.stringify({ next, valid: false, error: budget.reason }));
+      return;
+    }
+  }
 
   // Read autoMode from the state loaded above
   let autoReminder;
@@ -75,7 +84,7 @@ export function cmdRoute(args) {
     autoReminder = "auto mode — do not pause, do not ask user, keep executing";
   }
 
-  console.log(JSON.stringify({ next: nodeEdges[verdict], valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
+  console.log(JSON.stringify({ next, valid: true, ...(autoReminder ? { reminder: autoReminder } : {}) }));
 }
 
 // ─── init ───────────────────────────────────────────────────────

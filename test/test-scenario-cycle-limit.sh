@@ -74,8 +74,8 @@ loopback_gate_to_brief
 advance_to_gate
 loopback_gate_to_brief
 
-# ── Test 1: after 3 loopbacks, edges are blocked at limit ──
-echo "1. After 3 loops, brief→build edge (count=3) is blocked on 4th attempt"
+# ── Test 1: after 3 loopbacks, forward progress is still allowed ──
+echo "1. After 3 loops, brief→build PASS is allowed on final attempt"
 mkdir -p .harness/nodes/brief/run_1
 cat > .harness/nodes/brief/handshake.json <<'EOF'
 {"nodeId":"brief","nodeType":"brief","runId":"run_1","status":"completed","verdict":"PASS","summary":"brief done","timestamp":"2026-01-01T00:00:30.000Z","artifacts":[{"type":"brief","path":"build-brief.md"},{"type":"report","path":"run_1/brief-lint-result.json"}]}
@@ -84,18 +84,27 @@ write_golden_brief .harness/nodes/brief/build-brief.md
 echo '{"pass":true}' > .harness/nodes/brief/run_1/brief-lint-result.json
 TRANS=$($HARNESS transition --from brief --to build --verdict PASS --flow build-verify --dir .harness 2>/dev/null || true)
 ALLOWED=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('allowed', True))" 2>/dev/null)
-if [ "$ALLOWED" = "False" ]; then
-  echo "  ✅ 4th traversal of brief→build blocked (maxLoopsPerEdge=3)"
+if [ "$ALLOWED" = "True" ]; then
+  echo "  ✅ 4th traversal of brief→build allowed"
   PASS=$((PASS + 1))
 else
-  echo "  ❌ was allowed: $TRANS"
+  echo "  ❌ was blocked: $TRANS"
   FAIL=$((FAIL + 1))
 fi
 
-# ── Test 2: check reason mentions limit ──
-echo "2. Blocked reason mentions edge limit"
+# ── Test 2: repair edge remains blocked at limit ──
+echo "2. Repair edge remains blocked at maxLoopsPerEdge"
+mkdir -p .harness/nodes/gate
+TRANS=$(python3 - <<'PY'
+import json
+p = '.harness/flow-state.json'
+s = json.load(open(p))
+s['currentNode'] = 'gate'
+json.dump(s, open(p, 'w'), indent=2)
+PY
+$HARNESS transition --from gate --to brief --verdict FAIL --flow build-verify --dir .harness 2>/dev/null || true)
 REASON=$(echo "$TRANS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('reason',''))" 2>/dev/null)
-if echo "$REASON" | grep -qi "edge\|loop\|limit\|max"; then
+if echo "$REASON" | grep -q "maxLoopsPerEdge"; then
   echo "  ✅ reason: $REASON"
   PASS=$((PASS + 1))
 else

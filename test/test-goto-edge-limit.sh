@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test: goto maxLoopsPerEdge enforcement
+# Test: goto budget semantics
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HARNESS="node $SCRIPT_DIR/bin/opc-harness.mjs"
@@ -42,7 +42,7 @@ setup_flow() {
 EOF
 }
 
-echo "=== TEST GROUP 1: goto respects maxLoopsPerEdge ==="
+echo "=== TEST GROUP 1: goto audits manual edges without blocking on maxLoopsPerEdge ==="
 
 setup_flow "run1"
 
@@ -60,10 +60,11 @@ H goto build --dir run1 > /dev/null
 R5=$(H goto code-review --dir run1)
 check "third goto code-review succeeds" 'echo "$R5" | grep -q "\"goto\":\"code-review\""'
 
-# 4th goto code-review from build — should fail (maxLoopsPerEdge=3)
+# 4th goto code-review from build is allowed. maxLoopsPerEdge only limits
+# repair transition verdicts, not human-authorized goto edges.
 H goto build --dir run1 > /dev/null
 R7=$(H goto code-review --dir run1)
-check "4th goto code-review blocked" 'echo "$R7" | grep -q "maxLoopsPerEdge"'
+check "4th goto code-review succeeds" 'echo "$R7" | grep -q "\"goto\":\"code-review\""'
 
 echo ""
 echo "=== TEST GROUP 2: edgeCounts persisted ==="
@@ -72,6 +73,25 @@ setup_flow "run2"
 H goto code-review --dir run2 > /dev/null
 EDGE_COUNT=$(node -e "const s=JSON.parse(require('fs').readFileSync('$TMPD/run2/flow-state.json','utf8')); console.log(s.edgeCounts['build→code-review'] || 0)")
 check "edge count is 1" '[ "$EDGE_COUNT" = "1" ]'
+
+echo ""
+echo "=== TEST GROUP 3: goto refuses nodes with no legal exit ==="
+
+setup_flow "run3"
+node - << EOF
+const fs = require('fs');
+const path = '$TMPD/run3/flow-state.json';
+const s = JSON.parse(fs.readFileSync(path, 'utf8'));
+s.maxNodeReentry = 5;
+s.history = [
+  { nodeId: 'build', runId: 'run_1' },
+  ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'gate', runId: 'run_' + (i + 1) })),
+  ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'hotfix', runId: 'run_' + (i + 1) })),
+];
+fs.writeFileSync(path, JSON.stringify(s, null, 2));
+EOF
+R8=$(H goto test-execute --dir run3)
+check "goto blocked when target exits are exhausted" 'echo "$R8" | grep -q "all exits"'
 
 echo ""
 echo "==========================================="

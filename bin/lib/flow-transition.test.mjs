@@ -768,7 +768,106 @@ function runHarness(cmd, args) {
   }
 }
 
+function writeCircuitState(dir, state) {
+  writeFileSync(join(dir, "flow-state.json"), JSON.stringify(state, null, 2));
+}
+
+function writeCircuitHandshake(dir, nodeId, runNum, verdict) {
+  const nodeType = TEMPLATE.nodeTypes[nodeId] || "build";
+  const runId = `run_${runNum}`;
+  const runDir = join(dir, "nodes", nodeId, runId);
+  mkdirSync(runDir, { recursive: true });
+  const artifacts = [];
+  if (nodeType === "review") {
+    writeFileSync(join(runDir, "eval-skeptic-owner.md"), cleanPassEval("Skeptic Owner", nodeId));
+    writeFileSync(join(runDir, "eval-peer.md"), cleanPassEval("Peer", nodeId));
+    artifacts.push({ type: "eval", path: `${runId}/eval-skeptic-owner.md` });
+    artifacts.push({ type: "eval", path: `${runId}/eval-peer.md` });
+  }
+  const hs = {
+    nodeId, nodeType, runId, status: "completed", verdict,
+    summary: "circuit regression fixture",
+    timestamp: new Date().toISOString(),
+    artifacts,
+  };
+  writeFileSync(join(dir, "nodes", nodeId, "handshake.json"), JSON.stringify(hs));
+}
+
+function createCircuitSession(name) {
+  const dir = join(TMPBASE, name);
+  mkdirSync(join(dir, "nodes", "build", "run_1"), { recursive: true });
+  const state = {
+    version: "1.0",
+    flowTemplate: "build-verify",
+    currentNode: "build",
+    entryNode: "brief",
+    totalSteps: 0,
+    maxTotalSteps: 25,
+    maxLoopsPerEdge: 3,
+    maxNodeReentry: 5,
+    edgeCounts: {},
+    history: [{ nodeId: "build", runId: "run_1", timestamp: new Date().toISOString() }],
+    _written_by: "opc-harness",
+    _write_nonce: `test-${Date.now()}`,
+    _last_modified: new Date().toISOString(),
+  };
+  writeCircuitState(dir, state);
+  writeCircuitHandshake(dir, "build", 1, "PASS");
+  return dir;
+}
+
 describe("Step 1.5 bypass enforcement — cmdTransition", () => {
+  test("repair edge breaker allows final build review and blocks fourth repair", () => {
+    const dir = createCircuitSession("circuit-breaker-final-review");
+    for (let i = 1; i <= 3; i++) {
+      const review = runHarness("transition", [
+        "--from", "build", "--to", "code-review", "--verdict", "PASS",
+        "--flow", "build-verify", "--dir", dir,
+      ]);
+      assert.equal(review.allowed, true, `build->review #${i}: ${JSON.stringify(review)}`);
+
+      writeCircuitHandshake(dir, "code-review", i, "ITERATE");
+      const repair = runHarness("transition", [
+        "--from", "code-review", "--to", "build", "--verdict", "ITERATE",
+        "--flow", "build-verify", "--dir", dir,
+      ]);
+      assert.equal(repair.allowed, true, `review->build #${i}: ${JSON.stringify(repair)}`);
+      writeCircuitHandshake(dir, "build", i + 1, "PASS");
+    }
+
+    const routeFinalReview = runHarness("route", [
+      "--node", "build", "--verdict", "PASS", "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(routeFinalReview.valid, true, JSON.stringify(routeFinalReview));
+    assert.equal(routeFinalReview.next, "code-review");
+
+    const finalReview = runHarness("transition", [
+      "--from", "build", "--to", "code-review", "--verdict", "PASS",
+      "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(finalReview.allowed, true, JSON.stringify(finalReview));
+    assert.equal(finalReview.runId, "run_4");
+
+    writeCircuitHandshake(dir, "code-review", 4, "ITERATE");
+    const routeFourthRepair = runHarness("route", [
+      "--node", "code-review", "--verdict", "ITERATE", "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(routeFourthRepair.valid, false, JSON.stringify(routeFourthRepair));
+    assert.match(routeFourthRepair.error, /maxLoopsPerEdge/);
+
+    const fourthRepair = runHarness("transition", [
+      "--from", "code-review", "--to", "build", "--verdict", "ITERATE",
+      "--flow", "build-verify", "--dir", dir,
+    ]);
+    assert.equal(fourthRepair.allowed, false, JSON.stringify(fourthRepair));
+    assert.match(fourthRepair.reason, /maxLoopsPerEdge/);
+
+    const state = JSON.parse(readFileSync(join(dir, "flow-state.json"), "utf8"));
+    assert.equal(state.edgeCounts["build→code-review"], 4);
+    assert.equal(state.edgeCounts["code-review→build"], 3);
+    assert.equal(state.history.some(h => h.skipped || h.goto), false);
+  });
+
   test("direct transition PASS with failing artifacts → rejected", () => {
     const dir = createSession("bypass-transition", { failingReport: true });
     const result = runHarness("transition", [

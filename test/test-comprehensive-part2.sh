@@ -100,11 +100,10 @@ check_json "goto jumps to target" "d['goto']=='test-execute'" "$R"
 R=$(opc goto nonexistent --dir .harness)
 check_json "goto non-existent fails" "'not a node' in d.get('error','')" "$R"
 
-# goto maxLoopsPerEdge (self-loop build→build hits edge limit=3 before nodeReentry=5)
-# After prior goto test-execute, first goto build = test-execute→build, then build→build starts
-for i in 1 2 3 4; do opc goto build --dir .harness > /dev/null 2>&1; done
+# goto node reentry limit
+for i in 1 2 3 4 5; do opc goto build --dir .harness > /dev/null 2>&1; done
 R=$(opc goto build --dir .harness)
-check_json "maxLoopsPerEdge enforced" "'maxLoopsPerEdge' in d.get('error','')" "$R"
+check_json "maxNodeReentry enforced" "'maxNodeReentry' in d.get('error','')" "$R"
 
 # stop
 T5S="$TESTBASE/u5-stop"

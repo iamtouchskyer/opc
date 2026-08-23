@@ -13,6 +13,7 @@ import {
   WRITER_SIG,
 } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
+import { flowLimits, gotoExitBudgetVerdict, transitionBudgetVerdict } from "./flow-budget.mjs";
 
 // ── Shared state loader ──
 
@@ -67,24 +68,9 @@ export function cmdSkip(args) {
     }
 
     // ── Cycle limit checks (mirror cmdTransition) ──
-    const limits = {
-      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
-      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
-      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
-    };
-    if (state.totalSteps >= limits.maxTotalSteps) {
-      console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot skip` }));
-      return;
-    }
-    const edgeKey = `${current}\u2192${next}`;
-    const edgeCount = state.edgeCounts[edgeKey] || 0;
-    if (edgeCount >= limits.maxLoopsPerEdge) {
-      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot skip` }));
-      return;
-    }
-    const nodeEntries = state.history.filter(h => h.nodeId === next).length;
-    if (nodeEntries >= limits.maxNodeReentry) {
-      console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${next}' — cannot skip` }));
+    const budget = transitionBudgetVerdict({ state, template, from: current, to: next, verdict: "PASS" });
+    if (!budget.allowed) {
+      console.log(JSON.stringify({ error: `${budget.reason} — cannot skip` }));
       return;
     }
     // ── maxSkips: prevent skipping through entire flow ──
@@ -115,7 +101,8 @@ export function cmdSkip(args) {
     state.history.push({ nodeId: next, runId, timestamp: new Date().toISOString(), skipped: true });
     state.currentNode = next;
     state.totalSteps++;
-    state.edgeCounts[edgeKey] = (state.edgeCounts[edgeKey] || 0) + 1;
+    if (!state.edgeCounts) state.edgeCounts = {};
+    state.edgeCounts[budget.edgeKey] = budget.edgeCount + 1;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
 
@@ -289,24 +276,20 @@ export function cmdGoto(args) {
     }
 
     // Check node reentry limit
-    const limits = {
-      maxNodeReentry: state.maxNodeReentry ?? template.limits.maxNodeReentry,
-      maxTotalSteps: state.maxTotalSteps ?? template.limits.maxTotalSteps,
-      maxLoopsPerEdge: state.maxLoopsPerEdge ?? template.limits.maxLoopsPerEdge,
-    };
+    const limits = flowLimits(state, template);
     if (state.totalSteps >= limits.maxTotalSteps) {
       console.log(JSON.stringify({ error: `maxTotalSteps (${limits.maxTotalSteps}) reached — cannot goto` }));
       return;
     }
     const edgeKey = `${state.currentNode}→${targetNode}`;
-    const edgeCount = state.edgeCounts?.[edgeKey] || 0;
-    if (edgeCount >= limits.maxLoopsPerEdge) {
-      console.log(JSON.stringify({ error: `maxLoopsPerEdge (${limits.maxLoopsPerEdge}) reached for '${edgeKey}' — cannot goto` }));
-      return;
-    }
     const nodeEntries = state.history.filter(h => h.nodeId === targetNode).length;
     if (nodeEntries >= limits.maxNodeReentry) {
       console.log(JSON.stringify({ error: `maxNodeReentry (${limits.maxNodeReentry}) reached for '${targetNode}'` }));
+      return;
+    }
+    const exitBudget = gotoExitBudgetVerdict({ state, template, targetNode });
+    if (!exitBudget.allowed) {
+      console.log(JSON.stringify({ error: `${exitBudget.reason} — cannot goto` }));
       return;
     }
 
