@@ -2,7 +2,7 @@
 
 **Orchestrator instructions (do not include in the subagent prompt):**
 
-Read this section, fill in the `{placeholders}` in the subagent prompt below, then pass everything from the `---` separator onward as the `prompt` parameter to the Agent tool with `subagent_type: "general-purpose"`. Strip this header section — the subagent should only see what's below the line.
+Read this section and fill in the `{placeholders}`. Before dispatch, run `opc-harness model-route --node {NODE_ID} --node-type review --role evaluator --dir {PROJECT_ROOT}`. Pass everything from the `---` separator onward as the Agent `prompt`, use `subagent_type: "general-purpose"`, and pass the returned route's `model` as the Agent model parameter. If routing fails or the host cannot honor the model, do not silently inherit the root model. Strip this header section — the subagent should only see what's below the line.
 
 **Task-type selection:** In the "Your Approach" section, keep only the matching subsection (Build / Brainstorm / Plan) and delete the others. For review/analysis tasks, use the Build approach (code inspection + testing).
 
