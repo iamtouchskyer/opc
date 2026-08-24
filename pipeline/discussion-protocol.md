@@ -11,7 +11,7 @@ You are participating in a multi-agent discussion. Your goal is to reach a well-
 
 ## Protocol
 
-Round-robin discussion, maximum 3 rounds. Each round builds on the previous.
+Round-robin discussion, maximum 3 rounds. Each round builds on the previous. Read `token-budget-policy.md` first and keep all participants inside the Codex native Agent control plane unless the user explicitly requests a third-party platform.
 
 ### Round 1 — Independent Analysis
 

@@ -2,13 +2,33 @@
 // Depends on: loop-helpers.mjs, util.mjs
 
 import { readFileSync, existsSync } from "fs";
-import { join, dirname } from "path";
+import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import { parsePlan, hashContent, checkScopeCoverage } from "./loop-helpers.mjs";
+import {
+  parsePlan,
+  hashContent,
+  checkScopeCoverage,
+  revalidateMissionEvidenceReceipts,
+} from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
 import { resolveCallerIdentity, checkOwnership, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
 import { FLOW_TEMPLATES, loadFlowFromFile } from "./flow-templates.mjs";
+import {
+  guardMissionMutation,
+  missionPromptContext,
+  sealMissionRuntimeState,
+  verifyMissionIntegrity,
+} from "./mission-contract.mjs";
+import {
+  consumeMissionRetryGrant,
+  currentMissionBindings,
+  evaluateTrajectory,
+  hasCurrentFinalCheckpoint,
+  missionRetryGrantMatches,
+  openMissionGate,
+  sealPendingMissionGate,
+} from "./trajectory-gate.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OPC_ROOT = join(__dirname, "..", "..");
@@ -101,6 +121,131 @@ function getContextHints(unitType) {
   };
 }
 
+function _missionStatePath(dir) {
+  const loopPath = join(dir, "loop-state.json");
+  return existsSync(loopPath) ? loopPath : join(dir, "flow-state.json");
+}
+
+function _persistLoopState({ dir, statePath, state, reason }) {
+  let persistedState = state;
+  if (persistedState?.mission) {
+    const sealed = sealMissionRuntimeState({
+      sessionDir: dir,
+      state: persistedState,
+      statePath,
+      reason,
+    });
+    if (!sealed.ok) return { ok: false, reason: sealed.error };
+    persistedState = sealed.state;
+  }
+  atomicWriteSync(statePath, JSON.stringify(persistedState, null, 2) + "\n");
+  return { ok: true, state: persistedState };
+}
+
+function _checkpointIsCurrent(state, checkpointId) {
+  const bindings = currentMissionBindings(state);
+  return (state.checkpointReceipts || []).some(receipt =>
+    receipt?.checkpointId === checkpointId
+    && receipt?.stale !== true
+    && receipt?.strategyEpoch === bindings.strategyEpoch
+    && receipt?.missionSha256 === bindings.missionSha256
+    && receipt?.acceptanceCriteriaSha256 === bindings.acceptanceCriteriaSha256
+    && receipt?.planSha256 === bindings.planSha256
+    && receipt?.evidenceSetSha256 === bindings.evidenceSetSha256
+    && receipt?.artifactManifestSha256 === bindings.artifactManifestSha256
+    && receipt?.missionReviewSha256
+    && receipt?.provenanceRecordHash
+  );
+}
+
+function _openLoopMissionGate({ dir, statePath, state, integrity, trigger }) {
+  const opened = openMissionGate({
+    sessionDir: null,
+    state: integrity.canonicalState,
+    missionContract: integrity.contract,
+    trigger: {
+      ...trigger,
+      origin: {
+        command: "next-tick",
+        sessionSha256: hashContent(resolve(dir)),
+        fromNode: null,
+        nextUnit: state.next_unit ?? null,
+        edgeKey: trigger?.edgeKey || null,
+      },
+    },
+  });
+  const canonicalDir = integrity.canonicalDir;
+  const canonicalStatePath = _missionStatePath(canonicalDir);
+  let parentLock = null;
+  if (canonicalDir !== dir) {
+    parentLock = lockFile(canonicalStatePath, { command: "next-tick-mission-parent" });
+    if (!parentLock.acquired) {
+      return { ok: false, reason: "could not acquire canonical parent Mission state lock", holder: parentLock.holder };
+    }
+  }
+  try {
+    const currentPath = canonicalDir === dir ? statePath : canonicalStatePath;
+    const fresh = JSON.parse(readFileSync(currentPath, "utf8"));
+    if (fresh._last_modified !== integrity.canonicalState._last_modified) {
+      return { ok: false, reason: "canonical Mission state changed while opening the gate; retry" };
+    }
+    const sealed = sealPendingMissionGate({ sessionDir: canonicalDir, state: opened.state });
+    if (!sealed.ok) return { ok: false, reason: `cannot seal Mission Gate: ${sealed.error}` };
+    sealed.state._written_by = WRITER_SIG;
+    sealed.state._last_modified = new Date().toISOString();
+    const persisted = _persistLoopState({
+      dir: canonicalDir,
+      statePath: currentPath,
+      state: sealed.state,
+      reason: "next-tick-mission-gate",
+    });
+    if (!persisted.ok) return persisted;
+    return { ok: true, packet: sealed.packet, state: persisted.state };
+  } finally {
+    parentLock?.release();
+  }
+}
+
+function _revalidateLoopMissionEvidence({ dir, statePath, state }) {
+  const integrity = verifyMissionIntegrity({ sessionDir: dir, state });
+  if (!integrity.ok) return { ok: false, reason: integrity.errors.join("; ") };
+  const revalidated = revalidateMissionEvidenceReceipts(integrity.canonicalState);
+  if (!revalidated.changed) return { ok: true, state, integrity, staleReceiptIds: [] };
+  const canonicalDir = integrity.canonicalDir;
+  const canonicalStatePath = _missionStatePath(canonicalDir);
+  let parentLock = null;
+  if (canonicalDir !== dir) {
+    parentLock = lockFile(canonicalStatePath, { command: "next-tick-evidence-revalidation" });
+    if (!parentLock.acquired) {
+      return { ok: false, reason: "could not acquire canonical Mission state lock for evidence revalidation", holder: parentLock.holder };
+    }
+  }
+  try {
+    const targetPath = canonicalDir === dir ? statePath : canonicalStatePath;
+    const fresh = JSON.parse(readFileSync(targetPath, "utf8"));
+    if (fresh._last_modified !== integrity.canonicalState._last_modified) {
+      return { ok: false, reason: "canonical Mission state changed during evidence revalidation; retry" };
+    }
+    revalidated.state._written_by = WRITER_SIG;
+    revalidated.state._last_modified = new Date().toISOString();
+    const persisted = _persistLoopState({
+      dir: canonicalDir,
+      statePath: targetPath,
+      state: revalidated.state,
+      reason: "next-tick-evidence-revalidation",
+    });
+    if (!persisted.ok) return persisted;
+    return {
+      ok: true,
+      state: canonicalDir === dir ? persisted.state : state,
+      integrity: { ...integrity, canonicalState: persisted.state },
+      staleReceiptIds: revalidated.staleReceiptIds,
+    };
+  } finally {
+    parentLock?.release();
+  }
+}
+
 // ─── next-tick ──────────────────────────────────────────────────
 
 export function cmdNextTick(args) {
@@ -128,6 +273,18 @@ export function cmdNextTick(args) {
   }
   const warnings = [];
 
+  const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "next-tick" });
+  if (!missionGuard.allowed) {
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: false,
+      reason: missionGuard.reason,
+      rebet_required: missionGuard.rebet_required,
+      missionIntegrityErrors: missionGuard.errors,
+    }));
+    return;
+  }
+
   // ── Session-ownership gate ───────────────────────────────────
   // Refuse to advance a loop owned by a different, still-live Claude session.
   const caller = resolveCallerIdentity();
@@ -148,8 +305,49 @@ export function cmdNextTick(args) {
     state._owner = makeOwner(caller, state._owner && state._owner.token);
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
-    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-takeover" });
+    if (!persisted.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+      return;
+    }
+    state = persisted.state;
     warnings.push(`reclaimed loop ownership — ${ownership.reason}`);
+  }
+
+  let evidenceRevalidation = null;
+  if (state.mission) {
+    evidenceRevalidation = _revalidateLoopMissionEvidence({ dir, statePath, state });
+    if (!evidenceRevalidation.ok) {
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: false,
+        reason: evidenceRevalidation.reason,
+        holder: evidenceRevalidation.holder,
+      }));
+      return;
+    }
+    state = evidenceRevalidation.state;
+    const pending = state.trajectory?.pendingDecision;
+    if (evidenceRevalidation.staleReceiptIds.length > 0 &&
+        pending?.action === "ALLOW_LOCAL" &&
+        pending?.edgeKey && pending.observedRepairEdgeFailures >= 2) {
+      state.trajectory.pendingDecision = evaluateTrajectory({
+        state,
+        missionContract: evidenceRevalidation.integrity.contract,
+        findings: state.trajectory.activeFindings || [],
+        edgeKey: pending.edgeKey,
+        verdict: "FAIL",
+        isRepairEdge: true,
+      });
+      state._written_by = WRITER_SIG;
+      state._last_modified = new Date().toISOString();
+      const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-pending-decision-revalidation" });
+      if (!persisted.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+        return;
+      }
+      state = persisted.state;
+    }
   }
 
   // Auto-restore flow template from _flow_file if persisted
@@ -165,14 +363,153 @@ export function cmdNextTick(args) {
     warnings.push("loop-state.json was not written by opc-harness — possible direct edit");
   }
 
-  // Already terminated
-  if (state.status === "pipeline_complete" || state.status === "terminated") {
+  // STOP/explicit termination is absorbing.  A completed Mission, however,
+  // is only successful while its final checkpoint still binds the current
+  // evidence set.  Revalidation above may have invalidated that checkpoint.
+  if (state.status === "terminated") {
     console.log(JSON.stringify({
       ready: false,
       terminate: true,
       reason: `loop already ${state.status}`,
     }));
     return;
+  }
+  if (state.status === "pipeline_complete") {
+    if (state.mission && !hasCurrentFinalCheckpoint(evidenceRevalidation?.integrity?.canonicalState || state)) {
+      const integrity = evidenceRevalidation?.integrity || verifyMissionIntegrity({ sessionDir: dir, state });
+      if (!integrity.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: integrity.errors?.join("; ") || integrity.reason }));
+        return;
+      }
+      const result = _openLoopMissionGate({
+        dir,
+        statePath,
+        state,
+        integrity,
+        trigger: {
+          action: "OPEN_MISSION_GATE",
+          reason: "FINAL_REVIEW_REQUIRED",
+          checkpoint: "before_finalize",
+          retryable: false,
+          findingRefs: [],
+        },
+      });
+      if (!result.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: result.reason, holder: result.holder }));
+        return;
+      }
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: false,
+        rebet_required: true,
+        reason: "Mission completion was invalidated; a fresh final cold review is required",
+        triggerId: result.packet.triggerId,
+        staleEvidenceReceiptIds: evidenceRevalidation?.staleReceiptIds || [],
+      }));
+      return;
+    }
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: true,
+      reason: "loop already pipeline_complete",
+    }));
+    return;
+  }
+
+  // A review tick commits exactly once. Its precomputed trajectory decision is
+  // enforced here, before stall detection, backlog drain, or another claim.
+  if (state.mission && state.trajectory?.pendingDecision?.action === "OPEN_MISSION_GATE") {
+    const integrity = verifyMissionIntegrity({ sessionDir: dir, state });
+    if (!integrity.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: integrity.errors.join("; ") }));
+      return;
+    }
+    const result = _openLoopMissionGate({
+      dir,
+      statePath,
+      state,
+      integrity,
+      trigger: state.trajectory.pendingDecision,
+    });
+    if (!result.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: result.reason, holder: result.holder }));
+      return;
+    }
+    console.log(JSON.stringify({
+      ready: false,
+      terminate: false,
+      rebet_required: true,
+      reason: `Mission Gate opened: ${result.packet.reason}`,
+      triggerId: result.packet.triggerId,
+      findingRefs: result.packet.findingRefs,
+    }));
+    return;
+  }
+  if (state.trajectory?.pendingDecision?.action === "ALLOW_LOCAL") {
+    delete state.trajectory.pendingDecision;
+  }
+
+  if (state.mission) {
+    const integrity = verifyMissionIntegrity({ sessionDir: dir, state });
+    if (!integrity.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: integrity.errors.join("; ") }));
+      return;
+    }
+    const appetiteDecision = evaluateTrajectory({
+      state: integrity.canonicalState,
+      missionContract: integrity.contract,
+    });
+    if (appetiteDecision.action === "OPEN_MISSION_GATE") {
+      const result = _openLoopMissionGate({
+        dir,
+        statePath,
+        state,
+        integrity,
+        trigger: appetiteDecision,
+      });
+      if (!result.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: result.reason, holder: result.holder }));
+        return;
+      }
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: false,
+        rebet_required: true,
+        reason: `Mission Gate opened: ${result.packet.reason}`,
+        triggerId: result.packet.triggerId,
+      }));
+      return;
+    }
+    const checkpoint = (integrity.contract.checkpoints || []).find(item =>
+      item.type === "loop_unit" && item.id === state.unit
+    );
+    if (checkpoint && !_checkpointIsCurrent(integrity.canonicalState, checkpoint.id)) {
+      const result = _openLoopMissionGate({
+        dir,
+        statePath,
+        state,
+        integrity,
+        trigger: {
+          action: "OPEN_MISSION_GATE",
+          reason: "MISSION_CHECKPOINT",
+          checkpoint: checkpoint.id,
+          retryable: true,
+          findingRefs: [],
+        },
+      });
+      if (!result.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: result.reason, holder: result.holder }));
+        return;
+      }
+      console.log(JSON.stringify({
+        ready: false,
+        terminate: false,
+        rebet_required: true,
+        reason: `Mission Gate opened at checkpoint '${checkpoint.id}'`,
+        triggerId: result.packet.triggerId,
+      }));
+      return;
+    }
   }
 
   // Concurrent tick guard
@@ -201,7 +538,12 @@ export function cmdNextTick(args) {
         state._stall_reason = `in_progress for ${(age / 3600000).toFixed(1)}h (timeout: ${timeoutHours}h) — auto-recovered from suspected crash`;
         state._written_by = WRITER_SIG;
         state._last_modified = new Date().toISOString();
-        atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+        const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-crash-recovery" });
+        if (!persisted.ok) {
+          console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+          return;
+        }
+        state = persisted.state;
         console.log(JSON.stringify({
           ready: false,
           terminate: true,
@@ -227,8 +569,8 @@ export function cmdNextTick(args) {
 
   // Rule 8/9: Stall detection
   const history = state._tick_history || [];
-  if (checkStall(state, history, statePath)) return;
-  if (checkOscillation(state, history, statePath)) return;
+  if (checkStall(state, history, statePath, dir)) return;
+  if (checkOscillation(state, history, statePath, dir)) return;
 
   // Total tick limit
   const maxTicks = state._max_total_ticks || Infinity;
@@ -237,7 +579,12 @@ export function cmdNextTick(args) {
     state.description = `maxTotalTicks (${maxTicks}) reached at tick ${state.tick}`;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
-    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-max-total" });
+    if (!persisted.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+      return;
+    }
+    state = persisted.state;
 
     console.log(JSON.stringify({
       ready: false,
@@ -259,7 +606,12 @@ export function cmdNextTick(args) {
       state.description = `Wall-clock deadline (${state._max_duration_hours}h) reached after ${elapsed.toFixed(1)}h`;
       state._written_by = WRITER_SIG;
       state._last_modified = new Date().toISOString();
-      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-deadline" });
+      if (!persisted.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+        return;
+      }
+      state = persisted.state;
 
       console.log(JSON.stringify({
         ready: false,
@@ -276,6 +628,82 @@ export function cmdNextTick(args) {
 
   // No next unit → check backlog drain before terminating
   if (!state.next_unit) {
+    if (state.mission) {
+      let integrity = verifyMissionIntegrity({ sessionDir: dir, state });
+      if (!integrity.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: integrity.errors.join("; ") }));
+        return;
+      }
+      const revalidated = revalidateMissionEvidenceReceipts(integrity.canonicalState);
+      if (revalidated.changed) {
+        const canonicalDir = integrity.canonicalDir;
+        const canonicalStatePath = _missionStatePath(canonicalDir);
+        let parentLock = null;
+        if (canonicalDir !== dir) {
+          parentLock = lockFile(canonicalStatePath, { command: "next-tick-evidence-revalidation" });
+          if (!parentLock.acquired) {
+            console.log(JSON.stringify({
+              ready: false,
+              terminate: false,
+              reason: "could not acquire canonical Mission state lock for evidence revalidation",
+              holder: parentLock.holder,
+            }));
+            return;
+          }
+        }
+        try {
+          const targetPath = canonicalDir === dir ? statePath : canonicalStatePath;
+          const fresh = JSON.parse(readFileSync(targetPath, "utf8"));
+          if (fresh._last_modified !== integrity.canonicalState._last_modified) {
+            console.log(JSON.stringify({ ready: false, terminate: false, reason: "canonical Mission state changed during evidence revalidation; retry" }));
+            return;
+          }
+          revalidated.state._written_by = WRITER_SIG;
+          revalidated.state._last_modified = new Date().toISOString();
+          const persisted = _persistLoopState({
+            dir: canonicalDir,
+            statePath: targetPath,
+            state: revalidated.state,
+            reason: "next-tick-final-evidence-revalidation",
+          });
+          if (!persisted.ok) {
+            console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+            return;
+          }
+          if (canonicalDir === dir) state = persisted.state;
+          integrity = { ...integrity, canonicalState: persisted.state };
+        } finally {
+          parentLock?.release();
+        }
+      }
+      if (!hasCurrentFinalCheckpoint(integrity.canonicalState)) {
+        const result = _openLoopMissionGate({
+          dir,
+          statePath,
+          state,
+          integrity,
+          trigger: {
+            action: "OPEN_MISSION_GATE",
+            reason: "FINAL_REVIEW_REQUIRED",
+            checkpoint: "before_finalize",
+            retryable: false,
+            findingRefs: [],
+          },
+        });
+        if (!result.ok) {
+          console.log(JSON.stringify({ ready: false, terminate: false, reason: result.reason, holder: result.holder }));
+          return;
+        }
+        console.log(JSON.stringify({
+          ready: false,
+          terminate: false,
+          rebet_required: true,
+          reason: "Mission Gate opened: final cold Mission review is required",
+          triggerId: result.packet.triggerId,
+        }));
+        return;
+      }
+    }
     const forceTerminate = args.includes("--force-terminate");
 
     // Rule 13: surface backlog at termination
@@ -317,7 +745,12 @@ export function cmdNextTick(args) {
     state.description = `Pipeline complete at tick ${state.tick}`;
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
-    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-pipeline-complete" });
+    if (!persisted.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+      return;
+    }
+    state = persisted.state;
 
     // Carry-forward: seed next loop with open backlog items
     _writeNextLoopSeed(dir, state, backlogSummary);
@@ -370,7 +803,12 @@ export function cmdNextTick(args) {
       state.next_unit = null;
       state._written_by = WRITER_SIG;
       state._last_modified = new Date().toISOString();
-      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+      const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-invalid-unit" });
+      if (!persisted.ok) {
+        console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+        return;
+      }
+      state = persisted.state;
 
       // Carry-forward seed on auto-terminate too
       _writeNextLoopSeed(dir, state, null);
@@ -389,12 +827,49 @@ export function cmdNextTick(args) {
     // Capture previous status before mutation
     const prevStatus = state.status;
 
+    // CONTINUE_CURRENT authorizes one specific next claim, not a floating
+    // allowance that can be spent on unrelated work later. Consume it when the
+    // authorized unit is claimed so a failed/abandoned attempt still spends
+    // the bounded retry.
+    if (state.mission && state.trajectory?.retryGrant) {
+      const retryAuthorized = missionRetryGrantMatches({
+        state,
+        findings: state.trajectory.activeFindings || [],
+        command: "next-tick",
+        unit: state.next_unit,
+        sessionSha256: hashContent(resolve(dir)),
+      });
+      if (!retryAuthorized) {
+        console.log(JSON.stringify({
+          ready: false,
+          terminate: false,
+          rebet_required: true,
+          reason: `sealed Mission retry does not authorize unit '${state.next_unit}'`,
+        }));
+        return;
+      }
+      state = consumeMissionRetryGrant(state);
+    }
+
+    // Repair appetite is charged when corrective work is claimed, not only
+    // after a successful completion. Failed or abandoned attempts still spend
+    // the bounded bet.
+    if (state.mission && unitDetails?.type?.startsWith("fix")) {
+      state.trajectory ||= {};
+      state.trajectory.repairCycles = (state.trajectory.repairCycles || 0) + 1;
+    }
+
     // Set in_progress as mutex
     state.status = "in_progress";
     state._in_progress_since = new Date().toISOString();
     state._written_by = WRITER_SIG;
     state._last_modified = new Date().toISOString();
-    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-claim" });
+    if (!persisted.ok) {
+      console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+      return;
+    }
+    state = persisted.state;
 
     // Look up unitHandler from flow template (if loop was started from a custom flow)
     let handler = undefined;
@@ -449,7 +924,7 @@ export function cmdNextTick(args) {
 
 // ── Stall detection helpers ─────────────────────────────────────
 
-function checkStall(state, history, statePath) {
+function checkStall(state, history, statePath, dir) {
   if (history.length >= 3) {
     const last3 = history.slice(-3);
     // Only stall if same unit AND none of the 3 ticks succeeded
@@ -460,7 +935,12 @@ function checkStall(state, history, statePath) {
         state.description = `Stalled on unit '${last3[0].unit}' for 3 consecutive ticks`;
         state._written_by = WRITER_SIG;
         state._last_modified = new Date().toISOString();
-        atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+        const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-stall" });
+        if (!persisted.ok) {
+          console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+          return true;
+        }
+        state = persisted.state;
 
         console.log(JSON.stringify({
           ready: false,
@@ -478,7 +958,7 @@ function checkStall(state, history, statePath) {
   return false;
 }
 
-function checkOscillation(state, history, statePath) {
+function checkOscillation(state, history, statePath, dir) {
   if (history.length >= 4) {
     const last4 = history.slice(-4);
     if (last4[0].unit === last4[2].unit && last4[1].unit === last4[3].unit && last4[0].unit !== last4[1].unit) {
@@ -490,7 +970,12 @@ function checkOscillation(state, history, statePath) {
           state.description = `Oscillation stall: '${last6[0].unit}' \u2194 '${last6[1].unit}' for 6 ticks`;
           state._written_by = WRITER_SIG;
           state._last_modified = new Date().toISOString();
-          atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+          const persisted = _persistLoopState({ dir, statePath, state, reason: "next-tick-oscillation" });
+          if (!persisted.ok) {
+            console.log(JSON.stringify({ ready: false, terminate: false, reason: persisted.reason }));
+            return true;
+          }
+          state = persisted.state;
 
           console.log(JSON.stringify({
             ready: false,
@@ -545,6 +1030,9 @@ function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, pla
     "",
   ];
 
+  const missionContext = missionPromptContext({ sessionDir: dir, state });
+  if (missionContext) parts.push(missionContext, "");
+
   if (checkpointContent) {
     parts.push(
       `## Last Checkpoint`,
@@ -580,4 +1068,3 @@ function _buildResumePrompt(dir, state, unitDetails, unitType, contextHints, pla
 
   return parts.filter(l => l != null).join("\n");
 }
-

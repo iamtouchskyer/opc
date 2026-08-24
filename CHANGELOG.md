@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.12.1 — Mission Gate on native-first OPC (2026-08-20)
+
+### Added
+
+- Added optional, composable Mission governance without changing flow selection:
+  `/opc build-verify --mission <task>`, `/opc --mission <task>`, and
+  `/opc loop --mission <task>`.
+- Added one-line natural-language Mission aliases and kept `/opc mission ...` as
+  a compatibility spelling.
+- Mission initialization receipts now expose `mission_enabled`; armed runs also
+  expose `mission_version`, `strategy_epoch`, and `mission_contract` so callers
+  can verify that Mission authority actually exists before dispatch.
+- Ported the approved Mission Contract, trajectory gate, cold review, audited
+  decision, runtime sealing, and regression coverage onto the 0.12 codebase.
+
+### Compatibility
+
+- Preserved Codex-native Economy routing and explicit third-party adapter opt-in.
+- Preserved host-selective installation. Codex remains the default host; Claude
+  compatibility hooks require `--host claude` and include the synchronous
+  PreToolUse budget guard, with optional jq-backed compaction hooks.
+
+## v0.12.0 — Native-first economy rollback (2026-07-15)
+
+### Changed
+
+- Restored Codex-native subagents as the default Economy control plane.
+- Added role-aware Codex model routing: Terra for read-heavy exploration and bounded routine work; GPT-5.6 for ambiguous semantic work, architecture, security, and high-stakes review; host auto-routing when the current Agent API exposes no selector.
+- External Claude, MiniMax, OpenCode, and other CLI Adapters are now explicit third-party opt-ins only. Economy never auto-falls back to external MiniMax M3.
+- Preserved flow topology, independent evaluation, deterministic gates, Git truth, and bounded final review while removing the zero-native-child rule introduced by the unpublished local v0.11 policy.
+- Added regression tests that fail if external-M3 defaults or native-child prohibitions return.
+
+### Migration
+
+Replace v0.11-style `dispatchPolicy` overrides with the native-first example in `pipeline/token-budget-policy.md`. In particular, remove `nativeChildBudget: 0`, `externalBackend: token-firewall-team`, and the Claude/MiniMax cheap-route fields unless they belong to an explicit third-party run.
+
 ## v0.10.6 — changeScope scoped to produced commits (2026-07-19)
 
 Fixes a structural false-positive in the terminal gate. `finalize`/`advance`

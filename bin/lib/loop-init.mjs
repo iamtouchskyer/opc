@@ -1,9 +1,10 @@
 // Loop init command: init-loop
 // Depends on: loop-helpers.mjs, util.mjs
 
-import { readFileSync, existsSync, mkdirSync, statSync } from "fs";
+import { readFileSync, existsSync, mkdirSync, realpathSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { createHash } from "crypto";
+import { execFileSync } from "child_process";
 import {
   parsePlan, validatePlanStructure, hashContent, parseTaskScope,
   getGitHeadHash, detectPreCommitHooks, detectTestScript,
@@ -11,6 +12,28 @@ import {
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG } from "./util.mjs";
 import { runLint } from "./criteria-lint.mjs";
 import { resolveCallerIdentity, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
+import {
+  prepareMissionState,
+  sealMissionRuntimeState,
+  verifyMissionIntegrity,
+} from "./mission-contract.mjs";
+
+function canonicalProjectDir(raw, { discoverGitRoot = false } = {}) {
+  // Preserve the explicit --project-dir spelling for backward compatibility;
+  // only the implicit default is canonicalized and promoted to the Git root.
+  let candidate = discoverGitRoot ? realpathSync(resolve(raw)) : resolve(raw);
+  if (!discoverGitRoot) return candidate;
+  try {
+    const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: candidate,
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (gitRoot) candidate = realpathSync(gitRoot);
+  } catch { /* non-git projects use the canonical invocation directory */ }
+  return candidate;
+}
 
 // ─── init-loop ──────────────────────────────────────────────────
 
@@ -22,31 +45,49 @@ export function cmdInitLoop(args) {
   const handlersRaw = getFlag(args, "handlers", null);
   const skipLint = args.includes("--skip-lint");
   const projectDirRaw = getFlag(args, "project-dir", null);
+  const missionPath = getFlag(args, "mission", null);
+  const parentSession = getFlag(args, "parent-session", null);
 
   // Resolve and validate projectDir
   let projectDir = null;
-  if (projectDirRaw) {
-    projectDir = resolve(projectDirRaw);
-    if (!existsSync(projectDir)) {
+  const requestedProjectDir = projectDirRaw ? resolve(projectDirRaw) : process.cwd();
+  if (!existsSync(requestedProjectDir)) {
+    console.log(JSON.stringify({
+      initialized: false,
+      errors: [`--project-dir path does not exist: ${requestedProjectDir}`],
+      status: "invalid_config",
+      detail: `The path '${requestedProjectDir}' passed via --project-dir does not exist on the filesystem.`,
+      hint: "verify the path exists and is accessible, or omit --project-dir to use the current working directory",
+    }));
+    return;
+  }
+  if (!statSync(requestedProjectDir).isDirectory()) {
+    console.log(JSON.stringify({
+      initialized: false,
+      errors: [`--project-dir path is not a directory: ${requestedProjectDir}`],
+      status: "invalid_config",
+      detail: `The path '${requestedProjectDir}' exists but is not a directory.`,
+      hint: "pass a directory path, not a file path",
+    }));
+    return;
+  }
+  try {
+    // Default discovery persists a symlink-free Git root so later evidence and
+    // artifact bindings never depend on the cwd of a resumed process. Explicit
+    // --project-dir keeps its established absolute-path representation.
+    projectDir = canonicalProjectDir(requestedProjectDir, { discoverGitRoot: !projectDirRaw });
+  } catch (error) {
+    if (projectDirRaw) {
       console.log(JSON.stringify({
         initialized: false,
-        errors: [`--project-dir path does not exist: ${projectDir}`],
+        errors: [`--project-dir could not be canonicalized: ${requestedProjectDir}`],
         status: "invalid_config",
-        detail: `The path '${projectDir}' passed via --project-dir does not exist on the filesystem.`,
-        hint: "verify the path exists and is accessible, or omit --project-dir to use the current working directory",
+        detail: error.message,
+        hint: "verify the path is readable and contains no broken symlinks",
       }));
       return;
     }
-    if (!statSync(projectDir).isDirectory()) {
-      console.log(JSON.stringify({
-        initialized: false,
-        errors: [`--project-dir path is not a directory: ${projectDir}`],
-        status: "invalid_config",
-        detail: `The path '${projectDir}' exists but is not a directory.`,
-        hint: "pass a directory path, not a file path",
-      }));
-      return;
-    }
+    projectDir = resolve(requestedProjectDir);
   }
 
   // ── G0: Recon file gate ─────────────────────────────────────────
@@ -115,8 +156,35 @@ export function cmdInitLoop(args) {
     }
   }
 
-  // Active loop check
+  // Active loop / Mission-authority check. Inspect both state modes
+  // explicitly so a deleted state file or cross-mode re-init cannot bypass an
+  // intact Mission runtime ledger.
   const statePath = join(dir, "loop-state.json");
+  if (existsSync(dir)) {
+    for (const candidatePath of [statePath, join(dir, "flow-state.json")]) {
+      let candidateState = {};
+      if (existsSync(candidatePath)) {
+        try { candidateState = JSON.parse(readFileSync(candidatePath, "utf8")); } catch { /* verification fails closed */ }
+      }
+      const existingIntegrity = verifyMissionIntegrity({
+        sessionDir: dir,
+        state: candidateState,
+        statePath: candidatePath,
+        allowLegacyCorruptUnsealed: true,
+      });
+      if (!existingIntegrity.enabled) continue;
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [existingIntegrity.ok
+          ? "authoritative Mission state cannot be replaced by init-loop; use a new session or an audited Mission decision"
+          : `cannot overwrite Mission runtime authority: ${existingIntegrity.errors.join("; ")}`],
+        status: "mission_authority_exists",
+        detail: "Mission history, retry accounting, and terminal state are append-only within a session.",
+        hint: "continue the existing Mission pipeline or initialize a new session directory",
+      }));
+      return;
+    }
+  }
   if (existsSync(statePath)) {
     try {
       const existing = JSON.parse(readFileSync(statePath, "utf8"));
@@ -130,7 +198,7 @@ export function cmdInitLoop(args) {
         }));
         return;
       }
-    } catch { /* corrupt state, ok to overwrite */ }
+    } catch { /* corrupt legacy state retains the established overwrite behavior */ }
   }
 
   if (structureErrors.length > 0) {
@@ -202,7 +270,27 @@ export function cmdInitLoop(args) {
   }
 
   const planHash = hashContent(planText);
-  const state = {
+  let preparedMission = { ok: true, enabled: false };
+  if (missionPath || parentSession) {
+    preparedMission = prepareMissionState({
+      sessionDir: dir,
+      missionPath,
+      criteriaPath: criteriaFile,
+      planPath: planFile,
+      parentSession,
+    });
+    if (!preparedMission.ok) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: preparedMission.errors,
+        status: "invalid_mission",
+        detail: preparedMission.error,
+        hint: "fix the mission contract, acceptance criteria, plan, or canonical parent session and retry init-loop",
+      }));
+      return;
+    }
+  }
+  let state = {
     tick: 0,
     unit: null,
     description: "Loop initialized",
@@ -218,7 +306,8 @@ export function cmdInitLoop(args) {
     _plan_hash: planHash,
     _last_modified: new Date().toISOString(),
     _git_head: getGitHeadHash(projectDir),
-    projectDir: projectDir || undefined,
+    projectDir,
+    projectRoot: projectDir,
     _tick_history: [],
     _max_total_ticks: units.length * 3,
     _started_at: new Date().toISOString(),
@@ -227,6 +316,13 @@ export function cmdInitLoop(args) {
     _flow_file: flowFile ? resolve(flowFile) : undefined,
     _task_scope: taskScope.length > 0 ? taskScope : undefined,
     autoMode: args.includes("--auto") || undefined,
+    ...(preparedMission.enabled ? {
+      mission: preparedMission.mission,
+      trajectory: preparedMission.trajectory,
+      findingRegistry: preparedMission.findingRegistry,
+      evidenceReceipts: preparedMission.evidenceReceipts,
+      checkpointReceipts: preparedMission.checkpointReceipts,
+    } : {}),
   };
 
   // Parse --handlers JSON if provided (unit type → skill/command dispatch)
@@ -266,6 +362,25 @@ export function cmdInitLoop(args) {
     typecheck_script: testScripts.typecheck,
   };
 
+  if (state.mission) {
+    const sealed = sealMissionRuntimeState({
+      sessionDir: dir,
+      state,
+      statePath,
+      reason: "init-loop",
+      allowUnsealed: true,
+    });
+    if (!sealed.ok) {
+      console.log(JSON.stringify({
+        initialized: false,
+        errors: [sealed.error],
+        status: "invalid_mission_state",
+        detail: sealed.error,
+      }));
+      return;
+    }
+    state = sealed.state;
+  }
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   const validatorList = [];
@@ -276,6 +391,15 @@ export function cmdInitLoop(args) {
 
   console.log(JSON.stringify({
     initialized: true,
+    mission_enabled: Boolean(state.mission),
+    ...(state.mission ? {
+      mission_version: state.mission.version,
+      strategy_epoch: state.mission.strategyEpoch,
+      mission_contract: join(
+        state.mission.parentSession || dir,
+        state.mission.path || "mission-contract.json",
+      ),
+    } : {}),
     units: units.map(u => `${u.id}: ${u.type}`),
     first_unit: units[0].id,
     total_units: units.length,

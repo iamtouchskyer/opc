@@ -12,7 +12,8 @@ Build a Design Context Brief before dispatching role evaluators for review or an
 
 1. **Spec/design docs** — check for design docs in the project. Key decisions should be respected, not flagged.
 2. **Git history** — recent commit messages explaining intent (`git log --oneline -20`).
-3. **CLAUDE.md** — project conventions, coding standards, workflow rules.
+3. **Project instructions** — `AGENTS.md` and, when present, `CLAUDE.md` for
+   conventions, coding standards, and workflow rules.
 4. **TODOs/FIXMEs** — known limitations the author is already aware of.
 5. **Conversation context** — anything the user mentioned about intent or constraints.
 6. **Content safety scan** — if public repo, grep for real names, internal URLs, API keys, PII in all files (not just code). Flag real identifiers.

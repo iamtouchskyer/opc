@@ -8,7 +8,7 @@ Core principle: **the person who decides what to test must not be the person who
 
 ## Roles at This Node
 
-Select 2-4 roles from the filtered pool. Recommended combinations:
+Select 2-4 roles from the filtered pool and dispatch them as fresh native Codex subagents. Prefer Terra for concrete test inventory and GPT-5.6 for security or concurrency boundaries; use host auto-routing if profiles are unavailable. Recommended combinations:
 
 | Project type | Roles |
 |---|---|
@@ -120,11 +120,27 @@ VERDICT: TEST-CASES [N] — N test cases designed
 
 ## Orchestrator Responsibilities
 
-1. Dispatch role evaluators in parallel using role-evaluator-prompt.md with the test-design appendix above
+1. Dispatch native Codex role evaluators in parallel using role-evaluator-prompt.md with the test-design appendix above
 2. Collect all `eval-{role}.md` files
 3. **Merge and deduplicate**: Combine test cases across roles. If two roles designed overlapping cases, keep the more specific one
 4. **Auto-inject tier baseline test cases**: If the flow has a quality tier (`flow-state.json → tier`), run `opc-harness tier-baseline --tier {TIER}` and append the output test cases to the merged plan. These are P0 — non-negotiable. Do not deduplicate them away even if a role designed a similar case. The tier cases have standardized IDs (`TC-TIER-01`, `TC-TIER-02`, ...) and must appear verbatim.
-5. Write merged test plan to `$SESSION_DIR/nodes/test-design/run_{RUN}/test-plan.md`
+5. Write merged test plan to `$SESSION_DIR/nodes/test-design/run_{RUN}/test-plan.md`.
+   For a Mission-enabled flow, freeze exactly one evidence-mapping tuple in the
+   entire merged plan before any test command runs:
+
+   ```markdown
+   ## Mission Evidence Mapping
+   - scenario: SCENARIO-1
+   - validator-type: e2e
+   - satisfies: OUT-1, OUT-2, FLOOR-1
+   ```
+
+   There must be exactly one `scenario:`, one `validator-type:`, and one
+   `satisfies:` line in the file. `scenario` must equal the Mission Contract's
+   end-to-end scenario, `validator-type` must be allowed by that scenario, and
+   `satisfies` may contain only active `OUT-N`/`FLOOR-N` IDs that this exact test
+   plan proves. The executor cannot add, remove, or relabel these claims after
+   seeing the result.
 6. For mechanical execution, write `$SESSION_DIR/nodes/test-design/test-execution.json`
    with the exact command the harness should run:
    ```json
@@ -139,8 +155,12 @@ VERDICT: TEST-CASES [N] — N test cases designed
    (`package.json`, Playwright config, node_modules). If omitted, OPC will try one
    conservative auto-resolution pass for a unique local JS package, then fall back
    to the orchestrator cwd.
-7. Write handshake.json with all eval files as artifacts
-8. The merged test-plan.md is the primary input for the downstream test-execute node
+   For Mission coverage, choose a command whose output proves that at least one
+   test/check actually ran. A zero exit with no recognized non-vacuous runner
+   summary cannot mint integrated evidence.
+7. Write handshake.json with all eval files as artifacts.
+8. The merged test-plan.md is the primary input for the downstream test-execute
+   node. Its bytes and the evidence-mapping tuple are hashed before execution.
 
 ### Handshake
 
@@ -174,4 +194,17 @@ The executor does NOT design new test cases. If it discovers untested scenarios 
 When `test-execution.json` exists, the harness runs `testCommand` itself and
 writes `test-command-result.json` plus provenance binding the result to the
 source test plan. Hand-written `test-result` JSON without matching harness
-provenance is weak evidence and must not pass the gate.
+provenance is weak evidence and must not pass the gate. Integrated coverage
+requires non-empty TAP with at least one executed test and zero failures. The
+harness also owns
+the execute-node handshake: a later `seal` scans artifacts and merges them into
+that handshake while preserving the harness-written command, plan, result,
+node/run, signed-ledger bindings, and auto-populated frozen Mission mapping.
+Orchestrators must not replace those
+fields with a caller-authored PASS.
+
+This built-in, harness-run `test-execute` path is currently the only
+standard-flow path that can mint an integrated Mission receipt. Custom execute
+nodes, `e2e-user`, and `post-launch-sim` remain local evidence until a comparable
+trusted harness execution record is implemented; their own PASS JSON is never a
+fallback.

@@ -1,5 +1,6 @@
 // extensions.mjs — OPC Extension System
-// Loads user extensions from ~/.claude/skills/opc-extension/, fires hooks at call sites.
+// Loads user extensions from ~/.codex/skills/opc-extension/ by default, with
+// ~/.claude/skills/opc-extension/ as a compatibility fallback.
 // No module-level singletons — loadExtensions returns a registry object.
 // Deliberate exceptions: _breakerSchemaWarned (one warning per process for schema
 // version mismatch) and _bareCapabilityWarnings (deduplicate bare-string warnings
@@ -322,10 +323,12 @@ export function clearBreakerState(flowDir) {
 // ─── Path resolution ─────────────────────────────────────────────
 
 function resolveExtensionsDir(config = {}) {
+  const codexDir = join(os.homedir(), ".codex", "skills", "opc-extension");
+  const claudeDir = join(os.homedir(), ".claude", "skills", "opc-extension");
   return (
     process.env.OPC_EXTENSIONS_DIR ||
     config.extensionsDir ||
-    join(os.homedir(), ".claude", "skills", "opc-extension")
+    (existsSync(codexDir) || !existsSync(claudeDir) ? codexDir : claudeDir)
   );
 }
 

@@ -151,6 +151,54 @@ function runInit(fixture, dir, extra = []) {
   ], fixture);
 }
 
+function writeMissionInputs(fixture) {
+  const missionPath = join(fixture.project, "mission-contract.json");
+  const criteriaPath = join(fixture.project, "acceptance-criteria.md");
+  const outcomes = [
+    { id: "OUT-1", statement: "Auto initialization preserves Mission runtime authority." },
+    { id: "OUT-2", statement: "Registry failure leaves no newer committed runtime seal." },
+    { id: "OUT-3", statement: "After one injected registry failure, retry creates flow-state.json with runtime seal generation 1." },
+  ];
+  writeFileSync(missionPath, `${JSON.stringify({
+    schemaVersion: 1,
+    version: 1,
+    owner: "Registry rollback test owner",
+    affectedParties: ["Users"],
+    mode: "explore",
+    originalRequest: "Keep Mission initialization and registry publication atomic.",
+    outcomes,
+    retiredCriteria: [],
+    protectedFloors: [{ id: "FLOOR-1", statement: "Never restore old state behind a newer runtime seal." }],
+    appetite: { maxRepairCycles: 3, maxTokens: null, maxWallTimeHours: null, expiresAt: null },
+    endToEndScenario: {
+      id: "SCENARIO-1",
+      statement: "Fail registry publication, then retry initialization.",
+      validatorTypes: ["e2e"],
+    },
+    realitySignals: [{ id: "SIG-1", required: true, observation: "The retry initializes cleanly." }],
+    guardrails: [{ id: "GUARD-1", metric: "Runtime state", actionThreshold: "Stop on rollback mismatch." }],
+    exitAndSalvage: "Preserve the last committed state.",
+  }, null, 2)}\n`);
+  writeFileSync(criteriaPath, [
+    "## Outcomes",
+    ...outcomes.map(outcome => `- ${outcome.id}: ${outcome.statement}`),
+    "",
+    "## Verification",
+    ...outcomes.map(outcome => `- ${outcome.id}: A deterministic integration assertion verifies this outcome.`),
+    "",
+    "## Quality Constraints",
+    "- Initialization and registry publication fail atomically.",
+    "",
+    "## Out of Scope",
+    "- Extension behavior.",
+    "",
+    "## Quality Baseline (functional)",
+    "- Deterministic registry failure injection.",
+    "",
+  ].join("\n"));
+  return { missionPath, criteriaPath };
+}
+
 function hookInput(fixture, sessionId, toolUseId = "tool-1") {
   return {
     session_id: sessionId,
@@ -366,6 +414,35 @@ describe("auto init registry contract", () => {
     assert.equal(result.json.created, false);
     assert.match(result.json.error, /session registry/i);
     assert.equal(existsSync(dir), false);
+  });
+
+  test("Mission auto init delays its first runtime seal until registry publication succeeds", async () => {
+    const fixture = tempFixture("mission-registry-failure");
+    const dir = join(fixture.project, "mission-session");
+    const inputs = writeMissionInputs(fixture);
+    const failed = await runWithRegistryPublicationFailure(fixture, [
+      "init",
+      "--flow", "review",
+      "--entry", "review",
+      "--dir", dir,
+      "--mission", inputs.missionPath,
+      "--criteria", inputs.criteriaPath,
+      "--no-extensions",
+      "--auto",
+      "--claude-session-id", "claude-session-mission-registry-failure",
+    ]);
+
+    assert.equal(failed.json.created, false, JSON.stringify(failed.json));
+    assert.match(failed.json.error, /cannot write session registry/i);
+    assert.equal(existsSync(dir), false, "failed init must remove state, stage, and session ledger together");
+
+    const retry = runInit(fixture, dir, [
+      "--mission", inputs.missionPath,
+      "--criteria", inputs.criteriaPath,
+    ]);
+    assert.equal(retry.json.created, true, JSON.stringify(retry.json));
+    const state = JSON.parse(readFileSync(join(dir, "flow-state.json"), "utf8"));
+    assert.equal(state._missionRuntimeSeal.generation, 1);
   });
 
   test("registry publication failure restores the previous latest implicit session", async () => {
@@ -923,11 +1000,11 @@ describe("hook installation", () => {
     const noJqPath = join(fixture.root, "no-jq-bin");
     mkdirSync(noJqPath);
 
-    const installed = run(opcCli, ["install"], fixture);
-    const hooks = run(opcCli, ["install-hooks"], { ...fixture, path: noJqPath });
+    const installed = run(opcCli, ["install", "--host", "claude"], fixture);
+    const hooks = run(opcCli, ["install-hooks", "--host", "claude"], { ...fixture, path: noJqPath });
 
     assert.equal(installed.status, 0, installed.stderr);
-    assert.match(installed.stdout, /auto-flow guards/);
+    assert.match(installed.stdout, /Claude auto-flow guard and optional compression resilience/);
     assert.equal(hooks.status, 0, hooks.stderr);
     assert.match(hooks.stdout, /jq not found/);
     const settings = JSON.parse(readFileSync(join(fixture.home, ".claude", "settings.json"), "utf8"));
@@ -956,8 +1033,8 @@ describe("hook installation", () => {
     }, null, 2));
     const path = installFakeJq(fixture.root);
 
-    const first = run(opcCli, ["install-hooks"], { ...fixture, path });
-    const second = run(opcCli, ["install-hooks"], { ...fixture, path });
+    const first = run(opcCli, ["install-hooks", "--host", "claude"], { ...fixture, path });
+    const second = run(opcCli, ["install-hooks", "--host", "claude"], { ...fixture, path });
 
     assert.equal(first.status, 0, first.stderr);
     assert.equal(second.status, 0, second.stderr);
@@ -1001,7 +1078,7 @@ describe("hook installation", () => {
       },
     }, null, 2));
 
-    const result = run(opcCli, ["uninstall"], fixture);
+    const result = run(opcCli, ["uninstall", "--host", "claude"], fixture);
 
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(skill), false);
@@ -1020,7 +1097,7 @@ describe("hook installation", () => {
     const settingsPath = join(fixture.home, ".claude", "settings.json");
     writeFileSync(settingsPath, "{");
 
-    const result = run(opcCli, ["uninstall"], fixture);
+    const result = run(opcCli, ["uninstall", "--host", "claude"], fixture);
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Cannot safely uninstall OPC/);
@@ -1068,7 +1145,7 @@ describe("hook installation", () => {
     const original = JSON.stringify({ hooks: { Notification: [] } }, null, 2);
     writeFileSync(settingsPath, original);
 
-    const result = run(opcCli, ["install-hooks"], {
+    const result = run(opcCli, ["install-hooks", "--host", "claude"], {
       ...fixture,
       path: installFakeJq(fixture.root),
     });
@@ -1083,8 +1160,8 @@ describe("bounded auto instructions", () => {
   test("skill and runtime remove unconditional continuation", () => {
     const skill = readFileSync(skillFile, "utf8");
     const loopAdvance = readFileSync(join(repoRoot, "bin", "lib", "loop-advance.mjs"), "utf8");
-    assert.match(skill, /opc-harness init --auto --claude-session-id "\$\{CLAUDE_SESSION_ID\}"/);
-    assert.match(skill, /opc-harness init --flow \{TEMPLATE\} --entry \{ENTRY_NODE\} # interactive/);
+    assert.match(skill, /current Codex-native lifecycle:[\s\S]{0,200}opc-harness init --flow \{TEMPLATE\} --entry \{ENTRY_NODE\}/);
+    assert.match(skill, /Claude Code compatibility[\s\S]{0,500}opc install-hooks --host claude[\s\S]{0,500}opc-harness init --auto --claude-session-id "\$\{CLAUDE_SESSION_ID\}" --flow \{TEMPLATE\} --entry \{ENTRY_NODE\}/);
     assert.doesNotMatch(`${skill}\n${loopAdvance}`, /do not pause, do not ask user, keep executing|Anything else = keep executing/);
     assert.match(skill, /when the circuit breaker trips, stop and report immediately/i);
   });

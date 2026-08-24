@@ -104,6 +104,47 @@ function treeSnapshot(dir) {
 }
 
 describe("deep authority invariants", () => {
+  test("validate-chain honors the flow tier when re-running brief lint", () => {
+    const dir = join(TMPBASE, "functional-brief-chain");
+    const runDir = join(dir, "nodes", "brief", "run_1");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "build-brief.md"), [
+      "## File Plan",
+      "- index.mjs — implementation, ~20 lines",
+      "",
+      "## Technology Decisions",
+      "- Use node:test@18 through npm test",
+      "",
+      "## Constraints",
+      "- Complete the validator within 100 ms",
+      "",
+    ].join("\n"));
+    writeFileSync(join(runDir, "brief-lint-result.json"), JSON.stringify({ pass: true }));
+    writeState(dir, {
+      currentNode: "brief",
+      entryNode: "brief",
+      tier: "functional",
+      history: [{ nodeId: "brief", runId: "run_1", timestamp: TS0 }],
+    });
+    writeExactAndCanonical(dir, "brief", "run_1", {
+      nodeId: "brief",
+      nodeType: "brief",
+      runId: "run_1",
+      status: "completed",
+      verdict: "PASS",
+      summary: "functional brief",
+      timestamp: TS0,
+      artifacts: [
+        { type: "brief", path: "build-brief.md" },
+        { type: "report", path: "brief-lint-result.json" },
+      ],
+    });
+
+    const result = runHarness("validate-chain", ["--dir", dir]);
+
+    assert.equal(result.valid, true, JSON.stringify(result));
+  });
+
   test("validate-chain rejects test-result without deep OPC provenance", () => {
     const dir = join(TMPBASE, "chain-provenance");
     const runDir = join(dir, "nodes", "test-execute", "run_1");

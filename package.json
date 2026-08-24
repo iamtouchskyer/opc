@@ -1,6 +1,6 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.10.7",
+  "version": "0.12.1",
   "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
   "type": "module",
   "bin": {
@@ -30,6 +30,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "keywords": [
+    "codex",
     "claude-code",
     "ai-agent",
     "code-review",
@@ -40,7 +41,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iamtouchskyer/opc.git"
+    "url": "https://github.com/WdBlink/opc.git"
   },
-  "homepage": "https://github.com/iamtouchskyer/opc"
+  "homepage": "https://github.com/WdBlink/opc"
 }

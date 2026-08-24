@@ -2,7 +2,7 @@
 
 **Orchestrator instructions (do not include in the subagent prompt):**
 
-Read this section, fill in the `{placeholders}` in the subagent prompt below, then pass everything from the `---` separator onward as the `prompt` parameter to the Agent tool with `subagent_type: "general-purpose"`. Strip this header section — the subagent should only see what's below the line.
+Read `token-budget-policy.md`, choose the native Codex route for this task, fill in the `{placeholders}`, then pass everything from the `---` separator onward to a fresh native subagent. Prefer a `worker`/Terra profile for bounded routine work and GPT-5.6 for ambiguous semantic, cross-cutting, or high-risk work. If the host exposes no selector, leave the model unpinned and use Codex auto-routing. Strip this header section — the subagent should only see what's below the line. External CLI Adapters require an explicit third-party request.
 
 ---
 
@@ -50,7 +50,10 @@ All criteria pass but rubric quality isn't excellent yet. Focus on the lowest-sc
 
 ## Project Context
 
-{paste relevant CLAUDE.md instructions here — dev workflow, precommit checks, coding conventions, test commands, etc. Subagents don't inherit project instructions automatically, so include anything the implementer needs to follow.}
+{paste relevant project instructions here — AGENTS.md and, when present,
+CLAUDE.md; include dev workflow, precommit checks, coding conventions, test
+commands, etc. Subagents don't inherit project instructions automatically, so
+include anything the implementer needs to follow.}
 
 ## Context
 

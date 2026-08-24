@@ -15,7 +15,7 @@ import {
 import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
 import { homedir } from "os";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
@@ -63,6 +63,12 @@ import {
   authoritativeEntries,
   canonicalProjectionErrors,
 } from "./flow-evidence.mjs";
+import {
+  guardMissionMutation,
+  prepareMissionState,
+  sealMissionRuntimeState,
+  verifyMissionIntegrity,
+} from "./mission-contract.mjs";
 
 // ─── route ──────────────────────────────────────────────────────
 
@@ -158,46 +164,79 @@ export function cmdRecordCommit(args) {
     console.log(JSON.stringify({ recorded: false, error: "flow-state.json not found" }));
     return;
   }
-  let state;
+  const lock = lockFile(statePath, { command: "record-commit" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ recorded: false, error: "could not acquire flow state lock", holder: lock.holder }));
+    return;
+  }
   try {
-    state = JSON.parse(readFileSync(statePath, "utf8"));
-  } catch (err) {
-    console.log(JSON.stringify({ recorded: false, error: `corrupt flow-state.json: ${err.message}` }));
-    return;
-  }
-  const stopped = stoppedFlowError(state, "record-commit");
-  if (stopped) {
-    console.log(JSON.stringify({ recorded: false, error: stopped }));
-    return;
-  }
-
-  const root = (typeof state.projectRoot === "string" && state.projectRoot) ? state.projectRoot : getProjectRoot();
-  let sha = getFlag(args, "sha", null);
-  if (!sha) {
-    sha = gitHeadSha(root);
-    if (!sha) {
-      console.log(JSON.stringify({ recorded: false, error: "cannot resolve HEAD — not a git repository" }));
+    // The state must be read only after acquiring the same lock used by mission
+    // decisions, otherwise a stale record-commit write can erase a newer gate.
+    let state;
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch (err) {
+      console.log(JSON.stringify({ recorded: false, error: `corrupt flow-state.json: ${err.message}` }));
       return;
     }
-  }
+    const stopped = stoppedFlowError(state, "record-commit");
+    if (stopped) {
+      console.log(JSON.stringify({ recorded: false, error: stopped }));
+      return;
+    }
+    const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "record-commit" });
+    if (!missionGuard.allowed) {
+      console.log(JSON.stringify({ recorded: false, error: missionGuard.reason, rebet_required: missionGuard.rebet_required }));
+      return;
+    }
 
-  // Fail closed: only record a real, resolvable commit.
-  let full;
-  try {
-    full = execSync(`git rev-parse --verify ${sha}^{commit}`, {
-      cwd: root, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    console.log(JSON.stringify({ recorded: false, error: `not a valid commit: ${sha}` }));
-    return;
-  }
+    const root = (typeof state.projectRoot === "string" && state.projectRoot) ? state.projectRoot : getProjectRoot();
+    let sha = getFlag(args, "sha", null);
+    if (!sha) {
+      sha = gitHeadSha(root);
+      if (!sha) {
+        console.log(JSON.stringify({ recorded: false, error: "cannot resolve HEAD — not a git repository" }));
+        return;
+      }
+    }
 
-  if (!Array.isArray(state.producedCommits)) state.producedCommits = [];
-  const already = state.producedCommits.includes(full);
-  if (!already) state.producedCommits.push(full);
-  state._last_modified = new Date().toISOString();
-  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
-  console.log(JSON.stringify({ recorded: true, sha: full, already, producedCommits: state.producedCommits }));
+    let full;
+    try {
+      full = execFileSync("git", ["rev-parse", "--verify", `${sha}^{commit}`], {
+        cwd: root, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      console.log(JSON.stringify({ recorded: false, error: `not a valid commit: ${sha}` }));
+      return;
+    }
+
+    if (!Array.isArray(state.producedCommits)) state.producedCommits = [];
+    const already = state.producedCommits.includes(full);
+    if (!already) state.producedCommits.push(full);
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    state._write_nonce = createHash("sha256")
+      .update(`${state._last_modified}:${full}:${state._write_nonce || ""}`)
+      .digest("hex")
+      .slice(0, 16);
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath,
+        reason: "record-commit",
+      });
+      if (!sealed.ok) {
+        console.log(JSON.stringify({ recorded: false, error: sealed.error }));
+        return;
+      }
+      state = sealed.state;
+    }
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    console.log(JSON.stringify({ recorded: true, sha: full, already, producedCommits: state.producedCommits }));
+  } finally {
+    lock.release();
+  }
 }
 
 function validatePreToolHook(home) {
@@ -270,6 +309,8 @@ export async function cmdInit(args) {
   const autoMode = args.includes("--auto");
   const claudeSessionId = getFlag(args, "claude-session-id");
   const hasExplicitDir = args.includes("--dir");
+  const missionPath = getFlag(args, "mission", null);
+  const parentSession = getFlag(args, "parent-session", null);
 
   if (tier && !VALID_TIERS.has(tier)) {
     console.log(JSON.stringify({ created: false, error: `invalid tier: '${tier}' (expected: ${[...VALID_TIERS].join(", ")})` }));
@@ -344,6 +385,35 @@ export async function cmdInit(args) {
   }
   const priorStateText = existsSync(statePath) ? readFileSync(statePath, "utf8") : null;
 
+  // Initialization must not become an alternate Mission reset command. Check
+  // both state modes explicitly so deleting the active state, deleting its
+  // `mission` marker, or starting the other mode in the same directory cannot
+  // bypass an intact runtime ledger.
+  if (existsSync(dir)) {
+    for (const candidatePath of [statePath, join(dir, "loop-state.json")]) {
+      let candidateState = {};
+      if (existsSync(candidatePath)) {
+        try { candidateState = JSON.parse(readFileSync(candidatePath, "utf8")); } catch { /* verification fails closed */ }
+      }
+      const priorIntegrity = verifyMissionIntegrity({
+        sessionDir: dir,
+        state: candidateState,
+        statePath: candidatePath,
+        allowLegacyCorruptUnsealed: true,
+      });
+      if (!priorIntegrity.enabled) continue;
+      registryLock?.release();
+      console.log(JSON.stringify({
+        created: false,
+        error: priorIntegrity.ok
+          ? "cannot overwrite an authoritative Mission session; use a new session or an audited Mission decision"
+          : `cannot overwrite Mission runtime authority: ${priorIntegrity.errors.join("; ")}`,
+        status: "mission_authority_exists",
+      }));
+      return;
+    }
+  }
+
   mkdirSync(nodesPath, { recursive: true });
 
   // ─── Resolve bypass state BEFORE writing flow-state.json ────────
@@ -362,7 +432,39 @@ export async function cmdInit(args) {
 
   const projectRoot = getProjectRoot();
   const flowStartedAt = new Date().toISOString();
-  const state = {
+  let preparedMission = { ok: true, enabled: false };
+  if (missionPath || parentSession) {
+    const explicitCriteria = getFlag(args, "criteria", null);
+    const defaultCriteria = join(dir, "acceptance-criteria.md");
+    const criteriaPath = explicitCriteria || defaultCriteria;
+    const explicitPlan = getFlag(args, "plan", null);
+    const defaultPlan = join(dir, "plan.md");
+    const planPath = explicitPlan || (existsSync(defaultPlan) ? defaultPlan : null);
+    preparedMission = prepareMissionState({
+      sessionDir: dir,
+      missionPath,
+      criteriaPath,
+      planPath,
+      parentSession,
+    });
+    if (!preparedMission.ok) {
+      registryLock?.release();
+      if (!hasExplicitDir) {
+        rmSync(dir, { recursive: true, force: true });
+        restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+      } else if (!nodesExistedBefore) {
+        rmSync(nodesPath, { recursive: true, force: true });
+      }
+      console.log(JSON.stringify({
+        created: false,
+        error: preparedMission.error,
+        errors: preparedMission.errors,
+        status: "invalid_mission",
+      }));
+      return;
+    }
+  }
+  let state = {
     version: "1.0",
     flowTemplate: flow,
     currentNode: entryNode,
@@ -387,6 +489,14 @@ export async function cmdInit(args) {
       _claudeSessionId: claudeSessionId,
       autoRepairCounts: {},
     } : {}),
+    ...(preparedMission.enabled ? {
+      flowStartedAt,
+      mission: preparedMission.mission,
+      trajectory: preparedMission.trajectory,
+      findingRegistry: preparedMission.findingRegistry,
+      evidenceReceipts: preparedMission.evidenceReceipts,
+      checkpointReceipts: preparedMission.checkpointReceipts,
+    } : {}),
     _written_by: WRITER_SIG,
     _last_modified: flowStartedAt,
     _flow_file: template._source_file || undefined,
@@ -395,7 +505,34 @@ export async function cmdInit(args) {
       .digest("hex").slice(0, 16),
   };
 
-  atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+  // Auto registration can still fail. Delay the first Mission seal/write
+  // until the registry has been published so that rollback never restores old
+  // bytes behind a newer committed runtime seal. Mission-less init keeps its
+  // established ordering and exact rollback behavior.
+  const deferInitialMissionWrite = autoMode && Boolean(state.mission);
+  const persistInitialState = () => {
+    if (state.mission) {
+      const sealed = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath,
+        reason: "init",
+        allowUnsealed: true,
+      });
+      if (!sealed.ok) return sealed;
+      state = sealed.state;
+    }
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    return { ok: true };
+  };
+  if (!deferInitialMissionWrite) {
+    const persisted = persistInitialState();
+    if (!persisted.ok) {
+      registryLock?.release();
+      console.log(JSON.stringify({ created: false, error: persisted.error, status: "invalid_mission_state" }));
+      return;
+    }
+  }
 
   if (autoMode) {
     try {
@@ -418,6 +555,23 @@ export async function cmdInit(args) {
       console.log(JSON.stringify({ created: false, error: `cannot write session registry: ${error.message}` }));
       return;
     }
+    if (deferInitialMissionWrite) {
+      const persisted = persistInitialState();
+      if (!persisted.ok) {
+        // We still hold the registry lock, so removing the record cannot race
+        // a second owner. The previous active state was never overwritten.
+        try { rmSync(registryPath(claudeSessionId, homedir()), { force: true }); } catch { /* best effort */ }
+        if (removeDirOnRegistryFailure) {
+          rmSync(dir, { recursive: true, force: true });
+          restoreLatestAfterFailedInit(latestLink, dir, previousLatestTarget);
+        } else if (!nodesExistedBefore) {
+          rmSync(nodesPath, { recursive: true, force: true });
+        }
+        registryLock.release();
+        console.log(JSON.stringify({ created: false, error: persisted.error, status: "invalid_mission_state" }));
+        return;
+      }
+    }
     registryLock.release();
   }
 
@@ -437,6 +591,16 @@ export async function cmdInit(args) {
     // Pin extension versions into flow-state for rubric freeze rule
     if (registry.extensions && registry.extensions.length > 0) {
       state.extensionVersions = registry.extensions.map(e => ({ name: e.name, version: e.meta?.rubricVersion || e.meta?.version || "unknown" }));
+      if (state.mission) {
+        const sealed = sealMissionRuntimeState({
+          sessionDir: dir,
+          state,
+          statePath,
+          reason: "init-extension-versions",
+        });
+        if (!sealed.ok) throw new Error(sealed.error);
+        state = sealed.state;
+      }
       atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
     }
     try {
@@ -514,6 +678,15 @@ export async function cmdInit(args) {
 
   console.log(JSON.stringify({
     created: true, flow, entry: entryNode, tier: tier || null, dir,
+    mission_enabled: Boolean(state.mission),
+    ...(state.mission ? {
+      mission_version: state.mission.version,
+      strategy_epoch: state.mission.strategyEpoch,
+      mission_contract: join(
+        state.mission.parentSession || dir,
+        state.mission.path || "mission-contract.json",
+      ),
+    } : {}),
     ...(preflightStatus ? { preflight: preflightStatus } : {}),
   }));
 }
@@ -1105,6 +1278,13 @@ function preserveHarnessTestEvidence(target, existing) {
     "prerequisites",
     "testEvidenceProvenance",
     "testEvidencePolicy",
+    // These claims were validated against the frozen source test-plan before
+    // harness execution. Re-sealing artifacts must not erase that coverage
+    // mapping while retaining only its provenance shell.
+    "evidence",
+    "scenarioId",
+    "validatorType",
+    "satisfies",
   ]) {
     if (Object.hasOwn(existing, key)) target[key] = existing[key];
   }

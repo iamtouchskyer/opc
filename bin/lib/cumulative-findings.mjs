@@ -33,7 +33,16 @@ function listEvalFiles(runDir) {
 
 function fmtFinding(f) {
   const loc = f.file && f.line ? ` (${f.file}:${f.line})` : "";
-  return `  - ${f.severity}: ${f.issue}${loc}`;
+  const metadata = [
+    f.class ? `class=${f.class}` : null,
+    f.criterion ? `criterion=${f.criterion}` : null,
+    f.finding_ref ? `finding_ref=${f.finding_ref}` : null,
+    f.fingerprint ? `fingerprint=${f.fingerprint}` : null,
+  ].filter(Boolean);
+  const suffix = metadata.length > 0 ? ` [${metadata.join(", ")}]` : "";
+  const invariant = f.invariant ? ` — invariant: ${f.invariant}` : "";
+  const evidence = f.evidence ? ` — evidence: ${f.evidence}` : "";
+  return `  - ${f.severity}: ${f.issue}${loc}${suffix}${invariant}${evidence}`;
 }
 
 function fmtStructuredFinding(f) {

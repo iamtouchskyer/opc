@@ -1,14 +1,112 @@
 // Loop tick completion command: complete-tick
 // Depends on: loop-helpers.mjs, util.mjs
 
-import { readFileSync, appendFileSync, existsSync, statSync, writeFileSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
+import {
+  readFileSync, appendFileSync, existsSync, lstatSync, realpathSync,
+  statSync, writeFileSync, mkdirSync,
+} from "fs";
+import { join, dirname, isAbsolute, relative, resolve, sep } from "path";
 import { execFileSync } from "child_process";
-import { parsePlan, hashContent, getGitHeadHash, checkScopeCoverage } from "./loop-helpers.mjs";
+import { createHash } from "crypto";
+import {
+  parsePlan,
+  hashContent,
+  getGitHeadHash,
+  checkScopeCoverage,
+  revalidateMissionEvidenceReceipts,
+} from "./loop-helpers.mjs";
 import { getFlag, resolveDir, atomicWriteSync, WRITER_SIG, TERMINAL_LOOP_STATUSES } from "./util.mjs";
 import { lockFile } from "./file-lock.mjs";
 import { resolveCallerIdentity, checkOwnership, makeOwner, ownershipEnforcementWarning } from "./driver-owner.mjs";
-import { checkEvalDistinctness, parseEvaluation } from "./eval-parser.mjs";
+import {
+  checkEvalDistinctness,
+  parseEvaluation,
+  validateReviewClaimDispositions,
+} from "./eval-parser.mjs";
+import {
+  guardMissionMutation,
+  missionPromptContext,
+  sealMissionRuntimeState,
+  verifyMissionIntegrity,
+} from "./mission-contract.mjs";
+import {
+  commitTrajectoryObservation,
+  evaluateTrajectory,
+  openMissionGate,
+  registerFindingBatch,
+  sealPendingMissionGate,
+} from "./trajectory-gate.mjs";
+
+function _missionStatePath(dir) {
+  const loopPath = join(dir, "loop-state.json");
+  return existsSync(loopPath) ? loopPath : join(dir, "flow-state.json");
+}
+
+function _openReviewQualityMissionGate({ dir, statePath, state, integrity, trigger }) {
+  const canonicalDir = integrity.canonicalDir;
+  const canonicalStatePath = _missionStatePath(canonicalDir);
+  let parentLock = null;
+  if (canonicalDir !== dir) {
+    parentLock = lockFile(canonicalStatePath, { command: "complete-tick-mission-parent" });
+    if (!parentLock.acquired) {
+      return {
+        ok: false,
+        reason: "could not acquire canonical parent Mission state lock",
+        holder: parentLock.holder,
+      };
+    }
+  }
+  try {
+    const currentPath = canonicalDir === dir ? statePath : canonicalStatePath;
+    const fresh = JSON.parse(readFileSync(currentPath, "utf8"));
+    if (canonicalDir !== dir && fresh._last_modified !== integrity.canonicalState._last_modified) {
+      return { ok: false, reason: "canonical Mission state changed while opening the gate; retry" };
+    }
+    const opened = openMissionGate({
+      sessionDir: null,
+      state: canonicalDir === dir ? state : integrity.canonicalState,
+      missionContract: integrity.contract,
+      trigger: {
+        ...trigger,
+        origin: {
+          command: "next-tick",
+          sessionSha256: hashContent(resolve(dir)),
+          fromNode: null,
+          nextUnit: state.next_unit ?? null,
+          edgeKey: trigger?.edgeKey || null,
+        },
+      },
+    });
+    const sealed = sealPendingMissionGate({ sessionDir: canonicalDir, state: opened.state });
+    if (!sealed.ok) return { ok: false, reason: `cannot seal Mission Gate: ${sealed.error}` };
+    sealed.state._written_by = WRITER_SIG;
+    sealed.state._last_modified = new Date().toISOString();
+    const canonicalRuntimeSeal = sealMissionRuntimeState({
+      sessionDir: canonicalDir,
+      state: sealed.state,
+      statePath: currentPath,
+      reason: "complete-tick-review-quality-gate",
+    });
+    if (!canonicalRuntimeSeal.ok) return { ok: false, reason: canonicalRuntimeSeal.error };
+    atomicWriteSync(currentPath, JSON.stringify(canonicalRuntimeSeal.state, null, 2) + "\n");
+    if (canonicalDir !== dir) {
+      state._written_by = WRITER_SIG;
+      state._last_modified = new Date().toISOString();
+      const localRuntimeSeal = sealMissionRuntimeState({
+        sessionDir: dir,
+        state,
+        statePath,
+        reason: "complete-tick-review-quality-local",
+      });
+      if (!localRuntimeSeal.ok) return { ok: false, reason: localRuntimeSeal.error };
+      state = localRuntimeSeal.state;
+      atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    }
+    return { ok: true, packet: opened.packet };
+  } finally {
+    parentLock?.release();
+  }
+}
 
 // ─── complete-tick ──────────────────────────────────────────────
 
@@ -19,6 +117,14 @@ export function cmdCompleteTick(args) {
   const description = getFlag(args, "description", "");
   const status = getFlag(args, "status", "completed");
   const delta = getFlag(args, "delta", "");
+  const scenarioId = getFlag(args, "scenario", null);
+  const requestedValidatorType = getFlag(args, "validator-type", null);
+  const satisfies = [...new Set(
+    String(getFlag(args, "satisfies", "") || "")
+      .split(",")
+      .map(value => value.trim())
+      .filter(Boolean),
+  )];
 
   const VALID_TICK_STATUSES = new Set(["completed", "blocked", "failed"]);
 
@@ -60,6 +166,25 @@ export function cmdCompleteTick(args) {
   const errors = [];
   const warnings = [];
 
+  const missionGuard = guardMissionMutation({ sessionDir: dir, state, command: "complete-tick" });
+  if (!missionGuard.allowed) {
+    console.log(JSON.stringify({
+      completed: false,
+      errors: [missionGuard.reason],
+      rebet_required: missionGuard.rebet_required,
+      missionIntegrityErrors: missionGuard.errors,
+    }));
+    return;
+  }
+  let missionIntegrity = null;
+  if (state.mission) {
+    missionIntegrity = verifyMissionIntegrity({ sessionDir: dir, state });
+    if (!missionIntegrity.ok) {
+      console.log(JSON.stringify({ completed: false, errors: missionIntegrity.errors }));
+      return;
+    }
+  }
+
   // ── Session-ownership gate ───────────────────────────────────
   // The compaction double-drive bug slips in here: a resumed agent that jumps
   // straight to complete-tick bypasses next-tick's in_progress guard. Refuse
@@ -80,6 +205,15 @@ export function cmdCompleteTick(args) {
   if (ownership.decision === "TAKEOVER") {
     state._owner = makeOwner(caller, state._owner && state._owner.token);
     warnings.push(`reclaimed loop ownership — ${ownership.reason}`);
+  }
+
+  if (state.mission && state.trajectory?.retryGrant) {
+    console.log(JSON.stringify({
+      completed: false,
+      errors: ["sealed Mission retry must be claimed by next-tick before complete-tick"],
+      rebet_required: false,
+    }));
+    return;
   }
 
   // Rule 7: terminated pipeline
@@ -116,30 +250,277 @@ export function cmdCompleteTick(args) {
 
   // Determine unit type
   let unitType = "unknown";
+  let unitSpec = null;
   let allUnits = [];
   if (existsSync(planFile)) {
     allUnits = parsePlan(readFileSync(planFile, "utf8"));
     const found = allUnits.find(u => u.id === unit);
-    if (found) unitType = found.type;
+    if (found) {
+      unitSpec = found;
+      unitType = found.type;
+    }
   }
 
   const artifacts = artifactsRaw ? artifactsRaw.split(",").map(a => a.trim()).filter(Boolean) : [];
 
   let reviewVerdict = undefined;
+  let reviewFindings = [];
+  let reviewQualityOk = true;
+  let reviewClaims = [];
+  let reviewEvalFiles = [];
+  let reviewClaimDisposition = { ok: true, required: false, errors: [], dispositions: [], path: null };
+  let integratedEvidence = null;
+  const integratedUnit = unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim");
+  const integratedClaimRequested = Boolean(state.mission && scenarioId && integratedUnit);
+  const effectiveValidatorType = requestedValidatorType ||
+    (unitType.startsWith("e2e") ? "e2e" : unitType.startsWith("accept") ? "acceptance" : "ux-sim");
 
   if (status === "completed") {
     // ── Rule 2+3+6: Evidence validation per unit type ──
     if (unitType.startsWith("implement") || unitType.startsWith("build")) {
       validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state, dir);
     } else if (unitType.startsWith("review")) {
-      reviewVerdict = validateReviewArtifacts(unit, artifacts, errors, warnings, state);
+      const reviewResult = validateReviewArtifacts(unit, artifacts, errors, warnings, state, dir);
+      reviewVerdict = reviewResult?.verdict;
+      reviewFindings = reviewResult?.findings || [];
+      reviewQualityOk = reviewResult?.reviewQualityOk !== false;
+      reviewClaims = reviewResult?.reviewClaims || [];
+      reviewEvalFiles = reviewResult?.evalFiles || [];
     } else if (unitType.startsWith("fix")) {
       validateFixArtifacts(unit, artifacts, errors, warnings, state, dir);
-    } else if (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim")) {
-      if (artifacts.length === 0) {
-        errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
+    } else if (integratedUnit) {
+      integratedEvidence = validateIntegratedArtifacts(unit, unitType, artifacts, errors, {
+        requireContainedEvidence: integratedClaimRequested,
+        allowHarnessOnly: integratedClaimRequested,
+        state,
+        sessionDir: dir,
+      });
+    }
+  }
+
+  // Mission integrated evidence is a harness execution of the verify command
+  // pinned by the immutable plan hash. Caller-authored result JSON is only a
+  // supplemental artifact and can never establish PASS.
+  if (state.mission && status === "completed" && integratedUnit) {
+    if (satisfies.length > 0 && !scenarioId) {
+      errors.push("--satisfies requires --scenario so criterion claims are backed by integrated evidence");
+    }
+    if (scenarioId) {
+      if (scenarioId !== state.mission.endToEndScenario?.id) {
+        errors.push(`scenario '${scenarioId}' does not match mission scenario '${state.mission.endToEndScenario?.id}'`);
+      }
+      const allowedTypes = new Set(state.mission.endToEndScenario?.validatorTypes || []);
+      if (!allowedTypes.has(effectiveValidatorType)) {
+        errors.push(`validator type '${effectiveValidatorType}' is not allowed by the mission end-to-end scenario`);
+      }
+      if (!unitSpec?.scenario || unitSpec.scenario !== scenarioId) {
+        errors.push(`--scenario must exactly match plan unit '${unit}' frozen scenario: mapping (${unitSpec?.scenario || "missing"})`);
+      }
+      if (!unitSpec?.validatorType || unitSpec.validatorType !== effectiveValidatorType) {
+        errors.push(`--validator-type must exactly match plan unit '${unit}' frozen validator-type: mapping (${unitSpec?.validatorType || "missing"})`);
+      }
+      const unknownCriteria = satisfies.filter(id => !Object.hasOwn(state.mission.criterionHashes || {}, id));
+      if (unknownCriteria.length > 0) errors.push(`--satisfies contains unknown criteria: ${unknownCriteria.join(", ")}`);
+      if (unitSpec?.satisfiesError) {
+        errors.push(`plan unit '${unit}' has an invalid frozen satisfies: mapping: ${unitSpec.satisfiesError}`);
+      } else if (!Array.isArray(unitSpec?.satisfies) || unitSpec.satisfies.length === 0) {
+        errors.push(`plan unit '${unit}' must declare a frozen satisfies: mapping before integrated execution`);
+      } else {
+        const frozen = [...unitSpec.satisfies].sort();
+        const claimed = [...satisfies].sort();
+        if (JSON.stringify(frozen) !== JSON.stringify(claimed)) {
+          errors.push(
+            `--satisfies must exactly match plan unit '${unit}' frozen mapping (${unitSpec.satisfies.join(",")})`,
+          );
+        }
+      }
+      if (!unitSpec?.verify) {
+        errors.push(`plan unit '${unit}' must declare a verify: command for harness-owned integrated evidence`);
+      }
+
+      if (errors.length === 0) {
+        const testResult = _runTestScript(
+          unitSpec.verify,
+          dir,
+          state.tick || 0,
+          state.projectDir,
+          `integrated-${unit.replace(/[^a-z0-9_-]/gi, "-")}`,
+        );
+        if (testResult.exitCode !== 0) {
+          const reason = testResult.timedOut ? "TIMED OUT (120s)" : `exit ${testResult.exitCode}`;
+          errors.push(`verify command '${unitSpec.verify}' failed (${reason}) — integrated Mission evidence cannot PASS. Log: ${testResult.logPath}`);
+        } else if (!testResult.nonVacuous) {
+          errors.push(
+            `verify command '${unitSpec.verify}' exited 0 without a non-vacuous OPC_ORACLE result — integrated Mission evidence cannot PASS. Log: ${testResult.logPath}`,
+          );
+        } else {
+          const canonicalLog = realpathSync(testResult.logPath);
+          const hash = `sha256:${createHash("sha256").update(readFileSync(canonicalLog)).digest("hex")}`;
+          integratedEvidence ||= { artifacts: [], artifactHashes: [], artifactBindings: [] };
+          integratedEvidence.artifacts.push(canonicalLog);
+          integratedEvidence.artifactHashes.push(hash);
+          integratedEvidence.artifactBindings ||= [];
+          integratedEvidence.artifactBindings.push({
+            path: canonicalLog,
+            sha256: hash,
+            type: "test-result",
+            proof: "opc-loop-verify",
+            commandSha256: createHash("sha256").update(unitSpec.verify).digest("hex"),
+          });
+        }
       }
     }
+  }
+
+  if (state.mission && unitType.startsWith("review")) {
+    state.trajectory ||= {};
+    const qualityScope = `${state.mission.strategyEpoch ?? "unknown"}:${unit}`;
+    const priorClaims = state.trajectory.reviewQualityScope === qualityScope
+      && Array.isArray(state.trajectory.reviewQualityClaims)
+      ? state.trajectory.reviewQualityClaims
+      : [];
+    if (priorClaims.length > 0 && reviewQualityOk && errors.length === 0) {
+      reviewClaimDisposition = _reviewClaimDispositionStatus({
+        sessionDir: dir,
+        evalFiles: reviewEvalFiles,
+        priorClaims,
+        parsedFindings: reviewFindings,
+        state,
+      });
+      if (!reviewClaimDisposition.ok) {
+        reviewQualityOk = false;
+        reviewClaims = priorClaims;
+        errors.push(...reviewClaimDisposition.errors);
+      }
+    } else if (priorClaims.length > 0 && !reviewQualityOk) {
+      reviewClaimDisposition = {
+        ok: false,
+        required: true,
+        errors: ["fresh reevaluation is invalid before prior claims can be dispositioned"],
+        dispositions: [],
+        path: null,
+      };
+    }
+    state.trajectory.reviewQualityDisposition = {
+      scope: qualityScope,
+      required: reviewClaimDisposition.required,
+      ok: reviewClaimDisposition.ok,
+      path: reviewClaimDisposition.path,
+      errors: reviewClaimDisposition.errors,
+      dispositionedClaimHashes: reviewClaimDisposition.dispositions
+        .map(item => item?.claimHash || item?.claim_hash)
+        .filter(Boolean),
+    };
+    if (reviewClaimDisposition.path) {
+      state.declaredArtifacts = [...new Set([
+        ...(state.declaredArtifacts || []),
+        reviewClaimDisposition.path,
+      ])];
+    }
+  }
+
+  if (state.mission && unitType.startsWith("review") && !reviewQualityOk) {
+    state.trajectory ||= {};
+    const qualityScope = `${state.mission.strategyEpoch ?? "unknown"}:${unit}`;
+    if (state.trajectory.reviewQualityScope !== qualityScope) {
+      state.trajectory.reviewQualityScope = qualityScope;
+      state.trajectory.reviewQualityFailures = 0;
+      state.trajectory.reviewQualityClaimHashes = [];
+      state.trajectory.reviewQualityClaimArtifacts = [];
+      state.trajectory.reviewQualityClaims = [];
+    }
+    state.trajectory.reviewQualityFailures = (state.trajectory.reviewQualityFailures || 0) + 1;
+    const claimAttempt = state.trajectory.reviewQualityFailures;
+    const claimsPath = join(dir, `review-claims-tick-${(state.tick || 0) + 1}-attempt-${claimAttempt}.json`);
+    const priorClaimHashes = [...new Set(state.trajectory.reviewQualityClaimHashes || [])];
+    atomicWriteSync(claimsPath, JSON.stringify({
+      schemaVersion: 1,
+      routing: false,
+      unit,
+      strategyEpoch: state.mission.strategyEpoch,
+      attempt: claimAttempt,
+      priorClaimHashes,
+      claims: reviewClaims,
+      claimDisposition: state.trajectory.reviewQualityDisposition,
+    }, null, 2) + "\n");
+    state.trajectory.reviewQualityClaimHashes = [...new Set([
+      ...priorClaimHashes,
+      ...reviewClaims.map(claim => claim.claim_hash).filter(Boolean),
+    ])];
+    const claimsByHash = new Map(
+      (state.trajectory.reviewQualityClaims || []).map(claim => [claim.claim_hash, claim]),
+    );
+    for (const claim of reviewClaims) {
+      if (claim?.claim_hash) claimsByHash.set(claim.claim_hash, claim);
+    }
+    state.trajectory.reviewQualityClaims = [...claimsByHash.values()];
+    state.trajectory.reviewQualityClaimArtifacts = [
+      ...(state.trajectory.reviewQualityClaimArtifacts || []),
+      claimsPath,
+    ];
+    state.declaredArtifacts = [...new Set([...(state.declaredArtifacts || []), claimsPath])];
+    state._written_by = WRITER_SIG;
+    state._last_modified = new Date().toISOString();
+    if (state.trajectory.reviewQualityFailures >= 2) {
+      const opened = _openReviewQualityMissionGate({
+        dir,
+        statePath,
+        state,
+        integrity: missionIntegrity,
+        trigger: {
+          action: "OPEN_MISSION_GATE",
+          reason: "REVIEW_QUALITY_STALL",
+          retryable: false,
+          findingRefs: [],
+        },
+      });
+      if (!opened.ok) {
+        console.log(JSON.stringify({
+          completed: false,
+          errors: [...errors, opened.reason],
+          review_quality_ok: false,
+          reevaluate_required: false,
+          rebet_required: false,
+          claims: claimsPath,
+          holder: opened.holder,
+        }));
+        return;
+      }
+      console.log(JSON.stringify({
+        completed: false,
+        errors,
+        review_quality_ok: false,
+        reevaluate_required: false,
+        rebet_required: true,
+        triggerId: opened.packet.triggerId,
+        reason: "REVIEW_QUALITY_STALL",
+        claims: claimsPath,
+        claim_disposition: state.trajectory.reviewQualityDisposition,
+      }));
+      return;
+    }
+    const runtimeSealed = sealMissionRuntimeState({
+      sessionDir: dir,
+      state,
+      statePath,
+      reason: "complete-tick-review-quality-failure",
+    });
+    if (!runtimeSealed.ok) {
+      console.log(JSON.stringify({ completed: false, errors: [...errors, runtimeSealed.error] }));
+      return;
+    }
+    state = runtimeSealed.state;
+    atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
+    console.log(JSON.stringify({
+      completed: false,
+      errors,
+      review_quality_ok: false,
+      reevaluate_required: true,
+      rebet_required: false,
+      claims: claimsPath,
+      claim_disposition: state.trajectory.reviewQualityDisposition,
+    }));
+    return;
   }
 
   if (errors.length > 0) {
@@ -147,9 +528,152 @@ export function cmdCompleteTick(args) {
     return;
   }
 
+  // Reset the consecutive-invalid counter only after a structurally valid
+  // review batch has passed every other artifact check. An unrelated malformed
+  // batch must not provide an infinite way to clear the one-reevaluation bound.
+  if (state.mission && unitType.startsWith("review") && reviewQualityOk) {
+    state.trajectory ||= {};
+    state.trajectory.reviewQualityScope = `${state.mission.strategyEpoch ?? "unknown"}:${unit}`;
+    state.trajectory.reviewQualityFailures = 0;
+    state.trajectory.reviewQualityClaimHashes = [];
+    state.trajectory.reviewQualityClaimArtifacts = [];
+    state.trajectory.reviewQualityClaims = [];
+  }
+
+  if (state.mission && unitType.startsWith("review") && reviewVerdict && reviewVerdict !== "PASS") {
+    // Re-hash prior integrated PASS evidence immediately before the trajectory
+    // decision. Mutating a prior result cannot masquerade as progress on this
+    // repair edge.
+    state = revalidateMissionEvidenceReceipts(state).state;
+    const registered = registerFindingBatch({
+      registry: state.findingRegistry || [],
+      findings: reviewFindings,
+      criterionHashes: state.mission.criterionHashes || {},
+    });
+    if (!registered.ok) {
+      console.log(JSON.stringify({
+        completed: false,
+        errors: registered.errors.map(error => `review finding registry: ${error}`),
+        review_quality_ok: false,
+        reevaluate_required: true,
+      }));
+      return;
+    }
+    state.findingRegistry = registered.registry;
+    const uniqueRoutingFindings = [];
+    const seenGateKeys = new Set();
+    for (const finding of registered.findings) {
+      const unlinkedFloorRisk = _isEvidencedUnlinkedGoalSpecRisk(finding);
+      if ((!finding.routing_eligible && !unlinkedFloorRisk) ||
+          (finding.criterion === "UNLINKED" && !unlinkedFloorRisk) ||
+          seenGateKeys.has(finding.gateKey)) continue;
+      seenGateKeys.add(finding.gateKey);
+      uniqueRoutingFindings.push(finding);
+    }
+    const currentPlanIndex = allUnits.findIndex(candidate => candidate.id === unit);
+    const nextPlanUnit = currentPlanIndex >= 0 ? allUnits[currentPlanIndex + 1] : null;
+    const isRepairEdge = Boolean(nextPlanUnit?.type?.startsWith("fix"));
+    // Bind all review→fix pairs to one semantic edge. Unit IDs and reviewer
+    // fingerprints may vary, but a second repair attempt without new integrated
+    // evidence is still the same local-search trajectory.
+    const repairEdgeKey = isRepairEdge ? "review→fix" : null;
+    const decision = evaluateTrajectory({
+      state,
+      findings: uniqueRoutingFindings,
+      verdict: reviewVerdict,
+      edgeKey: repairEdgeKey,
+      isRepairEdge,
+    });
+    state = commitTrajectoryObservation({
+      state,
+      findings: uniqueRoutingFindings,
+      verdict: reviewVerdict,
+      edgeKey: repairEdgeKey,
+      isRepairEdge,
+      chargeRepairCycle: !isRepairEdge,
+      recordFindingFailures: true,
+      consumeRetry: decision.authorizedRetry === true && (state.trajectory?.retryAllowance || 0) > 0,
+    });
+    if (isRepairEdge) {
+      decision.edgeKey = repairEdgeKey;
+      decision.observedRepairEdgeFailures = state.trajectory?.repairEdgeFailures?.[repairEdgeKey] || 0;
+    }
+    state.trajectory ||= {};
+    state.trajectory.pendingDecision = decision;
+    reviewFindings = registered.findings;
+  }
+
+  let evidenceReceipt = null;
+  if (state.mission && status === "completed" &&
+      (unitType.startsWith("e2e") || unitType.startsWith("accept") || unitType.startsWith("ux-sim"))) {
+    const validatorType = effectiveValidatorType;
+    const allowedTypes = new Set(state.mission.endToEndScenario?.validatorTypes || []);
+    if (scenarioId && scenarioId !== state.mission.endToEndScenario?.id) {
+      console.log(JSON.stringify({
+        completed: false,
+        errors: [`scenario '${scenarioId}' does not match mission scenario '${state.mission.endToEndScenario?.id}'`],
+      }));
+      return;
+    }
+    if (scenarioId && !allowedTypes.has(validatorType)) {
+      console.log(JSON.stringify({
+        completed: false,
+        errors: [`validator type '${validatorType}' is not allowed by the mission end-to-end scenario`],
+      }));
+      return;
+    }
+    const unknownCriteria = satisfies.filter(id => !Object.hasOwn(state.mission.criterionHashes || {}, id));
+    if (unknownCriteria.length > 0) {
+      console.log(JSON.stringify({
+        completed: false,
+        errors: [`--satisfies contains unknown criteria: ${unknownCriteria.join(", ")}`],
+      }));
+      return;
+    }
+    if (satisfies.length > 0 && !scenarioId) {
+      console.log(JSON.stringify({
+        completed: false,
+        errors: ["--satisfies requires --scenario so criterion claims are backed by integrated evidence"],
+      }));
+      return;
+    }
+    const currentReceipts = Array.isArray(state.evidenceReceipts) ? state.evidenceReceipts : [];
+    const nextReceiptNumber = currentReceipts.reduce((max, receipt) => {
+      const match = String(receipt?.id || "").match(/^EV-(\d+)$/);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0) + 1;
+    evidenceReceipt = {
+      id: `EV-${nextReceiptNumber}`,
+      sliceId: unit,
+      scenarioId: scenarioId || null,
+      scope: scenarioId ? "integrated" : "local",
+      validatorType,
+      validator: unit,
+      result: "PASS",
+      satisfies,
+      artifactHashes: [],
+      artifactBindings: [],
+      strategyEpoch: state.mission.strategyEpoch,
+      observedAt: new Date().toISOString(),
+    };
+    const receiptArtifacts = integratedEvidence?.artifacts || artifacts;
+    const receiptHashes = integratedEvidence?.artifactHashes || receiptArtifacts.map(path =>
+      `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`
+    );
+    evidenceReceipt.artifactHashes = receiptHashes;
+    evidenceReceipt.artifactBindings = integratedEvidence?.artifactBindings || receiptArtifacts.map((path, index) => ({
+      path: realpathSync(path),
+      sha256: receiptHashes[index],
+      type: "artifact",
+      proof: null,
+    }));
+    state.evidenceReceipts = [...currentReceipts, evidenceReceipt];
+  }
+
   // ── Rule 13: Backlog auto-accumulation from review findings ──
   if (unitType.startsWith("review") && reviewVerdict && reviewVerdict !== "PASS") {
-    _accumulateBacklog(dir, unit, artifacts, warnings);
+    if (state.mission) _accumulateMissionFindings(dir, unit, reviewFindings, warnings);
+    else _accumulateBacklog(dir, unit, artifacts, warnings);
   }
 
   // Only advance to next unit on successful completion
@@ -200,7 +724,15 @@ export function cmdCompleteTick(args) {
   state.unit = unit;
   state.description = description || `Completed unit ${unit} (${unitType})`;
   state.status = status;
-  state.artifacts = artifacts;
+  if (state.mission) {
+    const currentArtifacts = integratedEvidence?.artifacts || artifacts;
+    state.currentArtifacts = currentArtifacts;
+    // Mission final binding needs all declared evidence/deliverable paths, not
+    // only whichever tick happened to finish last.
+    state.artifacts = [...new Set([...(state.artifacts || []), ...currentArtifacts])];
+  } else {
+    state.artifacts = artifacts;
+  }
   state.next_unit = nextUnit;
   state.review_of_previous = "";
   state._written_by = WRITER_SIG;
@@ -208,8 +740,41 @@ export function cmdCompleteTick(args) {
   state._git_head = getGitHeadHash(state.projectDir);
 
   if (!Array.isArray(state._tick_history)) state._tick_history = [];
-  state._tick_history.push({ unit, tick: newTick, status, verdict: reviewVerdict, description: description || undefined, delta: delta || undefined });
+  state._tick_history.push({
+    unit,
+    tick: newTick,
+    status,
+    verdict: reviewVerdict,
+    description: description || undefined,
+    delta: delta || undefined,
+    strategyEpoch: state.mission?.strategyEpoch,
+    findings: reviewFindings.length > 0
+      ? reviewFindings.map(finding => ({
+        class: finding.class,
+        criterion: finding.criterion,
+        findingRef: finding.finding_ref,
+        fingerprint: finding.fingerprint,
+        gateKey: finding.gateKey,
+      }))
+      : undefined,
+    evidenceReceiptId: evidenceReceipt?.id,
+    satisfies: evidenceReceipt?.satisfies?.length > 0 ? evidenceReceipt.satisfies : undefined,
+    artifacts: integratedEvidence?.artifacts || artifacts,
+  });
 
+  if (state.mission) {
+    const runtimeSealed = sealMissionRuntimeState({
+      sessionDir: dir,
+      state,
+      statePath,
+      reason: "complete-tick",
+    });
+    if (!runtimeSealed.ok) {
+      console.log(JSON.stringify({ completed: false, errors: [runtimeSealed.error] }));
+      return;
+    }
+    state = runtimeSealed.state;
+  }
   atomicWriteSync(statePath, JSON.stringify(state, null, 2) + "\n");
 
   // Rule 14: append to progress.md
@@ -237,14 +802,17 @@ export function cmdCompleteTick(args) {
     delta,
   }, warnings);
 
+  const finalReviewPending = Boolean(state.mission && status === "completed" && nextUnit === null);
   console.log(JSON.stringify({
     completed: true,
     tick: newTick,
     unit,
     unitType,
     next_unit: nextUnit,
-    terminate: nextUnit === null,
+    terminate: nextUnit === null && !finalReviewPending,
+    final_review_pending: finalReviewPending || undefined,
     verdict: reviewVerdict,
+    evidence_receipt: evidenceReceipt,
     warnings: warnings.length > 0 ? warnings : undefined,
   }));
 
@@ -294,11 +862,30 @@ function _runTestScript(cmd, loopDir, tick, projectDir, label = "test") {
     stderr = err.stderr || "";
   }
 
+  let nonVacuous = false;
+  for (const line of String(stdout || "").split(/\r?\n/)) {
+    const marker = line.match(/^OPC_ORACLE\s+(.+)$/);
+    if (!marker) continue;
+    try {
+      const oracle = JSON.parse(marker[1]);
+      const checks = Array.isArray(oracle?.checks) ? oracle.checks : [];
+      nonVacuous = checks.length > 0 && checks.every(check =>
+        check?.pass === true && Number.isFinite(Number(check.total)) && Number(check.total) > 0
+      );
+    } catch { /* malformed oracle remains vacuous */ }
+  }
+  if (!nonVacuous) {
+    const tapTests = String(stdout || "").match(/^# tests\s+(\d+)\s*$/m);
+    const tapFailures = String(stdout || "").match(/^# fail\s+(\d+)\s*$/m);
+    nonVacuous = Number(tapTests?.[1] || 0) > 0 && Number(tapFailures?.[1] || 0) === 0;
+  }
+
   const log = [
     `# Harness-owned test execution`,
     `# Command: ${cmd}`,
     `# CWD: ${projectRoot}`,
     `# Exit code: ${exitCode}`,
+    `# Non-vacuous oracle: ${nonVacuous}`,
     timedOut ? `# TIMED OUT after 120s` : "",
     `# Timestamp: ${new Date().toISOString()}`,
     ``,
@@ -309,7 +896,7 @@ function _runTestScript(cmd, loopDir, tick, projectDir, label = "test") {
   ].filter(Boolean).join("\n");
 
   try { writeFileSync(logPath, log); } catch { /* best effort */ }
-  return { exitCode, logPath, timedOut };
+  return { exitCode, logPath, timedOut, nonVacuous };
 }
 
 function _checkArtifactSize(a, errors) {
@@ -319,6 +906,93 @@ function _checkArtifactSize(a, errors) {
     return false;
   }
   return true;
+}
+
+function _isContainedPath(root, candidate) {
+  const rel = relative(root, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function validateIntegratedArtifacts(
+  unit,
+  unitType,
+  artifacts,
+  errors,
+  { requireContainedEvidence = false, allowHarnessOnly = false, state = null, sessionDir = null } = {},
+) {
+  if (artifacts.length === 0 && !allowHarnessOnly) {
+    errors.push(`${unitType} unit '${unit}' has no artifacts — must have verification evidence`);
+    return { artifacts: [], artifactHashes: [], artifactBindings: [] };
+  }
+  let sessionRoot = null;
+  if (requireContainedEvidence) {
+    if (state?.status !== "in_progress" || state?.next_unit !== unit || !state?._in_progress_since) {
+      errors.push(
+        `integrated evidence for '${unit}' requires the current unit to be claimed by next-tick`,
+      );
+    }
+    try {
+      sessionRoot = realpathSync(sessionDir);
+    } catch (error) {
+      errors.push(`session evidence root is unreadable: ${sessionDir} (${error.message})`);
+    }
+  }
+  const tickStartedAt = state?._in_progress_since || state?._last_modified || null;
+  const tickStartMs = tickStartedAt && !Number.isNaN(Date.parse(tickStartedAt))
+    ? Date.parse(tickStartedAt)
+    : null;
+  const canonicalArtifacts = [];
+  const artifactHashes = [];
+  const artifactBindings = [];
+  for (const artifact of artifacts) {
+    const absolute = resolve(artifact);
+    if (!existsSync(absolute)) {
+      errors.push(`artifact not found: ${artifact}`);
+      continue;
+    }
+    let stat;
+    try {
+      stat = lstatSync(absolute);
+    } catch (error) {
+      errors.push(`artifact is unreadable: ${artifact} (${error.message})`);
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      errors.push(`artifact is a symbolic link, not a contained regular file: ${artifact}`);
+      continue;
+    }
+    if (!stat.isFile()) {
+      errors.push(`artifact is not a regular file: ${artifact}`);
+      continue;
+    }
+    let canonical;
+    try {
+      canonical = realpathSync(absolute);
+    } catch (error) {
+      errors.push(`artifact cannot be canonicalized: ${artifact} (${error.message})`);
+      continue;
+    }
+    if (requireContainedEvidence && (!sessionRoot || !_isContainedPath(sessionRoot, canonical))) {
+      errors.push(`integrated evidence artifact escapes the loop session: ${artifact}`);
+      continue;
+    }
+    if (!_checkArtifactSize(canonical, errors)) continue;
+    if (stat.size === 0 || readFileSync(canonical, "utf8").trim().length === 0) {
+      errors.push(`artifact is empty: ${artifact}`);
+      continue;
+    }
+    if (requireContainedEvidence && tickStartMs !== null && stat.mtimeMs < tickStartMs) {
+      errors.push(
+        `integrated evidence artifact '${artifact}' is stale (mtime ${new Date(stat.mtimeMs).toISOString()} < tick start ${tickStartedAt})`,
+      );
+      continue;
+    }
+    const artifactHash = `sha256:${createHash("sha256").update(readFileSync(canonical)).digest("hex")}`;
+    canonicalArtifacts.push(canonical);
+    artifactHashes.push(artifactHash);
+    artifactBindings.push({ path: canonical, sha256: artifactHash, type: "artifact", proof: null });
+  }
+  return { artifacts: canonicalArtifacts, artifactHashes, artifactBindings };
 }
 
 function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings, state, dir) {
@@ -448,7 +1122,7 @@ function validateImplementArtifacts(unit, unitType, artifacts, errors, warnings,
   }
 }
 
-function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
+function validateReviewArtifacts(unit, artifacts, errors, warnings, state, dir) {
   if (artifacts.length === 0) {
     errors.push(`review unit '${unit}' has no artifacts — must have eval-*.md files`);
   }
@@ -497,18 +1171,160 @@ function validateReviewArtifacts(unit, artifacts, errors, warnings, state) {
   if (evalContents.length === 0) return undefined;
 
   let totalCritical = 0, totalWarning = 0, totalSuggestion = 0;
+  const findings = [];
+  const reviewClaims = [];
+  let reviewQualityOk = true;
   for (const { content } of evalContents) {
-    const parsed = parseEvaluation(content);
+    const parsed = parseEvaluation(content, state.mission ? {
+      mission: {
+        criterionHashes: state.mission.criterionHashes || {},
+        findingRegistry: state.findingRegistry || [],
+      },
+    } : {});
     totalCritical += parsed.critical;
     totalWarning += parsed.warning;
     totalSuggestion += parsed.suggestion;
+    findings.push(...(parsed.findings || []).filter(finding =>
+      finding.severity === "critical" || finding.severity === "warning"
+    ));
+    if (parsed.review_quality_ok === false) {
+      reviewQualityOk = false;
+      reviewClaims.push(...(parsed.review_claims || []));
+    }
+  }
+
+  if (!reviewQualityOk) {
+    errors.push("review metadata is invalid; fresh evaluation required");
+    return {
+      verdict: "BLOCKED",
+      findings: [],
+      reviewQualityOk: false,
+      reviewClaims,
+      evalFiles: evalContents.map(item => item.path),
+    };
   }
 
   let verdict = "PASS";
   if (totalCritical > 0) verdict = "FAIL";
   else if (totalWarning > 0) verdict = "ITERATE";
 
-  return verdict;
+  return {
+    verdict,
+    findings,
+    reviewQualityOk: true,
+    reviewClaims: [],
+    evalFiles: evalContents.map(item => item.path),
+  };
+}
+
+function _isEvidencedUnlinkedGoalSpecRisk(finding) {
+  return finding?.class === "GOAL_SPEC"
+    && finding?.criterion === "UNLINKED"
+    && typeof finding?.file === "string"
+    && finding.file.length > 0
+    && Number.isInteger(finding?.line)
+    && finding.line > 0
+    && typeof finding?.reasoning === "string"
+    && finding.reasoning.trim().length > 0;
+}
+
+function _reviewClaimDispositionStatus({ sessionDir, evalFiles, priorClaims, parsedFindings, state }) {
+  if (!Array.isArray(priorClaims) || priorClaims.length === 0) {
+    return { ok: true, required: false, errors: [], dispositions: [], path: null };
+  }
+  const errors = [];
+  let sessionRoot;
+  try {
+    sessionRoot = realpathSync(sessionDir);
+  } catch (error) {
+    return {
+      ok: false,
+      required: true,
+      errors: [`review claim disposition session is unreadable: ${error.message}`],
+      dispositions: [],
+      path: null,
+    };
+  }
+  const runDirs = new Set();
+  for (const evalFile of evalFiles || []) {
+    try {
+      const evalStat = lstatSync(resolve(evalFile));
+      if (!evalStat.isFile() || evalStat.isSymbolicLink()) {
+        errors.push(`fresh reevaluation artifact must be a regular non-symlink file: ${evalFile}`);
+        continue;
+      }
+      const canonicalEval = realpathSync(resolve(evalFile));
+      if (!_isContainedPath(sessionRoot, canonicalEval)) {
+        errors.push(`review artifact escapes the loop session: ${evalFile}`);
+        continue;
+      }
+      const priorAttemptAt = state?._last_modified && !Number.isNaN(Date.parse(state._last_modified))
+        ? Date.parse(state._last_modified)
+        : null;
+      if (priorAttemptAt !== null && evalStat.mtimeMs < priorAttemptAt) {
+        errors.push(`fresh reevaluation artifact is stale relative to the prior invalid review: ${evalFile}`);
+      }
+      runDirs.add(dirname(canonicalEval));
+    } catch (error) {
+      errors.push(`review artifact is unreadable while resolving claim dispositions: ${evalFile} (${error.message})`);
+    }
+  }
+  if (runDirs.size !== 1) {
+    errors.push("fresh reevaluation artifacts must share one run directory for review-claim-dispositions.json");
+    return { ok: false, required: true, errors, dispositions: [], path: null };
+  }
+  const runDir = [...runDirs][0];
+  const dispositionPath = join(runDir, "review-claim-dispositions.json");
+  if (!existsSync(dispositionPath)) {
+    errors.push("fresh reevaluation must provide review-claim-dispositions.json for every prior invalid claim");
+    return { ok: false, required: true, errors, dispositions: [], path: dispositionPath };
+  }
+  let canonicalDisposition;
+  let dispositionStat;
+  try {
+    dispositionStat = lstatSync(dispositionPath);
+    if (!dispositionStat.isFile() || dispositionStat.isSymbolicLink()) {
+      errors.push("review-claim-dispositions.json must be a contained regular file");
+      return { ok: false, required: true, errors, dispositions: [], path: dispositionPath };
+    }
+    canonicalDisposition = realpathSync(dispositionPath);
+    if (!_isContainedPath(sessionRoot, canonicalDisposition) || dirname(canonicalDisposition) !== runDir) {
+      errors.push("review-claim-dispositions.json escapes the current reevaluation run");
+      return { ok: false, required: true, errors, dispositions: [], path: dispositionPath };
+    }
+    const priorAttemptAt = state?._last_modified && !Number.isNaN(Date.parse(state._last_modified))
+      ? Date.parse(state._last_modified)
+      : null;
+    if (priorAttemptAt !== null && dispositionStat.mtimeMs < priorAttemptAt) {
+      errors.push("review-claim-dispositions.json is stale relative to the prior invalid review");
+    }
+  } catch (error) {
+    errors.push(`review-claim-dispositions.json is unreadable: ${error.message}`);
+    return { ok: false, required: true, errors, dispositions: [], path: dispositionPath };
+  }
+  let data;
+  try {
+    data = JSON.parse(readFileSync(canonicalDisposition, "utf8"));
+  } catch (error) {
+    errors.push(`review claim dispositions are unreadable: ${error.message}`);
+    return { ok: false, required: true, errors, dispositions: [], path: canonicalDisposition };
+  }
+  const dispositions = Array.isArray(data?.dispositions) ? data.dispositions : [];
+  if (data?.schemaVersion !== 1) errors.push("review-claim-dispositions.json schemaVersion must equal 1");
+  if (!Array.isArray(data?.dispositions)) errors.push("review-claim-dispositions.json requires a dispositions array");
+  const validated = validateReviewClaimDispositions({
+    pendingClaims: priorClaims,
+    dispositions,
+    findings: parsedFindings || [],
+  });
+  errors.push(...validated.errors);
+  return {
+    ok: errors.length === 0,
+    required: true,
+    errors,
+    dispositions: validated.dispositions,
+    path: canonicalDisposition,
+  };
 }
 
 function validateFixArtifacts(unit, artifacts, errors, warnings, state, dir) {
@@ -652,6 +1468,34 @@ function _accumulateBacklog(dir, unit, artifacts, warnings) {
   }
 }
 
+function _accumulateMissionFindings(dir, unit, findings, warnings) {
+  const artifactFindings = findings.filter(finding =>
+    finding.class === "ARTIFACT" && finding.criterion !== "UNLINKED"
+  );
+  const deferredFindings = findings.filter(finding =>
+    finding.class !== "ARTIFACT" || finding.criterion === "UNLINKED"
+  );
+  const append = (path, heading, entries) => {
+    if (entries.length === 0) return;
+    const needsHeader = !existsSync(path);
+    const items = entries.map(finding => {
+      const emoji = finding.severity === "critical" ? "🔴" : "🟡";
+      const ref = finding.finding_ref || "UNREGISTERED";
+      return `- [ ] ${emoji} [${unit}] [${finding.class}/${finding.criterion}] ${ref}: ${finding.issue}`;
+    }).join("\n");
+    try {
+      appendFileSync(
+        path,
+        `${needsHeader ? `# ${heading}\n` : ""}\n## ${unit} — ${new Date().toISOString()}\n${items}\n`,
+      );
+    } catch {
+      warnings.push(`failed to append ${path}`);
+    }
+  };
+  append(join(dir, "backlog.md"), "Backlog", artifactFindings);
+  append(join(dir, "mission-deferred-findings.md"), "Mission Deferred Findings", deferredFindings);
+}
+
 // ── Checkpoint writer ──────────────────────────────────────────
 // Writes tick-N-summary.md — a self-contained snapshot that lets
 // a new session resume without conversation history.
@@ -716,6 +1560,8 @@ function _writeCheckpoint(dir, ctx, warnings) {
     state._task_scope && state._task_scope.length > 0
       ? `- Task scope: ${state._task_scope.map(s => s.id).join(", ")}`
       : "",
+    state.mission ? "" : null,
+    state.mission ? missionPromptContext({ sessionDir: dir, state }) : null,
     "",
   ].filter(Boolean).join("\n") + "\n";
 

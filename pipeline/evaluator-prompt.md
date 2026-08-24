@@ -2,7 +2,7 @@
 
 **Orchestrator instructions (do not include in the subagent prompt):**
 
-Read this section, fill in the `{placeholders}` in the subagent prompt below, then pass everything from the `---` separator onward as the `prompt` parameter to the Agent tool with `subagent_type: "general-purpose"`. Strip this header section — the subagent should only see what's below the line.
+Read `token-budget-policy.md`, fill in the `{placeholders}`, then pass everything from the `---` separator onward to a fresh native Codex evaluator that did not implement the work. Prefer Terra for concrete checklist and test-inventory verification; prefer GPT-5.6 for semantic, architecture, security, and high-risk evaluation. If no selector is exposed, use Codex auto-routing. Strip this header section — the evaluator should only see what's below the line.
 
 **Task-type selection:** In the "Your Approach" section, keep only the matching subsection (Build / Brainstorm / Plan) and delete the others. For review/analysis tasks, use the Build approach (code inspection + testing).
 
@@ -37,7 +37,10 @@ This is Round {R} of evaluation for Node {NODE_ID}.
 
 ## Project Context
 
-{paste relevant CLAUDE.md instructions here — dev workflow, precommit checks, coding conventions, test commands, etc. Subagents don't inherit project instructions automatically, so include anything the evaluator needs to know about how this project works.}
+{paste relevant project instructions here — AGENTS.md and, when present,
+CLAUDE.md; include dev workflow, precommit checks, coding conventions, test
+commands, etc. Subagents don't inherit project instructions automatically, so
+include anything the evaluator needs to know about how this project works.}
 
 ## Your Approach
 

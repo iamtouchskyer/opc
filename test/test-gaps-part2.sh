@@ -104,8 +104,8 @@ import json
 p='.h-bp2/flow-state.json'
 s=json.load(open(p))
 s['history']=[
-  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
-  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01Z'},
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01.000Z'},
 ]
 s['totalSteps']=2
 json.dump(s, open(p,'w'), indent=2)
@@ -128,8 +128,8 @@ import json
 p='.h-bp3/flow-state.json'
 s=json.load(open(p))
 s['history']=[
-  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00Z'},
-  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01Z'},
+  {'nodeId':'test-execute','runId':'run_1','timestamp':'2024-01-01T00:00:00.000Z'},
+  {'nodeId':'gate-test','runId':'run_1','timestamp':'2024-01-01T00:00:01.000Z'},
 ]
 s['totalSteps']=2
 json.dump(s, open(p,'w'), indent=2)
