@@ -26,12 +26,12 @@ echo "=== TEST GROUP 1: git-root hashing — subdirs get same hash ==="
 mkdir -p "$TMPD/repo/src/deep"
 (cd "$TMPD/repo" && git init -q && git commit --allow-empty -m "init" -q)
 
-HASH_ROOT=$(cd "$TMPD/repo" && node -e "
+HASH_ROOT=$(cd "$TMPD/repo" && node --input-type=module -e "
   import { getProjectHash } from '$SCRIPT_DIR/bin/lib/util.mjs';
   console.log(getProjectHash());
 " 2>&1)
 
-HASH_SUBDIR=$(cd "$TMPD/repo/src/deep" && node -e "
+HASH_SUBDIR=$(cd "$TMPD/repo/src/deep" && node --input-type=module -e "
   import { getProjectHash } from '$SCRIPT_DIR/bin/lib/util.mjs';
   console.log(getProjectHash());
 " 2>&1)
@@ -43,12 +43,12 @@ echo "=== TEST GROUP 2: non-git dir uses normalized cwd ==="
 
 mkdir -p "$TMPD/nongit/sub"
 
-HASH_NG=$(cd "$TMPD/nongit" && node -e "
+HASH_NG=$(cd "$TMPD/nongit" && node --input-type=module -e "
   import { getProjectHash } from '$SCRIPT_DIR/bin/lib/util.mjs';
   console.log(getProjectHash());
 " 2>&1)
 
-HASH_NG_SUB=$(cd "$TMPD/nongit/sub" && node -e "
+HASH_NG_SUB=$(cd "$TMPD/nongit/sub" && node --input-type=module -e "
   import { getProjectHash } from '$SCRIPT_DIR/bin/lib/util.mjs';
   console.log(getProjectHash());
 " 2>&1)
@@ -60,7 +60,7 @@ echo "=== TEST GROUP 3: symlink to git repo gets same hash ==="
 
 ln -s "$TMPD/repo" "$TMPD/repo-link"
 
-HASH_LINK=$(cd "$TMPD/repo-link" && node -e "
+HASH_LINK=$(cd "$TMPD/repo-link" && node --input-type=module -e "
   import { getProjectHash } from '$SCRIPT_DIR/bin/lib/util.mjs';
   console.log(getProjectHash());
 " 2>&1)

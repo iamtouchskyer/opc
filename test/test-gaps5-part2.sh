@@ -151,6 +151,12 @@ cat > nodes/build/run_1/build.log << 'EOF'
 build complete
 EOF
 $HARNESS transition --from build --to code-review --verdict PASS --flow build-verify --dir . > /dev/null 2>&1
+# Hermetic: machines with opc-extensions installed get a provenance stub
+# handshake (no status) written by transition; clean environments never do.
+# Create it ourselves so the fail-closed assertion holds everywhere.
+cat > nodes/code-review/run_1/handshake.json << 'EOF'
+{"nodeId":"code-review","nodeType":"review","runId":"run_1","extensionsApplied":[]}
+EOF
 OUT=$($HARNESS validate-chain --dir . 2>/dev/null)
 assert_field_eq "$OUT" "['valid']" "False" "9.1a: currentNode without handshake fails closed"
 assert_contains "$OUT" "code-review/run_1: .*status missing or invalid" "9.1b: error names exact selected run"

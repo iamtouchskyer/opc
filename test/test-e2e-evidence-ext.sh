@@ -24,7 +24,7 @@ trap 'rm -rf "$TMPD"' EXIT
 echo "=== TEST GROUP 1: startupCheck ==="
 
 echo "--- 1.1: startupCheck returns true ---"
-RESULT=$(node -e "
+RESULT=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   console.log(JSON.stringify(ext.startupCheck()));
 });
@@ -47,7 +47,7 @@ All tests pass. LGTM.
 VERDICT: MECHANISMS HOLD
 EVAL
 
-RESULT=$(node -e "
+RESULT=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend({ runDir: '$RUND' });
   console.log(JSON.stringify(findings));
@@ -76,7 +76,7 @@ Command output captured in command-output-1.txt.
 VERDICT: MECHANISMS HOLD
 EVAL
 
-RESULT2=$(node -e "
+RESULT2=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend({ runDir: '$RUND2' });
   console.log(JSON.stringify(findings));
@@ -100,7 +100,7 @@ No E2E path — unit/integration evidence only. Pure refactor of config parsing.
 VERDICT: MECHANISMS HOLD
 EVAL
 
-RESULT3=$(node -e "
+RESULT3=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend({ runDir: '$RUND3' });
   console.log(JSON.stringify(findings));
@@ -115,7 +115,7 @@ echo "--- 5.1: Empty runDir ---"
 RUND4="$TMPD/run_4"
 mkdir -p "$RUND4"
 
-RESULT4=$(node -e "
+RESULT4=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend({ runDir: '$RUND4' });
   console.log(JSON.stringify(findings));
@@ -127,7 +127,7 @@ echo ""
 echo "=== TEST GROUP 6: Null context → null ==="
 
 echo "--- 6.1: null ctx ---"
-RESULT5=$(node -e "
+RESULT5=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend(null);
   console.log(JSON.stringify(findings));
@@ -150,7 +150,7 @@ cat > "$RUND5/eval-skeptic.md" << 'EVAL'
 **Evidence**: Before/after diff of flow-state.json confirms trigger-to-artifact path.
 EVAL
 
-RESULT6=$(node -e "
+RESULT6=$(node --input-type=module -e "
 import('file://$EXT_DIR/hook.mjs').then(ext => {
   const findings = ext.verdictAppend({ runDir: '$RUND5' });
   console.log(JSON.stringify(findings));
