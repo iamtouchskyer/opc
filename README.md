@@ -2,7 +2,7 @@
 
 > A full team in a single Claude Code skill. You're the CEO — OPC is everyone else.
 
-16 specialist agents (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
+21 built-in roles (PM, Designer, Security, Devil's Advocate, and more) that build, review, and evaluate your code through a digraph-based pipeline with code-enforced quality gates.
 
 [English](#english) | [中文](#中文)
 
@@ -12,7 +12,7 @@
 
 ### What you can build
 
-From a **single one-line brief**, OPC's `build-verify` flow ships a complete, production-quality product — design tokens injected and visual quality validated by the [design-intelligence](https://github.com/iamtouchskyer/opc-extensions) extension. Every screenshot below is a **real, clickable site** (not a mockup), built by the same 16-agent pipeline. Same system, six completely different design languages.
+From a **single one-line brief**, OPC's `build-verify` flow ships a complete, production-quality product — design tokens injected and visual quality validated by the [design-intelligence](docs/extension-authoring.md) extension. Every screenshot below is a **real, clickable site** (not a mockup), built by the same 21-role pipeline. Same system, six completely different design languages.
 
 **▶ [Browse the live lookbook →](https://www.touchskyer.me/projects/opc/lookbook)**
 
@@ -199,7 +199,7 @@ third-party extension can't take down the harness.
 version". Executable hook metadata from `hook.mjs` still wins for runtime
 capability behavior.
 
-The companion repo **[opc-extensions](https://github.com/iamtouchskyer/opc-extensions)** ships 4 extensions: `design-intelligence` (theme injection + design coverage + VLM visual eval), `git-changeset-review`, `memex-recall`, and `session-logex`.
+The companion repo **opc-extensions** (private) ships 6 extensions: `design-intelligence` (theme injection + design coverage + VLM visual eval), `dataviz-x`, `git-changeset-review`, `memex-recall`, `perf-budget`, and `quality-reality`.
 
 Full authoring guide: **[docs/extension-authoring.md](docs/extension-authoring.md)** — zero-OPC-context
 quickstart + reference, plus a starter template at `examples/extensions/_starter/`.
@@ -208,13 +208,13 @@ quickstart + reference, plus a starter template at `examples/extensions/_starter
 
 ```
 Product:     pm, designer
-User Lens:   new-user, active-user, churned-user
-Engineering: frontend, backend, devops, architect, engineer
-Quality:     security, tester, compliance, a11y
-Specialist:  planner, user-simulator, devil-advocate
+User Lens:   new-user, active-user, churned-user, user-simulator
+Engineering: frontend, backend, devops, architect, engineer, mobile
+Quality:     security, tester, compliance, a11y, skeptic-owner
+Specialist:  planner, investor, dd-engineer, devil-advocate
 ```
 
-**Devil's Advocate** (the 10th person) is auto-included when consensus is near-unanimous or decisions are irreversible. Comes with an automated verification script that checks its own findings.
+**Devil's Advocate** is auto-included when consensus is near-unanimous or decisions are irreversible. Comes with an automated verification script that checks its own findings.
 
 #### Custom Roles
 
@@ -279,7 +279,7 @@ MIT
 
 ### 你能用它造什么
 
-从**一句话需求**出发，OPC 的 `build-verify` 流程就能交付一个完整、生产级的产品——设计令牌（design token）由 [design-intelligence](https://github.com/iamtouchskyer/opc-extensions) 扩展注入、视觉质量由它验证。下面每一张截图都是**真实可点击的站点**（不是设计稿），由同一套 16-agent 流水线构建。同一套系统，六种完全不同的设计语言。
+从**一句话需求**出发，OPC 的 `build-verify` 流程就能交付一个完整、生产级的产品——设计令牌（design token）由 [design-intelligence](docs/extension-authoring.md) 扩展注入、视觉质量由它验证。下面每一张截图都是**真实可点击的站点**（不是设计稿），由同一套 21 角色流水线构建。同一套系统，六种完全不同的设计语言。
 
 **▶ [浏览在线作品集 →](https://www.touchskyer.me/projects/opc/lookbook)**
 
@@ -449,7 +449,7 @@ OPC 有一个能力路由（capability-routed）的扩展面。扩展位于 `~/.
 
 `ext.json.version` 在 `init` 时记录到 `flow-state.json → extensionVersions`，所以协议报告能区分"扩展已加载"和"未知版本"。运行时能力行为仍以 `hook.mjs` 的可执行 hook 元数据为准。
 
-配套仓库 **[opc-extensions](https://github.com/iamtouchskyer/opc-extensions)** 提供 4 个扩展：`design-intelligence`（主题注入 + 设计覆盖 + VLM 视觉评估）、`git-changeset-review`、`memex-recall`、`session-logex`。
+配套仓库 **opc-extensions**（私有）提供 6 个扩展：`design-intelligence`（主题注入 + 设计覆盖 + VLM 视觉评估）、`dataviz-x`、`git-changeset-review`、`memex-recall`、`perf-budget`、`quality-reality`。
 
 完整编写指南：**[docs/extension-authoring.md](docs/extension-authoring.md)**——零 OPC 上下文的快速上手 + 参考，外加 `examples/extensions/_starter/` 里的起步模板。
 
@@ -457,13 +457,13 @@ OPC 有一个能力路由（capability-routed）的扩展面。扩展位于 `~/.
 
 ```
 Product:     pm, designer
-User Lens:   new-user, active-user, churned-user
-Engineering: frontend, backend, devops, architect, engineer
-Quality:     security, tester, compliance, a11y
-Specialist:  planner, user-simulator, devil-advocate
+User Lens:   new-user, active-user, churned-user, user-simulator
+Engineering: frontend, backend, devops, architect, engineer, mobile
+Quality:     security, tester, compliance, a11y, skeptic-owner
+Specialist:  planner, investor, dd-engineer, devil-advocate
 ```
 
-**Devil's Advocate**（第 10 个人）在共识近乎一致、或决策不可逆时自动加入。配有一个自动验证脚本，检查它自己的发现。
+**Devil's Advocate** 在共识近乎一致、或决策不可逆时自动加入。配有一个自动验证脚本，检查它自己的发现。
 
 #### 自定义角色
 
