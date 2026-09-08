@@ -192,6 +192,16 @@ opc-harness viz --flow {TEMPLATE}
 
 Before starting, extract **acceptance criteria** — 3-7 concrete, testable bullet points. Evaluators grade against these.
 
+### Agent Model Routing — Mandatory Pre-Flight
+
+Flow topology and model tier are independent. Keep every selected node, round, and role, but before each Agent call run:
+
+```bash
+opc-harness model-route --node {NODE_ID} --node-type {NODE_TYPE} [--role {ROLE}] --dir {PROJECT_ROOT}
+```
+
+Pass the returned `model` through the host's per-dispatch selector. `dispatch: false` means no Agent. On an error or unsupported selector, stop instead of silently inheriting the root model. Re-run with `--allow-premium` only after explicit user approval. Show `💰 Model route: {tier} → {model} ({source})` before launch. Read `./pipeline/model-routing.md` only for configuration or troubleshooting.
+
 ### Quality Tier Selection — Mandatory Pre-Flight
 
 Before the Definition of Done questions, the orchestrator MUST select a **quality tier**. See `./pipeline/quality-tiers.md` for full definitions.
@@ -359,8 +369,8 @@ The orchestrator searches for role definitions in this order (later sources over
 Show role selection:
 ```
 📋 Agents:
-- frontend — <specific scope>
-- security — <specific scope>
+- frontend [standard/sonnet] — <specific scope>
+- tester [economy/haiku] — <specific scope>
 ...
 
 Launching {N} agents...
@@ -396,7 +406,7 @@ The orchestrator uses **cursor-based execution** — `flow-state.json.currentNod
 
 Follow `./pipeline/discussion-protocol.md`.
 
-1. Dispatch agents for 3 rounds. **Round 1: parallel** (agents are independent — no reason to serialize). Round 2: serial with context injection (each agent sees Round 1 outputs, writes diffs only). Round 3: facilitator convergence.
+1. Resolve a model route for every participant, then dispatch agents for 3 rounds. **Round 1: parallel** (agents are independent — no reason to serialize). Round 2: serial with context injection (each agent sees Round 1 outputs, writes diffs only). Round 3: facilitator convergence.
 2. **Orchestrator writes handshake.json** after collecting all artifacts (agents don't write it).
 3. Discussion nodes produce no verdict — the decision artifact feeds downstream.
 
@@ -404,7 +414,7 @@ Follow `./pipeline/discussion-protocol.md`.
 
 Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 
-1. Dispatch implementer subagent.
+1. Resolve the implementer's model route and dispatch it with the returned explicit model.
 2. **Single agent** → agent writes its own handshake.json.
 3. **Multiple agents** (parallel, with `isolation: "worktree"`) → orchestrator merges artifacts and writes handshake.json.
 4. With superpowers: invoke `superpowers:subagent-driven-development`.
@@ -415,7 +425,7 @@ Follow `./pipeline/implementer-prompt.md` in Build/Fix/Polish mode.
 Follow `./pipeline/role-evaluator-prompt.md`.
 
 1. Select roles per Role Selection rules.
-2. Dispatch evaluators — parallel if no dependencies, serial with context injection if dependencies exist.
+2. Resolve a model route for each selected role, then dispatch evaluators — parallel if no dependencies, serial with context injection if dependencies exist.
 3. Each agent writes `eval-{role}.md` to `$SESSION_DIR/nodes/{NODE_ID}/run_{RUN}/`.
 4. **Orchestrator writes handshake.json** after all agents return, merging all eval files into artifacts[].
 5. Before dispatching, build context brief using `./pipeline/context-brief.md` (for review/analysis tasks).
@@ -517,6 +527,7 @@ All templates live in `./pipeline/`:
 - `loop-protocol.md` — **Autonomous multi-unit execution** (plan decomposition → cron loop → auto-terminate)
 - `handoff-template.md` — Handshake.json specification
 - `context-brief.md` — Design context brief procedure
+- `model-routing.md` — Explicit per-node/per-role model selection and premium approval
 - `report-format.md` — Presentation templates + JSON schema + replay
 - `quality-tiers.md` — Tier definitions + baseline checklists + severity calibration
 - `ux-simulation-protocol.md` — **UX simulation gate** (red flag detection, delta comparison, ordinal tier fit)
@@ -657,7 +668,7 @@ If the optional compaction hooks are unavailable, flow-state.json still persists
 When the flow completes (route returns `next=null`):
 
 1. Show final viz: `opc-harness viz --flow {template}`
-2. Show summary: total steps, nodes visited, any loopbacks
+2. Show summary: total steps, nodes visited, any loopbacks, and dispatched agent counts by model tier
 3. **Generate HTML report** (use the session dir from init output, or find it via `opc-harness ls`):
    ```bash
    node "$OPC_HARNESS/../opc-report.mjs" --dir <session-dir> --output <session-dir>/report.html --title "{task summary}"

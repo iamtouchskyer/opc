@@ -402,6 +402,7 @@ Tick ordering (CRITICAL — the gate must fire BEFORE any work):
   2. Find the claimed unit's verify: and eval: lines in plan.md — these tell you HOW to verify it.
   3. Execute the unit. Key rules to re-verify each tick:
        - Review units MUST dispatch ≥2 independent subagents via Agent tool (never self-review)
+       - Before every Agent call, resolve and pass an explicit model with opc-harness model-route; never silently inherit the root model
        - Implement/fix units MUST produce a git commit
        - UI units MUST include a screenshot artifact
        - Use the unit's verify: line to run the correct verification command
@@ -418,6 +419,7 @@ Tick ordering (CRITICAL — the gate must fire BEFORE any work):
 Review units MUST use independent subagents (Agent tool). The orchestrator:
 
 1. Dispatches 2-5 reviewer agents in parallel via Agent tool
+   - Resolve each role with `opc-harness model-route --node review --node-type review --role {role} --dir {PROJECT_ROOT}` and pass the returned explicit model
 2. Each agent gets: file list, acceptance criteria, project context
 3. Each agent produces eval-{role}.md with 🔴/🟡/🔵 findings
 4. Orchestrator collects evals and writes handshake

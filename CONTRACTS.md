@@ -75,6 +75,17 @@ node "$OPC_HARNESS" synthesize <dir> --node <id> [--run N]
 # → { verdict: string, findings: object, ... }
 ```
 
+### Model Routing Command
+
+```bash
+# Resolve an explicit host-native model before one subagent dispatch
+node "$OPC_HARNESS" model-route --node <id> --node-type <type> [--role <name>] [--dir <project>] [--allow-premium]
+# → { ok: true, dispatch: bool, tier: string, model: string|null, source: string, premium: bool, ... }
+# Policy denial → { ok: false, error: { code: string, message: string, details: object } }, exit code 2
+```
+
+The resolver reads `agentRouting` through the existing user/repository layered config. `dispatch: false` means the node is orchestrator/tool-only. Hosts MUST pass a successful route's `model` through their explicit per-dispatch selector; they MUST NOT silently inherit the root model when routing fails or cannot be honored. See [`pipeline/model-routing.md`](pipeline/model-routing.md).
+
 ### Loop Commands
 
 ```bash

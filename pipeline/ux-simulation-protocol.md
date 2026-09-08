@@ -130,6 +130,8 @@ If no previous run exists, this is a first run — skip delta, use absolute gate
 
 Dispatch **3 parallel subagents** using the Agent tool, each receiving:
 
+Before dispatching each observer, run `opc-harness model-route --node ux-simulation --node-type execute --role {role} --dir {PROJECT_ROOT}` and pass the returned explicit `model` to the Agent tool. Keep all three observers; routing changes models, not observer topology.
+
 - **Base prompt:** `role-evaluator-prompt.md` with the role `.md` content (including Observation Mode section)
 - **Observation appendix:** full content of `ux-observer-protocol.md`
 - **Tier:** `flow-state.tier`

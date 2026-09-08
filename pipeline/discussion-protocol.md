@@ -13,6 +13,8 @@ You are participating in a multi-agent discussion. Your goal is to reach a well-
 
 Round-robin discussion, maximum 3 rounds. Each round builds on the previous.
 
+Before each participant is dispatched, run `opc-harness model-route --node {NODE_ID} --node-type discussion --role {ROLE} --dir {WORKING_DIR}` and pass the returned explicit `model` to the Agent tool. Keep all participants and rounds; routing changes models, not discussion topology.
+
 ### Round 1 — Independent Analysis
 
 Each agent is dispatched serially (not parallel). Each agent reads the original task and upstream context, then outputs their independent analysis and proposed approach.
