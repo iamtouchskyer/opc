@@ -48,10 +48,15 @@ commits — in both cases the review's real scope was invisible to `HEAD~1`.
 
 ### Also shipped in this release
 
-- **OPC loop is bound to its owning Claude session** — loop state and cron
-  ownership survive context compaction but reject foreign-session takeover.
-- **Bounded auto-flow runaway guards** — autonomous loop ticks are capped so
-  a mis-decomposed task cannot run unbounded.
+- **OPC loop is bound to its owning Claude session** — prevents the
+  compaction double-drive bug (two live sessions driving the same
+  `loop-state.json` and duplicating work). Ownership is keyed on
+  `(claude_pid, process start_time, host)`: a foreign live owner is
+  refused (BLOCKED), a dead one is reclaimed (TAKEOVER), and unresolvable
+  ownership fails closed against a provably live owner.
+- **Bounded auto-flow runaway guards** — exact repair-edge and per-run
+  circuit breakers prevent accidental review/repair loops and unbounded
+  node tool use (`opc-pre-tool-budget` hook + file-lock hardening).
 
 ## v0.8 — Run 5: F-items closeout + Runbook mechanism (2026-04-20)
 
