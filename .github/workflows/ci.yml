@@ -25,5 +25,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - name: Configure git identity (tests commit in temp repos)
+        run: |
+          git config --global user.name "OPC CI"
+          git config --global user.email "opc-ci@users.noreply.github.com"
       - name: Run full test suite
         run: bash test/run-all.sh

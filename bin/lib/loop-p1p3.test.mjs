@@ -4,13 +4,16 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { tmpdir } from "os";
+import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
 
 import { getGitHeadHash, detectPreCommitHooks, detectTestScript } from "./loop-helpers.mjs";
 
-const HARNESS = join(import.meta.dirname, "..", "opc-harness.mjs");
+// import.meta.dirname needs Node >=20.11; engines declare >=18
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const HARNESS = join(__dirname, "..", "opc-harness.mjs");
 
 function runHarness(args, { cwd } = {}) {
   try {
@@ -36,7 +39,7 @@ function runHarness(args, { cwd } = {}) {
 describe("P1: getGitHeadHash with projectDir", () => {
   test("returns hash when given valid git repo dir", () => {
     // Use the OPC skill dir itself (it's a git repo or inside one)
-    const opcDir = join(import.meta.dirname, "..", "..");
+    const opcDir = join(__dirname, "..", "..");
     const hash = getGitHeadHash(opcDir);
     // May or may not be a git repo, but shouldn't throw
     if (hash) {
