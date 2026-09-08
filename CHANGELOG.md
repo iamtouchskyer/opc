@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.10.7 — exact-run authority hardening (2026-08-18)
+
+### Hardened
+
+- **Exact-run authority across OPC flows.** State-selected exact runs are
+  now the sole authority: stale canonical evidence, artifact aliases, and
+  malformed provenance fail closed before side effects. Spans cumulative
+  findings, extension hooks/commands, and eval commands; adds
+  `flow-budget.mjs` (bounded budget accounting) plus flow-authority
+  depth/projection/regression test suites (~2,200 lines).
+
+### Changed
+
+- npm repository metadata normalized.
+
 ## v0.10.6 — changeScope scoped to produced commits (2026-07-19)
 
 Fixes a structural false-positive in the terminal gate. `finalize`/`advance`
@@ -30,6 +45,13 @@ commits — in both cases the review's real scope was invisible to `HEAD~1`.
 - `bin/lib/eval-changescope.test.mjs` — 17 tests: `changeScopeDiffFiles` unit
   coverage + a synthesize litmus pair proving the fix disables the
   false-positive without disabling the gate + `record-commit` + init seeding.
+
+### Also shipped in this release
+
+- **OPC loop is bound to its owning Claude session** — loop state and cron
+  ownership survive context compaction but reject foreign-session takeover.
+- **Bounded auto-flow runaway guards** — autonomous loop ticks are capped so
+  a mis-decomposed task cannot run unbounded.
 
 ## v0.8 — Run 5: F-items closeout + Runbook mechanism (2026-04-20)
 
