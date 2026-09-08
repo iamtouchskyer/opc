@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.10.11 — ship the CI-hardened tests (2026-09-08)
+
+Docs/test-only; runtime code identical to 0.10.10. Carries the test fixes
+made while standing up CI (v0.10.10 shipped the pre-fix `test/` tree):
+
+- `test-brief-lint.sh`: append Iteration Delta without `/dev/stdout`
+  (Linux reopens it with an independent offset and overwrote the brief).
+- `loop-p1p3.test.mjs`: `__dirname` from `import.meta.url` (Node 18 compat).
+- `test-gaps5-part2.sh`: write the provenance stub handshake in-test, so
+  9.1a/9.1b fail-closed holds on machines without opc-extensions.
+- 22 `node -e` ESM evals across 3 files get `--input-type=module`
+  (auto-detection is newer-node behavior).
+- CI: full suite on push/PR, Node 18 + 20, git identity for in-test commits.
+
 ## v0.10.10 — CI + changelog in tarball (2026-09-08)
 
 - **CI**: GitHub Actions workflow runs the full test suite (`test/run-all.sh`)
