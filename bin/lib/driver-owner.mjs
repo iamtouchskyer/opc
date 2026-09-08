@@ -113,6 +113,10 @@ export function resolveCallerIdentity() {
   // (legacy behavior). Use for test harnesses, batch scripts, and hosts where
   // `ps` walks the parent chain to an unrelated Claude process (race / multi-
   // session hosts). checkOwnership() also short-circuits on the same env var.
+  // Loop-wide effect: a loop initialized under the switch is stamped with
+  // claude_pid:null, so every later caller lands in the legacy (no-stamp)
+  // branch — the opt-out relaxes protection for that loop's whole lifetime,
+  // not just the call that set it.
   if (process.env.OPC_DISABLE_OWNERSHIP === "1") {
     return { claude_pid: null, claude_started_at: null, host: hostname() };
   }

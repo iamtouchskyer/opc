@@ -111,6 +111,33 @@ describe("checkOwnership — baseline", () => {
   });
 });
 
+describe("checkOwnership — OPC_DISABLE_OWNERSHIP=1 kill switch", () => {
+  const saved = process.env.OPC_DISABLE_OWNERSHIP;
+  function withKillSwitch(fn) {
+    process.env.OPC_DISABLE_OWNERSHIP = "1";
+    try { fn(); } finally {
+      if (saved === undefined) delete process.env.OPC_DISABLE_OWNERSHIP;
+      else process.env.OPC_DISABLE_OWNERSHIP = saved;
+    }
+  }
+  test("live foreign owner + unresolvable caller → OWNER (explicit opt-out)", () => {
+    withKillSwitch(() => {
+      const start = psStartTime(process.pid); // real → owner instance is live
+      const state = { _owner: owner({ pid: process.pid, start }) };
+      const res = checkOwnership(state, caller({ pid: null }));
+      assert.equal(res.decision, "OWNER");
+      assert.match(res.reason, /OPC_DISABLE_OWNERSHIP/);
+    });
+  });
+  test("resolveCallerIdentity under the switch → no claude ancestor", () => {
+    withKillSwitch(() => {
+      const id = resolveCallerIdentity();
+      assert.equal(id.claude_pid, null);
+      assert.equal(id.claude_started_at, null);
+    });
+  });
+});
+
 describe("checkOwnership — live foreign owner is BLOCKED", () => {
   test("different pid, owner instance alive → BLOCKED", () => {
     const start = psStartTime(process.pid); // real → owner instance is live
