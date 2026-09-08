@@ -101,7 +101,8 @@ function resolveTier(routing, { node, nodeType, role }) {
 function modelIsPremium(model, tier, routing) {
   if (tier === "premium") return true;
   const lower = model.toLowerCase();
-  if (lower.includes("opus")) return true;
+  // Word-boundary match: "claude-opus-4" is premium, "octopus-x" is not.
+  if (/(^|[^a-z0-9])opus($|[^a-z0-9])/.test(lower)) return true;
   return routing.premiumModels.some(item => item.toLowerCase() === lower);
 }
 

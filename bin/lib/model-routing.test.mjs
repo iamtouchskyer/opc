@@ -113,6 +113,16 @@ describe("premium and runtime overrides", () => {
     assert.equal(out.premiumApproved, true);
   });
 
+  test("opus variants count as premium, lookalikes do not", () => {
+    assert.throws(
+      () => route({ config: { agentRouting: { models: { standard: "claude-opus-4-1" } } } }),
+      err => err instanceof ModelRoutingError && err.code === "PREMIUM_APPROVAL_REQUIRED",
+    );
+    const out = route({ config: { agentRouting: { models: { standard: "octopus-x" } } } });
+    assert.equal(out.premium, false);
+    assert.equal(out.model, "octopus-x");
+  });
+
   test("a string value does not accidentally approve premium use", () => {
     assert.throws(
       () => route({
