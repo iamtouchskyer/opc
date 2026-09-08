@@ -429,7 +429,10 @@ echo ""
 echo "--- 6.6: Validate accepts loopback brief WITH Iteration Delta (run_2) ---"
 rm -rf .h-loop2 && $HARNESS init --flow build-verify --dir .h-loop2 >/dev/null 2>/dev/null
 mkdir -p .h-loop2/nodes/brief/run_2
-{ write_golden_brief /dev/stdout; printf '\n## Iteration Delta\n- Fixed contrast on KPI cards to 4.5:1 per prior finding\n- Added 200ms transition to chart hover\n'; } > .h-loop2/nodes/brief/build-brief.md
+write_golden_brief .h-loop2/nodes/brief/build-brief.md
+# NB: append via a second write — /dev/stdout has independent offsets on
+# Linux (reopens the file) and would let this printf overwrite the brief.
+printf '\n## Iteration Delta\n- Fixed contrast on KPI cards to 4.5:1 per prior finding\n- Added 200ms transition to chart hover\n' >> .h-loop2/nodes/brief/build-brief.md
 echo '{"pass":true}' > .h-loop2/nodes/brief/run_2/brief-lint-result.json
 cat > .h-loop2/nodes/brief/run_2/handshake.json << 'HS'
 {
