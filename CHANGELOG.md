@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.10 — CI + changelog in tarball (2026-09-08)
+
+- **CI**: GitHub Actions workflow runs the full test suite (`test/run-all.sh`)
+  on every push to main and every PR, on Node 18 and 20 (matching
+  `engines >=18`). First CI coverage for the repo.
+- **Packaging**: `CHANGELOG.md` now ships in the npm tarball, so installed
+  copies (`~/.claude/skills/opc/`) carry their own release history.
+
 ## v0.10.9 — npm install-scripts note (2026-09-08)
 
 Docs-only. Recent npm versions block install scripts by default, which

@@ -1,6 +1,6 @@
 {
   "name": "@touchskyer/opc",
-  "version": "0.10.9",
+  "version": "0.10.10",
   "description": "OPC — One Person Company. Task pipeline with independent multi-role evaluation.",
   "type": "module",
   "bin": {
@@ -22,6 +22,7 @@
     "docs",
     "CONTRACTS.md",
     "INTEGRATION.md",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
