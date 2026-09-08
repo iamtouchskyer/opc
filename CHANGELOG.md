@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.10.8 — docs accuracy release (2026-09-08)
+
+No runtime code changes. Ships the corrected documentation to the npm
+tarball (the registry page and installed README previously carried the
+stale counts and a dead extension link):
+
+- Built-in role count corrected to 21 across README (en + zh); roster now
+  includes `mobile`, `investor`, `dd-engineer`, and the mandatory
+  `skeptic-owner`; stale "10th person" numbering dropped.
+- GitHub repo description aligned (21 built-in roles, 6 flow templates).
+- `opc-extensions` links no longer 404 for public readers — the repo is
+  private by design, so links point to the in-repo
+  `docs/extension-authoring.md`; the extension list matches reality
+  (6 extensions, no `session-logex`).
+- CHANGELOG backfilled: v0.10.7 entry added, v0.10.6 gains its
+  previously undocumented loop-ownership and runaway-guard changes.
+- Release trail repaired: `v0.10.6`/`v0.10.7` git tags created retroactively
+  at the commits matching the published tarballs (verified by content).
+
 ## v0.10.7 — exact-run authority hardening (2026-08-18)
 
 ### Hardened
