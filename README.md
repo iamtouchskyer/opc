@@ -97,6 +97,8 @@ npm install -g @touchskyer/opc
 
 Skill files are automatically copied to `~/.claude/skills/opc/`.
 
+Recent npm versions block install scripts by default — if the copy is skipped (check: `opc --version` prints but `~/.claude/skills/opc/SKILL.md` is missing), rerun with `npm install -g --allow-scripts=@touchskyer/opc`, or just run `opc install` once afterwards.
+
 ##### Manual install (no npm)
 
 ```bash
@@ -363,6 +365,8 @@ npm install -g @touchskyer/opc
 ```
 
 Skill 文件会自动复制到 `~/.claude/skills/opc/`。
+
+较新版本的 npm 默认拦截 install 脚本——如果复制被跳过（判断方法：`opc --version` 有输出但 `~/.claude/skills/opc/SKILL.md` 不存在），改用 `npm install -g --allow-scripts=@touchskyer/opc` 重装，或在装完后手动跑一次 `opc install`。
 
 ##### 手动安装（不用 npm）
 

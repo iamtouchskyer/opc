@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.9 — npm install-scripts note (2026-09-08)
+
+Docs-only. Recent npm versions block install scripts by default, which
+silently skips the postinstall skill copy. The Quick Start install section
+(en + zh) now documents the detection check and both remedies
+(`--allow-scripts=@touchskyer/opc` or a manual `opc install`).
+
 ## v0.10.8 — docs accuracy release (2026-09-08)
 
 No runtime code changes. Ships the corrected documentation to the npm
