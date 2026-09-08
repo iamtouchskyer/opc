@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.11.0 — model routing + ownership kill switch (2026-09-08)
+
+Two merged contributions from @WdBlink (#31, #33) plus contract follow-ups.
+Minor bump: new harness command and new config surface (CONTRACTS.md updated).
+
+- `opc-harness model-route`: deterministic per-dispatch model resolution for
+  subagent work. Precedence role > node > nodeType > defaultTier; tiers map
+  to host-native model ids (defaults: economy=haiku, standard=sonnet,
+  premium=inherit); unknown routes fail closed (MODEL_UNRESOLVED); premium
+  ids require --allow-premium; CLAUDE_CODE_SUBAGENT_MODEL override honored
+  and surfaced as a warning. Configurable via agentRouting in the layered
+  OPC config.
+- `OPC_DISABLE_OWNERSHIP=1` kill switch restores legacy (no-stamp) ownership
+  for test harnesses, batch scripts, and multi-Claude hosts where `ps` walks
+  into an unrelated session. Default unchanged: a live foreign owner is
+  still BLOCKED. Documented loop-wide effect: a loop initialized under the
+  switch stays in legacy mode for its whole lifetime.
+- Follow-ups: word-boundary premium matching (`octopus-x` is not premium,
+  `claude-opus-*` still is) and two kill-switch regression tests.
+
 ## v0.10.11 — ship the CI-hardened tests (2026-09-08)
 
 Docs/test-only; runtime code identical to 0.10.10. Carries the test fixes
