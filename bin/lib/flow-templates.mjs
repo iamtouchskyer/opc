@@ -50,7 +50,7 @@ export const FLOW_TEMPLATES = {
       brief:          ["design-system-injection@1", "design-spec-conformance@1", "design-preflight@1"],
       build:          ["design-system-injection@1"],
       "code-review":  ["code-quality-check@1", "visual-consistency-check@1"],
-      "test-execute": ["visual-consistency-check@1"],
+      "test-execute": ["visual-consistency-check@1", "artifact-registry@1"],
     },
   },
   "quick": {
@@ -65,6 +65,7 @@ export const FLOW_TEMPLATES = {
     limits: { maxLoopsPerEdge: 2, maxTotalSteps: 15, maxNodeReentry: 3 },
     nodeTypes: { build: "build", review: "review", "test-design": "review", "test-execute": "execute", gate: "gate" },
     requiredTestCommandEvidence: true,
+    nodeCapabilities: { "test-execute": ["artifact-registry@1"] },
   },
   "full-stack": {
     nodes: [
@@ -105,11 +106,11 @@ export const FLOW_TEMPLATES = {
       brief:             ["design-system-injection@1", "design-spec-conformance@1", "design-preflight@1"],
       build:             ["design-system-injection@1"],
       "code-review":     ["code-quality-check@1", "visual-consistency-check@1"],
-      "test-execute":    ["visual-consistency-check@1"],
+      "test-execute":    ["visual-consistency-check@1", "artifact-registry@1"],
       acceptance:        ["visual-consistency-check@1", "user-simulation@1"],
       audit:             ["security-check@1", "a11y-check@1"],
-      "e2e-user":        ["user-simulation@1"],
-      "post-launch-sim": ["user-simulation@1"],
+      "e2e-user":        ["user-simulation@1", "artifact-registry@1"],
+      "post-launch-sim": ["user-simulation@1", "artifact-registry@1"],
     },
   },
   "pre-release": {
@@ -131,7 +132,7 @@ export const FLOW_TEMPLATES = {
     nodeCapabilities: {
       acceptance: ["visual-consistency-check@1", "user-simulation@1"],
       audit:      ["security-check@1", "a11y-check@1"],
-      "e2e-user": ["user-simulation@1"],
+      "e2e-user": ["user-simulation@1", "artifact-registry@1"],
     },
   },
 };
