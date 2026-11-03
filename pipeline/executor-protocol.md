@@ -118,6 +118,9 @@ For each acceptance criterion:
 - Any scenario FAIL that is fixable by a trivial implementation change → verdict: ITERATE
   and route to `hotfix`; do not edit product code in `test-execute`.
 - Any scenario FAIL blocking core flow → verdict: FAIL
+- Harness-owned `testCommand` execution seals every nonzero exit as `FAIL`.
+  In `build-verify` and `full-stack`, route that unchanged verdict to `brief`
+  to reassess the failure and plan repair; do not relabel it `ITERATE` or `PASS`.
 - Tool unavailable → status: blocked (not a verdict)
 
 ## Tier-Aware Verification (Zero Trust)

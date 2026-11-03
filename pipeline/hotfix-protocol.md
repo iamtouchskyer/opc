@@ -28,6 +28,7 @@ Forbidden:
 `test-execute` uses:
 
 - `PASS -> gate`
+- `FAIL -> brief` (reassess and plan repair; includes nonzero `testCommand` exits)
 - `ITERATE -> hotfix`
 
 `hotfix` uses:

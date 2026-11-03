@@ -83,6 +83,7 @@ s.history = [
   { nodeId: 'build', runId: 'run_1' },
   ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'gate', runId: 'run_' + (i + 1) })),
   ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'hotfix', runId: 'run_' + (i + 1) })),
+  ...Array.from({ length: 5 }, (_, i) => ({ nodeId: 'brief', runId: 'run_' + (i + 1) })),
 ];
 fs.writeFileSync(path, JSON.stringify(s, null, 2));
 EOF
