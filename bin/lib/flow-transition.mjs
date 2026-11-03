@@ -2,6 +2,7 @@
 // Depends on: flow-templates.mjs, flow-core.mjs (validateHandshakeData), viz-commands.mjs, util.mjs, file-lock.mjs
 
 import { readFileSync, readdirSync, mkdirSync, existsSync, writeFileSync } from "fs";
+import { missionFinalizationError } from "./mission-evidence.mjs";
 import { join, dirname, resolve, basename, isAbsolute, relative } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
@@ -1665,7 +1666,7 @@ export function cmdAdvance(args) {
     let transResult;
     try { transResult = JSON.parse(transOutput.trim().split("\n").pop()); } catch { transResult = {}; }
 
-    if (transResult.allowed === false) {
+    if ((next === null ? transResult.finalized : transResult.allowed) !== true) {
       console.log(JSON.stringify({
         advanced: false,
         verdict,
@@ -1673,7 +1674,7 @@ export function cmdAdvance(args) {
         next,
         transition: transResult,
         ...(transResult.requiresHuman ? { requiresHuman: true } : {}),
-        reason: transResult.reason || "transition denied",
+        reason: transResult.reason || transResult.error || "transition did not confirm success",
       }));
       return;
     }
@@ -1727,6 +1728,12 @@ export function cmdFinalize(args) {
   const stopped = stoppedFlowError(state, "finalize");
   if (stopped) {
     console.log(JSON.stringify({ finalized: false, error: stopped }));
+    return;
+  }
+
+  const missionError = missionFinalizationError(state, dir);
+  if (missionError) {
+    console.log(JSON.stringify({ finalized: false, error: missionError }));
     return;
   }
 

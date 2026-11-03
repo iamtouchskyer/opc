@@ -20,6 +20,7 @@ All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a she
 
 ```
 /opc <task>              # auto mode — infer flow and roles from the task
+/opc <flow> --mission <task> # same flow, optional single-flow Mission Gate
 /opc -i <task>           # interactive mode — ask questions before dispatch
 /opc <role> [role...]    # explicit roles — skip role selection, dispatch directly
 /opc loop <task>         # autonomous loop — decompose, schedule cron, run 24h unattended
@@ -28,6 +29,13 @@ All `opc-harness` references below mean `node "$OPC_HARNESS"`. Set this as a she
 /opc stop                # terminate flow, preserve session state
 /opc goto <nodeId>       # manual jump to a node (cycle limits still enforced)
 ```
+
+`--mission` is independent from the flow name and `-i`; consume it before task
+inference, and respect an explicitly named flow. Read `./pipeline/mission-gate.md`
+only when enabled (including resume of a state containing `mission`). It supplies
+the contract/init, pause/review and outcome-acceptance steps below. Mission loop
+and parent/child shared state are unsupported: report that boundary, never silently
+run without Mission. Do not add a model resolver or change existing role counts.
 
 ## Task Inference + Flow Selection
 
@@ -168,6 +176,10 @@ The complete flow with discussion, multi-stage gates, and E2E verification.
 3. Otherwise → fresh start.
 
 After flow selection, initialize with the matching interaction mode:
+
+In Mission mode, also pass `--mission <contract.json>` per the Mission protocol,
+show the returned `mission.enabled`, mode and appetite, and pin `--dir` on all
+subsequent commands. Never infer successful activation from the user's flag alone.
 
 ```bash
 opc-harness init --auto --claude-session-id "${CLAUDE_SESSION_ID}" --flow {TEMPLATE} --entry {ENTRY_NODE}
@@ -387,6 +399,10 @@ When the circuit breaker trips, stop and report immediately. Do not retry or att
 The orchestrator uses **cursor-based execution** — `flow-state.json.currentNode` is the single pointer. No topological sort.
 
 ### Execution Loop
+
+Mission mode: check `mission status` before dispatch. Before terminal completion,
+perform the outcome acceptance in `pipeline/mission-gate.md`; a graph PASS alone
+does not complete a Mission. Keep `--dir` pinned to its init receipt.
 
 ```
 1. Read flow-state.json → currentNode

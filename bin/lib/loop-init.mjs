@@ -15,7 +15,23 @@ import { resolveCallerIdentity, makeOwner, ownershipEnforcementWarning } from ".
 // ─── init-loop ──────────────────────────────────────────────────
 
 export function cmdInitLoop(args) {
+  if (args.some(arg => /^--(?:mission|parent-session)(?:=|$)/.test(arg))) {
+    console.log(JSON.stringify({ initialized: false, error: "Mission loop/parent sessions are unsupported in lite" }));
+    return;
+  }
   const dir = resolveDir(args);
+  const existingFlow = join(dir, "flow-state.json");
+  if (existsSync(existingFlow)) {
+    try {
+      if (Object.hasOwn(JSON.parse(readFileSync(existingFlow, "utf8")), "mission")) {
+        console.log(JSON.stringify({ initialized: false, error: "Cannot attach a loop to a Mission session" }));
+        return;
+      }
+    } catch (error) {
+      console.log(JSON.stringify({ initialized: false, error: `cannot read existing flow: ${error.message}` }));
+      return;
+    }
+  }
   const planFile = getFlag(args, "plan", join(dir, "plan.md"));
   const flowTemplate = getFlag(args, "flow-template", null);
   const flowFile = getFlag(args, "flow-file", null);

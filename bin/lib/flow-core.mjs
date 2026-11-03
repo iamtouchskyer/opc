@@ -15,7 +15,7 @@ import {
 import { join, dirname, resolve, basename } from "path";
 import { createHash } from "crypto";
 import { homedir } from "os";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { FLOW_TEMPLATES, resolveFlowTemplate, loadFlowFromFile } from "./flow-templates.mjs";
 import { getMarker } from "./viz-commands.mjs";
 import {
@@ -54,6 +54,7 @@ import { lockFile } from "./file-lock.mjs";
 import { evaluateFlowBudget } from "./flow-budget.mjs";
 import { parseRunOrdinal } from "./run-id.mjs";
 import { stoppedFlowError } from "./flow-state-guard.mjs";
+import { createMission } from "./mission-gate.mjs";
 import {
   expectedRunForNode,
   isRunId,
@@ -158,6 +159,17 @@ export function cmdRecordCommit(args) {
     console.log(JSON.stringify({ recorded: false, error: "flow-state.json not found" }));
     return;
   }
+  const lock = lockFile(statePath, { command: "record-commit" });
+  if (!lock.acquired) {
+    console.log(JSON.stringify({ recorded: false, error: "could not acquire lock" }));
+    return;
+  }
+  try {
+    recordCommitLocked(args, dir, statePath);
+  } finally { lock.release(); }
+}
+
+function recordCommitLocked(args, dir, statePath) {
   let state;
   try {
     state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -184,7 +196,7 @@ export function cmdRecordCommit(args) {
   // Fail closed: only record a real, resolvable commit.
   let full;
   try {
-    full = execSync(`git rev-parse --verify ${sha}^{commit}`, {
+    full = execFileSync("git", ["rev-parse", "--verify", "--end-of-options", `${sha}^{commit}`], {
       cwd: root, encoding: "utf8", timeout: 15000, stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
@@ -289,6 +301,26 @@ export async function cmdInit(args) {
     }
   }
 
+  let mission;
+  try {
+    if (hasFlag(args, "parent-session")) throw new Error("Mission parent/child sessions are unsupported");
+    if (hasFlag(args, "mission")) {
+      const file = getFlag(args, "mission");
+      if (!file || file.startsWith("--")) throw new Error("--mission requires a contract JSON file");
+      mission = createMission(JSON.parse(readFileSync(file, "utf8")));
+      if (!gitHeadSha(getProjectRoot())) throw new Error("Mission lite requires a Git repository with a HEAD commit");
+    }
+    if (hasExplicitDir) {
+      const target = resolveDir(args);
+      const existing = join(target, "flow-state.json");
+      if (existsSync(existing) && (mission || Object.hasOwn(JSON.parse(readFileSync(existing, "utf8")), "mission"))) throw new Error("Mission sessions cannot be overwritten; use a new session directory");
+      if (mission && (resolve(target) === resolve(getProjectRoot()) || existsSync(join(target, "loop-state.json")))) throw new Error("Mission needs a separate, non-loop session directory");
+    }
+  } catch (error) {
+    console.log(JSON.stringify({ created: false, error: error.message }));
+    return;
+  }
+
   const resolved = resolveFlowTemplate(args);
   if (resolved.error) {
     console.log(JSON.stringify({ created: false, error: resolved.error }));
@@ -375,6 +407,7 @@ export async function cmdInit(args) {
     history: [],
     edgeCounts: {},
     repairEdgeCounts: {},
+    ...(mission ? { mission } : {}),
     projectRoot,
     // Git floor at flow start + commits the flow produces. changeScope diffs
     // producedCommits (recorded via `record-commit`), never a blind HEAD~1.
@@ -514,6 +547,7 @@ export async function cmdInit(args) {
 
   console.log(JSON.stringify({
     created: true, flow, entry: entryNode, tier: tier || null, dir,
+    ...(mission ? { mission: { enabled: true, mode: "single-flow", appetite: mission.contract.appetite } } : {}),
     ...(preflightStatus ? { preflight: preflightStatus } : {}),
   }));
 }

@@ -10,6 +10,7 @@ import { cmdTransition, cmdValidateChain, cmdFinalize, cmdAdvance } from "./lib/
 import { cmdPromptContext, cmdExtensionTest, cmdExtensionVerdict, cmdExtensionArtifact, cmdNodePreflight } from "./lib/ext-commands.mjs";
 import { cmdConfigResolve } from "./lib/config-layering.mjs";
 import { cmdModelRoute } from "./lib/model-routing.mjs";
+import { cmdMission } from "./lib/mission-commands.mjs";
 import { cmdSkip, cmdPass, cmdStop, cmdGoto, cmdLs } from "./lib/flow-escape.mjs";
 import { cmdGc } from "./lib/util.mjs";
 import { cmdInitLoop } from "./lib/loop-init.mjs";
@@ -65,6 +66,7 @@ switch (command) {
   case "node-preflight":        await cmdNodePreflight(args);     break;
   case "config":                await cmdConfigResolve(args);    break;
   case "model-route":           cmdModelRoute(args);             break;
+  case "mission":               cmdMission(args);                break;
   case "runbook":               cmdRunbook(args);                break;
   case "clean":                 cmdClean(args);                  break;
   case "gc":                    cmdGc(args);                     break;
@@ -73,7 +75,8 @@ switch (command) {
     console.log("opc-harness — Mechanical verification for OPC evaluations");
     console.log();
     console.log("Flow commands:");
-    console.log("  init --flow <tpl> [--flow-file <p>] [--entry <node>] [--dir <p>]");
+    console.log("  init --flow <tpl> [--flow-file <p>] [--entry <node>] [--mission <json>] [--dir <p>]");
+    console.log("  mission <status|evidence|pause|decide|accept> [--file <path>] [--review <json>] [--verdict V] [--dir <p>]");
     console.log("                                                     Init flow state");
     console.log("  route --node <id> --verdict <V> --flow <tpl> [--flow-file <p>]");
     console.log("                                                     Get next node from graph");

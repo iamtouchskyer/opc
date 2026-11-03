@@ -1,3 +1,5 @@
+import { missionBudgetError } from "./mission-gate.mjs";
+
 const REPAIR_VERDICTS = new Set(["FAIL", "ITERATE"]);
 
 function resolveLimits(state, template) {
@@ -93,7 +95,7 @@ export function evaluateFlowBudget({ state, template, from, to, verdict }) {
     const repairMap = validateCountMap(state.repairEdgeCounts, "repairEdgeCounts");
     if (repairMap.error) return { allowed: false, reason: repairMap.error };
   }
-  if (to === null) return { allowed: true, terminal: true };
+  if (to === null) return missionBudgetError({ state, from, to, verdict }) || { allowed: true, terminal: true };
   if (state.totalSteps >= limits.maxTotalSteps) {
     return { allowed: false, reason: `maxTotalSteps (${limits.maxTotalSteps}) reached` };
   }
@@ -123,7 +125,7 @@ export function evaluateFlowBudget({ state, template, from, to, verdict }) {
     };
   }
 
-  return { allowed: true, edgeKey, edgeCount, repairCount };
+  return missionBudgetError({ state, from, to, verdict }) || { allowed: true, edgeKey, edgeCount, repairCount };
 }
 
 export function nodeHasBudgetedExit({ state, template, node }) {
