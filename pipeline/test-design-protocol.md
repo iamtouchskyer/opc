@@ -135,6 +135,11 @@ VERDICT: TEST-CASES [N] — N test cases designed
      "prerequisites": ["dependencies installed in cwd"]
    }
    ```
+   Test commands run with `bash -o pipefail -c`; Bash must be available in PATH.
+   A failed pipeline stage fails the command; missing Bash produces failing evidence,
+   with no fallback to another shell. Child scripts must preserve their own failure
+   codes. Handle intentionally accepted nonzero statuses explicitly in the command.
+
    `cwd` should point at the package/project directory that owns the dependencies
    (`package.json`, Playwright config, node_modules). If omitted, OPC will try one
    conservative auto-resolution pass for a unique local JS package, then fall back

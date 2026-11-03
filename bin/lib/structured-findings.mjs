@@ -8,7 +8,7 @@ export function parseStructuredFindings(content) {
   const lines = content.split('\n');
   const findings = [];
   let current = null;
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const m = line.match(FINDING_HEADING_RE) || line.match(FINDING_HEADING_ALT);
     if (m) {
       if (current) findings.push(current);
@@ -22,7 +22,7 @@ export function parseStructuredFindings(content) {
     }
     if (!current) continue;
     const sevM = line.match(SEV_RE);
-    if (sevM) { current.severity = sevM[1]; continue; }
+    if (sevM) { current.severity = sevM[1]; current.severityLine = index + 1; continue; }
     const statM = line.match(STATUS_RE);
     if (statM) { current.status = statM[1]; continue; }
     const locM = line.match(LOCATION_RE);

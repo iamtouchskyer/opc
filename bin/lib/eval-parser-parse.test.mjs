@@ -201,4 +201,42 @@ describe("parseEvaluation", () => {
     const r = parseEvaluation(text);
     assert.equal(r.headingCount, 3);
   });
+
+  test("structured findings count despite PASS or resolved status text", () => {
+    const r = parseEvaluation([
+      "## Finding 1 — Lost event",
+      "**Severity**: 🔴",
+      "**Location**: `src/events.js:7`",
+      "**R2 Status**: ✅",
+      "Reasoning: terminal events can be lost",
+      "→ Fix: preserve event ordering",
+      "VERDICT: PASS FINDINGS[1]",
+    ].join("\n"));
+    assert.equal(r.critical, 1);
+    assert.equal(r.verdict_count_match, true);
+    assert.equal(r.findings[0].issue, "Lost event");
+    assert.equal(r.findings[0].file, "src/events.js");
+    assert.equal(r.findings[0].line, 7);
+    assert.equal(r.findings[0].fix, "preserve event ordering");
+    assert.equal(r.findingsWithoutReasoning, 0);
+  });
+
+  test("mixed formats deduplicate the same finding without lowering severity", () => {
+    for (const reverse of [false, true]) {
+      const blocks = [
+        "🟡 src/events.js:7 — Lost event\nReasoning: events are lost\n→ Fix: preserve ordering",
+        "## Finding 1 — Lost event\n**Severity**: 🔴\n**Location**: src/events.js:7",
+      ];
+      const r = parseEvaluation((reverse ? blocks.reverse() : blocks).join("\n"));
+      assert.equal(r.findings_count, 1);
+      assert.equal(r.critical, 1);
+      assert.equal(r.warning, 0);
+      assert.equal(r.findingsWithoutReasoning, 0);
+      assert.equal(r.findingsWithoutFix, 0);
+    }
+  });
+
+  test("metadata without a finding heading is not a finding", () => {
+    assert.equal(parseEvaluation("**Severity**: 🔴\n**Location**: src/a.js:1").findings_count, 0);
+  });
 });

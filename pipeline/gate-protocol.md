@@ -45,11 +45,12 @@ Before mechanical validation, the gate reads structured data from upstream artif
 1. Scan `$SESSION_DIR/nodes/*/handshake.json` for all upstream nodes in this gate's path
 2. For each handshake, inspect the `artifacts[]` array. For artifacts with type `report` or `test-result`, read the referenced file
 3. **Error handling:** If an artifact file is missing, unreadable, or contains malformed JSON → treat as **FAIL** with reason `"artifact {path} unreadable — fail-closed"`. Structured checks are fail-closed: broken data = gate FAIL, not silent pass.
-4. Parse these structured fields (if present in the artifact JSON). **Type coercion:** numeric fields may appear as strings (e.g., `"3"` vs `3`); coerce to integer before comparison. If coercion fails (non-numeric string) → treat as 0 and log a warning.
+4. Parse these structured fields (if present in the artifact JSON). Counts must be non-negative safe integers; complete integer strings (e.g., `"3"`) are accepted. Null, negative, fractional, unsafe, or partially numeric values are invalid evidence and cause FAIL, never a zero fallback. Missing optional counts remain allowed for non-test checks. The same rules apply to supplied `checks[].total` and `detail.total`; zero-count PASS checks require an explicit policy allowance.
    - `test_fail_count` — number of failed tests
    - `dead_test_count` — number of dead/unreachable tests
    - `p0_count` — number of unresolved P0 issues
    - `sync_check_status` — sync verification result (`"PASS"` or `"FAIL"`)
+   - OPC `testCommand` evidence additionally requires an integer `exitCode` and boolean `timedOut`; a nonzero exit or timeout causes FAIL regardless of reported counts.
 5. Apply hard FAIL rules — any single violation triggers gate FAIL:
 
 | Field | Condition | Gate action | Reason string |

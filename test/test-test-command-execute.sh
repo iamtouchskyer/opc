@@ -43,16 +43,17 @@ PY
 }
 
 write_test_execution_spec() {
-  local dir="$1" command="$2" cwd="$3"
+  local dir="$1" command="$2" cwd="$3" timeout="${4:-120000}"
   mkdir -p "$dir/nodes/test-design/run_1"
-  python3 - "$dir/nodes/test-design/run_1/test-execution.json" "$command" "$cwd" <<'PY'
+  python3 - "$dir/nodes/test-design/run_1/test-execution.json" "$command" "$cwd" "$timeout" <<'PY'
 import json, sys
-path, command, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+path, command, cwd, timeout = sys.argv[1:]
 data = {
   "nodeId": "test-design",
   "runId": "run_1",
   "testCommand": command,
   "cwd": cwd,
+  "timeoutMs": int(timeout),
   "prerequisites": ["cwd must exist"]
 }
 open(path, "w").write(json.dumps(data))
@@ -159,6 +160,53 @@ if [ "$ALLOWED" = "False" ] && { grep -q "test(s) failed" <<< "$OUT" || grep -q 
   PASS=$((PASS + 1))
 else
   echo "  ❌ failed testCommand did not block test-execute → gate PASS: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+for PIPE_EXIT in 0 7; do
+  PIPE_DIR=".harness-pipe-$PIPE_EXIT"
+  $HARNESS init --flow build-verify --entry test-design --dir "$PIPE_DIR" >/dev/null 2>/dev/null
+  write_test_design_handshake "$PIPE_DIR" "node -e \"process.exit($PIPE_EXIT)\" | tail -1"
+  $HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir "$PIPE_DIR" >/dev/null 2>/dev/null
+  EXIT_CODE=$(python3 -c "import json; print(json.load(open('$PIPE_DIR/nodes/test-execute/run_1/test-command-result.json'))['exitCode'])")
+  OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir "$PIPE_DIR" 2>/dev/null)
+  ALLOWED=$(json_field "$OUT" "allowed")
+  if [ "$EXIT_CODE" = "$PIPE_EXIT" ] &&
+     { { [ "$PIPE_EXIT" = "0" ] && [ "$ALLOWED" = "True" ]; } ||
+       { [ "$PIPE_EXIT" = "7" ] && [ "$ALLOWED" = "False" ]; }; }; then
+    echo "  ✅ pipeline exit=$PIPE_EXIT preserved through the gate"
+    PASS=$((PASS + 1))
+  else
+    echo "  ❌ pipeline exit=$PIPE_EXIT masked or gate disagreed: exit=$EXIT_CODE $OUT"
+    FAIL=$((FAIL + 1))
+  fi
+done
+
+$HARNESS init --flow build-verify --entry test-design --dir .harness-timeout >/dev/null 2>/dev/null
+write_test_design_handshake .harness-timeout 'node -e "setTimeout(() => {}, 1000)"'
+write_test_execution_spec .harness-timeout 'node -e "setTimeout(() => {}, 1000)"' "$PWD" 50
+$HARNESS transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness-timeout >/dev/null 2>/dev/null
+TIMED_OUT=$(python3 -c "import json; print(json.load(open('.harness-timeout/nodes/test-execute/run_1/test-command-result.json'))['timedOut'])")
+OUT=$($HARNESS transition --from test-execute --to gate --verdict PASS --flow build-verify --dir .harness-timeout 2>/dev/null)
+if [ "$TIMED_OUT" = "True" ] && [ "$(json_field "$OUT" "allowed")" = "False" ]; then
+  echo "  ✅ timed-out command blocks the gate"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ timed-out command did not block: $OUT"
+  FAIL=$((FAIL + 1))
+fi
+
+$HARNESS init --flow build-verify --entry test-design --dir .harness-no-bash >/dev/null 2>/dev/null
+write_test_design_handshake .harness-no-bash 'node -e "process.exit(0)"'
+NODE_BIN=$(command -v node)
+mkdir no-shell
+PATH="$PWD/no-shell" "$NODE_BIN" "$OPC_HARNESS_BIN" transition --from test-design --to test-execute --verdict PASS --flow build-verify --dir .harness-no-bash >/dev/null 2>/dev/null
+EXIT_CODE=$(python3 -c "import json; print(json.load(open('.harness-no-bash/nodes/test-execute/run_1/test-command-result.json'))['exitCode'])")
+if [ "$EXIT_CODE" = "1" ] && grep -q "ENOENT" .harness-no-bash/nodes/test-execute/run_1/test-command-output.txt; then
+  echo "  ✅ missing Bash fails explicitly without shell fallback"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ missing Bash failed open"
   FAIL=$((FAIL + 1))
 fi
 

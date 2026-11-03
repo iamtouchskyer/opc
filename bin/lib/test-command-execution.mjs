@@ -224,7 +224,7 @@ function writeResultFiles(runDir, spec, result, cwdInfo, sourceNode, sourceRunId
 
 function runTestCommand(spec, cwd) {
   try {
-    return spawnSync("sh", ["-c", spec.testCommand], {
+    return spawnSync("bash", ["-o", "pipefail", "-c", spec.testCommand], {
       cwd, encoding: "utf8", timeout: spec.timeoutMs,
     });
   } catch (err) {

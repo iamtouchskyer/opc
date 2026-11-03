@@ -170,30 +170,45 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# ── 1.8: Legacy metadata severity line → NOT parsed ──
-echo "--- 1.8: Legacy metadata line (no false positive) ---"
+# ── 1.8: Structured finding metadata is counted ──
+echo "--- 1.8: Structured finding metadata ---"
 cat > legacy-meta.md << 'EOF'
 # Review
 
 ## Finding 1 — Real structured issue title
 **Severity**: 🔴
 **Location**: src/legacy.js:7
+Reasoning: terminal events can be lost.
+→ Fix: preserve terminal event ordering.
 
 VERDICT: FINDINGS[1]
 EOF
 OUT=$(parse_eval legacy-meta.md)
 TOTAL=$(echo "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('critical',0)+d.get('warning',0)+d.get('suggestion',0))" 2>/dev/null)
-if [ "$TOTAL" = "0" ]; then
-  echo "  ✅ metadata severity is not parsed as a finding"
+if [ "$TOTAL" = "1" ]; then
+  echo "  ✅ structured severity is parsed as one finding"
   PASS=$((PASS + 1))
 else
-  echo "  ❌ expected 0 metadata findings, got: $TOTAL"
+  echo "  ❌ expected 1 structured finding, got: $TOTAL"
   FAIL=$((FAIL + 1))
 fi
 
 echo ""
 echo "=== TEST GROUP 2: formatErrors ==="
 echo ""
+
+mkdir -p .h-structured/nodes/review/run_1
+cp legacy-meta.md .h-structured/nodes/review/run_1/eval-engineer.md
+printf '# Independent owner review\nVERDICT: PASS FINDINGS[0]\n' > .h-structured/nodes/review/run_1/eval-owner.md
+OUT=$($HARNESS synthesize .h-structured --node review --no-strict 2>/dev/null)
+VERDICT=$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin)['verdict'])")
+if [ "$VERDICT" = "FAIL" ]; then
+  echo "  ✅ structured critical finding blocks synthesized gate verdict"
+  PASS=$((PASS + 1))
+else
+  echo "  ❌ structured critical finding did not block: $OUT"
+  FAIL=$((FAIL + 1))
+fi
 
 # ── 2.1: Unstructured severity line → formatError ──
 echo "--- 2.1: Unstructured severity → formatError ---"

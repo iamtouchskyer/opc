@@ -1,9 +1,9 @@
 // Mechanical gate for structured test-result artifacts.
 import { findProvenanceEvent } from "./provenance-ledger.mjs";
 
-function safeInt(value) {
-  const n = parseInt(value, 10);
-  return Number.isFinite(n) ? n : 0;
+function parseCount(value) {
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) value = Number(value.trim());
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function parseDetail(detail) {
@@ -21,9 +21,9 @@ function allowVacuous(context, check) {
 }
 
 function checkTotal(check) {
-  if (typeof check?.total === "number") return check.total;
+  if (Object.hasOwn(check, "total")) return parseCount(check.total);
   const detail = parseDetail(check?.detail);
-  return typeof detail?.total === "number" ? detail.total : null;
+  return detail && Object.hasOwn(detail, "total") ? parseCount(detail.total) : undefined;
 }
 
 function collectChecksReasons(data, context) {
@@ -33,6 +33,11 @@ function collectChecksReasons(data, context) {
   if (failed.length > 0) {
     const ids = failed.slice(0, 5).map(c => c.id || "unnamed").join(", ");
     reasons.push(`${failed.length} structured check(s) failed: ${ids}`);
+  }
+  for (const check of data.checks) {
+    if (check && checkTotal(check) === null) {
+      reasons.push(`${check.id || "unnamed"}: invalid check total — expected a non-negative safe integer`);
+    }
   }
   const vacuous = data.checks.filter(c =>
     c && c.pass === true && !allowVacuous(context, c) && checkTotal(c) === 0);
@@ -48,12 +53,28 @@ function collectSummaryReasons(data) {
   if (Array.isArray(data?.summary?.failed) && data.summary.failed.length > 0) {
     reasons.push(`${data.summary.failed.length} summarized test failure(s) present`);
   }
-  if (safeInt(data?.test_fail_count) > 0)
-    reasons.push(`${safeInt(data.test_fail_count)} test(s) failed`);
-  if (safeInt(data?.dead_test_count) > 0)
-    reasons.push(`${safeInt(data.dead_test_count)} dead test(s) detected`);
-  if (safeInt(data?.p0_count) > 0)
-    reasons.push(`${safeInt(data.p0_count)} P0 issue(s) unresolved`);
+  for (const [field, label] of [
+    ["test_fail_count", "test(s) failed"],
+    ["dead_test_count", "dead test(s) detected"],
+    ["p0_count", "P0 issue(s) unresolved"],
+  ]) {
+    if (!data || !Object.hasOwn(data, field)) continue;
+    const count = parseCount(data[field]);
+    if (count === null) reasons.push(`${field}: invalid count — expected a non-negative safe integer`);
+    else if (count > 0) reasons.push(`${count} ${label}`);
+  }
+  if (data?.provenance?.kind === "opc-test-command") {
+    if (!Number.isSafeInteger(data.exitCode) || data.exitCode < 0) {
+      reasons.push("OPC command evidence has missing or invalid exitCode");
+    } else if (data.exitCode !== 0) {
+      reasons.push(`testCommand exitCode=${data.exitCode}`);
+    }
+    if (typeof data.timedOut !== "boolean") {
+      reasons.push("OPC command evidence has missing or invalid timedOut");
+    } else if (data.timedOut) {
+      reasons.push("testCommand timed out");
+    }
+  }
   if (String(data?.sync_check_status || "").toUpperCase() === "FAIL")
     reasons.push("sync-check failed");
   return reasons;

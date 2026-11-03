@@ -1,5 +1,6 @@
 // Evaluation markdown parser — regex constants + pure parsing function.
-// No I/O, no dependencies.
+// No I/O.
+import { parseStructuredFindings } from "./structured-findings.mjs";
 
 export const SEVERITY_MAP = {
   "🔴": "critical",
@@ -92,13 +93,20 @@ export function parseEvaluation(text) {
   const hedgingDetected = [];
   const findings = [];
   const formatErrors = [];
+  const structuredLines = new Map(parseStructuredFindings(text)
+    .filter(f => f.severity)
+    .map(f => [f.severityLine, f]));
+  const structuredEntries = new Set();
 
   let currentFinding = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const lineNum = i + 1;
-    const trimmed = line.trim();
+    const structured = structuredLines.get(lineNum);
+    const trimmed = structured
+      ? `${structured.severity} ${structured.location || ""} — ${structured.title}`
+      : line.trim();
 
     // Verdict detection
     const verdictMatch = trimmed.match(VERDICT_RE);
@@ -203,7 +211,9 @@ export function parseEvaluation(text) {
         reasoning: null,
         status: "accepted",
         dismissReason: null,
+        ...(structured?.status ? { reviewStatus: structured.status } : {}),
       };
+      if (structured) structuredEntries.add(currentFinding);
 
       if (!trimmed.startsWith("#") && HEDGING_RE.test(trimmed)) {
         hedgingDetected.push(`line ${lineNum}: '${trimmed}'`);
@@ -223,6 +233,23 @@ export function parseEvaluation(text) {
   }
 
   if (currentFinding) findings.push(currentFinding);
+
+  for (const finding of structuredEntries) {
+    const duplicate = findings.find(other => other !== finding && !structuredEntries.has(other)
+      && other.file === finding.file && other.line === finding.line
+      && other.issue.toLowerCase() === finding.issue.toLowerCase());
+    if (!duplicate) continue;
+    const priorities = ["critical", "warning", "suggestion"];
+    if (priorities.indexOf(finding.severity) < priorities.indexOf(duplicate.severity)) {
+      duplicate.severity = finding.severity;
+    }
+    duplicate.fix ||= finding.fix;
+    duplicate.reasoning ||= finding.reasoning;
+    if (finding.reviewStatus) duplicate.reviewStatus = finding.reviewStatus;
+    findings.splice(findings.indexOf(finding), 1);
+  }
+  for (const key of Object.keys(severityCounts)) severityCounts[key] = 0;
+  for (const finding of findings) severityCounts[finding.severity]++;
 
   const findingsCount =
     severityCounts.critical + severityCounts.warning + severityCounts.suggestion;
